@@ -102,6 +102,36 @@ const objectToString = Object.prototype.toString;
 const mapEntries = Map.prototype.entries;
 const setValues = Set.prototype.values;
 const dateToISOString = Date.prototype.toISOString;
+const promiseThen = Promise.prototype.then;
+const reflectApply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const objectDefineProperty = Object.defineProperty;
+const mapSet = Map.prototype.set;
+const setAdd = Set.prototype.add;
+
+// The JSON parser in the UI process already limits nesting, but cap recursion here too so
+// that deserializing a LocalValue cannot exhaust the stack.
+const maximumLocalValueDepth = 512;
+
+function invalidArgument(message)
+{
+    return { name: "InvalidParameter", message };
+}
+
+function isPlainJSONObject(value)
+{
+    return typeof value === "object" && value !== null && !arrayIsArray(value);
+}
+
+// Thrown while running a BiDi script for errors that fail the command instead of being
+// reported as an exception thrown by the script.
+class AutomationCommandError
+{
+    constructor(error)
+    {
+        this.error = error;
+    }
+}
 
 let AutomationSessionProxy = class AutomationSessionProxy
 {
@@ -124,8 +154,42 @@ let AutomationSessionProxy = class AutomationSessionProxy
 
     evaluateBidiScript(expression, awaitPromise, maxDomDepth, maxObjectDepth, includeShadowTree, resultOwnership, frameID, callbackID, resultCallback, callbackTimeout)
     {
+        // https://w3c.github.io/webdriver-bidi/#command-script-evaluate
         let serializationOptions = { maxDomDepth, maxObjectDepth, includeShadowTree };
-        this._executeBidiScript(expression, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
+        this._executeBidiScript(() => globalThis.eval(expression), awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
+            .then(result => { resultCallback(frameID, callbackID, JSON.stringify(result)); })
+            .catch(error => { resultCallback(frameID, callbackID, error); });
+    }
+
+    callBidiFunction(functionDeclaration, thisLocalValueJSON, argumentLocalValuesJSON, awaitPromise, maxDomDepth, maxObjectDepth, includeShadowTree, resultOwnership, frameID, callbackID, resultCallback, callbackTimeout)
+    {
+        // https://w3c.github.io/webdriver-bidi/#command-script-callFunction
+        let serializationOptions = { maxDomDepth, maxObjectDepth, includeShadowTree };
+        let deserializedArguments;
+        let thisObject;
+        try {
+            // Errors while deserializing are command errors (invalid argument, no such handle,
+            // no such node), not exceptions thrown by the called function.
+            deserializedArguments = [];
+            for (let localValue of JSON.parse(argumentLocalValuesJSON))
+                deserializedArguments.push(this._deserializeLocalValue(localValue, 0));
+            thisObject = thisLocalValueJSON ? this._deserializeLocalValue(JSON.parse(thisLocalValueJSON), 0) : undefined;
+        } catch (error) {
+            resultCallback(frameID, callbackID, error);
+            return;
+        }
+
+        let callFunction = () => {
+            // Evaluate the declaration as a classic script in the global scope, so that it is not
+            // strict and cannot see this script's bindings. The newlines keep a trailing line
+            // comment from swallowing the closing parenthesis.
+            let functionObject = evaluate("(\n" + functionDeclaration + "\n)");
+            if (typeof functionObject !== "function")
+                throw new AutomationCommandError(invalidArgument("functionDeclaration did not evaluate to a function"));
+            return reflectApply(functionObject, thisObject, deserializedArguments);
+        };
+
+        this._executeBidiScript(callFunction, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
             .then(result => { resultCallback(frameID, callbackID, JSON.stringify(result)); })
             .catch(error => { resultCallback(frameID, callbackID, error); });
     }
@@ -203,7 +267,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
             });
     }
 
-    _executeBidiScript(expression, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
+    _executeBidiScript(runScript, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
     {
         let timeoutPromise;
         let timeoutIdentifier = 0;
@@ -234,17 +298,30 @@ let AutomationSessionProxy = class AutomationSessionProxy
 
             let result;
             try {
-                // Execute expression using globalThis.eval pattern (like original implementation).
-                result = globalThis.eval(expression);
+                result = runScript();
             } catch (exception) {
+                if (exception instanceof AutomationCommandError) {
+                    reject(exception.error);
+                    return;
+                }
                 resolveWithException(exception);
                 return;
             }
 
-            if (awaitPromise && result && typeof result.then === "function")
-                result.then(resolveWithSuccess, resolveWithException);
-            else
+            if (!awaitPromise) {
                 resolveWithSuccess(result);
+                return;
+            }
+
+            // Only promises are awaited, not other thenables (IsPromise in the spec). The
+            // original Promise.prototype.then is used so that the page cannot intercept the
+            // result by replacing it. It throws for anything that is not a promise, and accepts
+            // promises from other realms.
+            try {
+                promiseThen.call(result, resolveWithSuccess, resolveWithException);
+            } catch {
+                resolveWithSuccess(result);
+            }
         });
 
         let promises = [promise];
@@ -662,6 +739,139 @@ let AutomationSessionProxy = class AutomationSessionProxy
         }
 
         return serialized;
+    }
+
+    // WebDriver BiDi deserialization.
+    // https://w3c.github.io/webdriver-bidi/#deserialize-local-value
+
+    _deserializeLocalValue(localValue, depth)
+    {
+        if (depth > maximumLocalValueDepth)
+            throw invalidArgument("LocalValue exceeds the maximum nesting depth");
+        if (!isPlainJSONObject(localValue))
+            throw invalidArgument("LocalValue must be an object");
+
+        // A remote reference may also carry the other fields of the RemoteValue it came from.
+        // A shared reference takes precedence over a handle.
+        if ("sharedId" in localValue)
+            return this._deserializeSharedReference(localValue.sharedId);
+        if ("handle" in localValue)
+            return this._deserializeRemoteObjectReference(localValue.handle);
+
+        let value = localValue.value;
+        switch (localValue.type) {
+        case "undefined":
+            return undefined;
+        case "null":
+            return null;
+        case "string":
+            if (typeof value !== "string")
+                throw invalidArgument("string LocalValue must have a string value");
+            return value;
+        case "boolean":
+            if (typeof value !== "boolean")
+                throw invalidArgument("boolean LocalValue must have a boolean value");
+            return value;
+        case "number":
+            if (typeof value === "number")
+                return value;
+            switch (value) {
+            case "NaN":
+                return NaN;
+            case "-0":
+                return -0;
+            case "Infinity":
+                return Infinity;
+            case "-Infinity":
+                return -Infinity;
+            }
+            throw invalidArgument("number LocalValue has an invalid value");
+        case "bigint":
+            if (typeof value !== "string" || !/^-?[0-9]+$/.test(value))
+                throw invalidArgument("bigint LocalValue has an invalid value");
+            return BigInt(value);
+        case "date": {
+            if (typeof value !== "string")
+                throw invalidArgument("date LocalValue must have a string value");
+            let date = new Date(value);
+            if (Number.isNaN(date.getTime()))
+                throw invalidArgument("date LocalValue has an invalid value");
+            return date;
+        }
+        case "regexp": {
+            if (!isPlainJSONObject(value) || typeof value.pattern !== "string" || (value.flags !== undefined && typeof value.flags !== "string"))
+                throw invalidArgument("regexp LocalValue must have a pattern and optional flags");
+            try {
+                return new RegExp(value.pattern, value.flags);
+            } catch {
+                throw invalidArgument("regexp LocalValue has an invalid pattern or flags");
+            }
+        }
+        case "array":
+        case "set": {
+            if (!arrayIsArray(value))
+                throw invalidArgument(localValue.type + " LocalValue must have an array value");
+            let items = [];
+            for (let item of value)
+                items.push(this._deserializeLocalValue(item, depth + 1));
+            if (localValue.type === "array")
+                return items;
+            let set = new Set;
+            for (let item of items)
+                setAdd.call(set, item);
+            return set;
+        }
+        case "object":
+        case "map": {
+            if (!arrayIsArray(value))
+                throw invalidArgument(localValue.type + " LocalValue must have an array value");
+            let isMapValue = localValue.type === "map";
+            let result = isMapValue ? new Map : {};
+            for (let entry of value) {
+                if (!arrayIsArray(entry) || entry.length !== 2)
+                    throw invalidArgument(localValue.type + " LocalValue entries must be [key, value] pairs");
+                let key = typeof entry[0] === "string" ? entry[0] : this._deserializeLocalValue(entry[0], depth + 1);
+                let entryValue = this._deserializeLocalValue(entry[1], depth + 1);
+                if (isMapValue)
+                    mapSet.call(result, key, entryValue);
+                else {
+                    // Define rather than assign, so that keys like "__proto__" become own properties.
+                    objectDefineProperty(result, key, { value: entryValue, writable: true, enumerable: true, configurable: true });
+                }
+            }
+            return result;
+        }
+        case "channel":
+            // FIXME: Implement channels <https://webkit.org/b/288057>.
+            throw { name: "NotImplemented", message: "channel arguments are not yet supported" };
+        }
+
+        throw invalidArgument("Unknown LocalValue type: " + localValue.type);
+    }
+
+    _deserializeSharedReference(sharedId)
+    {
+        // https://w3c.github.io/webdriver-bidi/#deserialize-shared-reference
+        if (typeof sharedId !== "string")
+            throw invalidArgument("sharedId must be a string");
+
+        // Only nodes of this browsing context are known here, so nodes of other browsing
+        // contexts are reported as not found too.
+        try {
+            return this._nodeForIdentifier(sharedId);
+        } catch {
+            throw { name: "NodeNotFound", message: "No node with sharedId '" + sharedId + "' was found" };
+        }
+    }
+
+    _deserializeRemoteObjectReference(handle)
+    {
+        // https://w3c.github.io/webdriver-bidi/#deserialize-remote-reference
+        if (typeof handle !== "string")
+            throw invalidArgument("handle must be a string");
+        if (!this._bidiHandles.has(handle))
+            throw { name: "NoSuchHandle", message: "No object with handle '" + handle + "' was found" };
+        return this._bidiHandles.get(handle);
     }
 
     _handleForObject(value, ownershipType)
