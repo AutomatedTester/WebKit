@@ -25,9 +25,83 @@
 
 //# sourceURL=__InjectedScript_WebAutomationSessionProxy.js
 
-(function (sessionIdentifier, currentFrameIdentifier, evaluate, createUUID, isValidNodeIdentifier, isKnownReference, addKnownReference) {
+(function (sessionIdentifier, currentFrameIdentifier, evaluate, createUUID, isValidNodeIdentifier, isKnownReference, addKnownReference, isProxy, shadowRootForElement, frameIdentifierForWindow) {
 
 const sessionNodePropertyName = "session-node-" + sessionIdentifier;
+
+// Brand checks used by WebDriver BiDi serialization. Unlike instanceof, these also recognize
+// objects created in other realms. If the page has replaced the interface object, the check
+// fails closed rather than breaking creation of this script.
+function brandCheck(interfaceName, property)
+{
+    let getter;
+    try {
+        getter = Object.getOwnPropertyDescriptor(globalThis[interfaceName].prototype, property).get;
+    } catch {
+        return () => false;
+    }
+
+    return value => {
+        try {
+            getter.call(value);
+            return true;
+        } catch {
+            return false;
+        }
+    };
+}
+
+const isArrayBuffer = brandCheck("ArrayBuffer", "byteLength");
+const isMap = brandCheck("Map", "size");
+const isSet = brandCheck("Set", "size");
+const isRegExp = brandCheck("RegExp", "source");
+const isAttr = brandCheck("Attr", "ownerElement");
+const isElement = brandCheck("Element", "attributes");
+const isHTMLCollection = brandCheck("HTMLCollection", "length");
+const isNode = brandCheck("Node", "nodeType");
+const isNodeList = brandCheck("NodeList", "length");
+const isShadowRoot = brandCheck("ShadowRoot", "mode");
+
+// %TypedArray%.prototype[@@toStringTag] returns undefined for anything but a typed array.
+const isTypedArray = (() => {
+    let toStringTagGetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Int8Array.prototype), Symbol.toStringTag).get;
+    return value => toStringTagGetter.call(value) !== undefined;
+})();
+
+function isDate(value)
+{
+    try {
+        Date.prototype.getTime.call(value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function isWeakMap(value)
+{
+    try {
+        WeakMap.prototype.has.call(value, {});
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function isWeakSet(value)
+{
+    try {
+        WeakSet.prototype.has.call(value, {});
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+const objectToString = Object.prototype.toString;
+const mapEntries = Map.prototype.entries;
+const setValues = Set.prototype.values;
+const dateToISOString = Date.prototype.toISOString;
 
 let AutomationSessionProxy = class AutomationSessionProxy
 {
@@ -36,6 +110,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
         this._nodeToIdMap = new Map;
         this._idToNodeMap = new Map;
         this._staleIdentifiers = new Set;
+        this._bidiHandles = new Map;
     }
 
     // Public
@@ -47,9 +122,10 @@ let AutomationSessionProxy = class AutomationSessionProxy
             .catch(error => { resultCallback(frameID, callbackID, error); });
     }
 
-    evaluateBidiScript(expression, awaitPromise, maxObjectDepth, frameID, callbackID, resultCallback, callbackTimeout)
+    evaluateBidiScript(expression, awaitPromise, maxDomDepth, maxObjectDepth, includeShadowTree, resultOwnership, frameID, callbackID, resultCallback, callbackTimeout)
     {
-        this._executeBidiScript(expression, awaitPromise, maxObjectDepth, callbackTimeout)
+        let serializationOptions = { maxDomDepth, maxObjectDepth, includeShadowTree };
+        this._executeBidiScript(expression, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
             .then(result => { resultCallback(frameID, callbackID, JSON.stringify(result)); })
             .catch(error => { resultCallback(frameID, callbackID, error); });
     }
@@ -127,7 +203,7 @@ let AutomationSessionProxy = class AutomationSessionProxy
             });
     }
 
-    _executeBidiScript(expression, awaitPromise, maxObjectDepth, callbackTimeout)
+    _executeBidiScript(expression, awaitPromise, serializationOptions, resultOwnership, callbackTimeout)
     {
         let timeoutPromise;
         let timeoutIdentifier = 0;
@@ -140,29 +216,35 @@ let AutomationSessionProxy = class AutomationSessionProxy
         }
 
         let promise = new Promise((resolve, reject) => {
+            // Errors thrown while serializing are internal errors, not exceptions thrown by the evaluated script.
+            let resolveWithSuccess = value => {
+                try {
+                    resolve({ success: true, result: this._serializeBidiRemoteValue(value, serializationOptions, resultOwnership) });
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            let resolveWithException = exception => {
+                try {
+                    resolve(this._bidiExceptionEnvelope(exception, serializationOptions, resultOwnership));
+                } catch (error) {
+                    reject(error);
+                }
+            };
+
+            let result;
             try {
                 // Execute expression using globalThis.eval pattern (like original implementation).
-                let result = globalThis.eval(expression);
-
-                if (awaitPromise && result && typeof result.then === "function") {
-                    // Handle promises for awaitPromise: true.
-                    result.then(
-                        value => {
-                            let serializedValue = this.serializeBidiRemoteValue(value, maxObjectDepth);
-                            resolve({ success: true, result: serializedValue });
-                        },
-                        error => {
-                            reject({ success: false, error: { name: error.name, message: error.message, stack: error.stack } });
-                        }
-                    );
-                } else {
-                    // Handle synchronous results or non-promises.
-                    let serializedValue = this.serializeBidiRemoteValue(result, maxObjectDepth);
-                    resolve({ success: true, result: serializedValue });
-                }
-            } catch (error) {
-                reject({ success: false, error: { name: error.name, message: error.message, stack: error.stack } });
+                result = globalThis.eval(expression);
+            } catch (exception) {
+                resolveWithException(exception);
+                return;
             }
+
+            if (awaitPromise && result && typeof result.then === "function")
+                result.then(resolveWithSuccess, resolveWithException);
+            else
+                resolveWithSuccess(result);
         });
 
         let promises = [promise];
@@ -174,6 +256,22 @@ let AutomationSessionProxy = class AutomationSessionProxy
                     clearTimeout(timeoutIdentifier);
                 }
             });
+    }
+
+    _bidiExceptionEnvelope(exception, serializationOptions, resultOwnership)
+    {
+        let text;
+        try {
+            text = String(exception);
+        } catch {
+            text = "Uncaught exception";
+        }
+
+        return {
+            success: false,
+            text,
+            exception: this._serializeBidiRemoteValue(exception, serializationOptions, resultOwnership),
+        };
     }
 
     _jsonParse(string)
@@ -336,103 +434,245 @@ let AutomationSessionProxy = class AutomationSessionProxy
         }
     }
 
-    // BiDi Script utilities for W3C WebDriver BiDi specification.
-    serializeBidiRemoteValue(value, maxObjectDepth = 1, depth = 0, visitedObjects = new Set())
+    // WebDriver BiDi serialization.
+    // https://w3c.github.io/webdriver-bidi/#serialize-as-a-remote-value
+
+    _serializeBidiRemoteValue(value, serializationOptions, ownershipType)
     {
-        // Handle primitives.
-        if (value === null) return { type: "null" };
-        if (value === undefined) return { type: "undefined" };
-        if (typeof value === "boolean") return { type: "boolean", value: value };
-        if (typeof value === "string") return { type: "string", value: value };
-        if (typeof value === "number") {
-            if (isNaN(value)) return { type: "number", value: "NaN" };
-            if (value === Infinity) return { type: "number", value: "Infinity" };
-            if (value === -Infinity) return { type: "number", value: "-Infinity" };
-            if (Object.is(value, -0)) return { type: "number", value: "-0" };
-            return { type: "number", value: value };
+        return this._serializeAsRemoteValue(value, serializationOptions, ownershipType, new Map);
+    }
+
+    _serializeAsRemoteValue(value, serializationOptions, ownershipType, serializationInternalMap)
+    {
+        switch (typeof value) {
+        case "undefined":
+            return { type: "undefined" };
+        case "string":
+            return { type: "string", value };
+        case "boolean":
+            return { type: "boolean", value };
+        case "bigint":
+            return { type: "bigint", value: value.toString() };
+        case "number":
+            return { type: "number", value: this._serializeNumber(value) };
         }
-        if (typeof value === "bigint") return { type: "bigint", value: value.toString() };
-        if (typeof value === "symbol") return { type: "symbol" };
-        if (typeof value === "function") return { type: "function" };
 
-        // Handle non-primitive types.
-        if (typeof value === "object" || typeof value === "function") {
-            // Special handling for window object.
-            if (value === window)
-                return { type: "window", value: { context: "context-id-placeholder" } };
+        if (value === null)
+            return { type: "null" };
 
-            // Handle Date, RegExp, Error, Promise.
-            if (value instanceof Date)
-                return { type: "date", value: value.toISOString() };
-            if (value instanceof RegExp)
-                return { type: "regexp", value: { pattern: value.source, flags: value.flags } };
-            if (value instanceof Error)
-                return { type: "error" };
-            if (value instanceof Promise)
-                return { type: "promise" };
+        let handle = this._handleForObject(value, ownershipType);
 
-            // Handle collection types with serialization.
-            if (value instanceof Map) {
-                let entries = [];
-                for (let [k, v] of value.entries()) {
-                    entries.push({
-                        key: this.serializeBidiRemoteValue(k, maxObjectDepth, depth + 1, visitedObjects),
-                        value: this.serializeBidiRemoteValue(v, maxObjectDepth, depth + 1, visitedObjects)
-                    });
-                }
-                return { type: "map", value: entries };
+        // A value seen earlier in this serialization is emitted as a reference to the first occurrence.
+        // This is also what terminates cycles.
+        let previouslySerialized = serializationInternalMap.get(value);
+        if (previouslySerialized) {
+            if (!previouslySerialized.internalId)
+                previouslySerialized.internalId = createUUID().toLowerCase();
+
+            let remoteValue = { type: previouslySerialized.type, internalId: previouslySerialized.internalId };
+            if (handle)
+                remoteValue.handle = handle;
+            return remoteValue;
+        }
+
+        let windowFrameIdentifier = frameIdentifierForWindow(value);
+        let type = this._remoteValueType(value, windowFrameIdentifier);
+        let remoteValue = { type };
+        if (handle)
+            remoteValue.handle = handle;
+
+        switch (type) {
+        case "array":
+        case "set":
+        case "nodelist":
+        case "htmlcollection":
+            serializationInternalMap.set(value, remoteValue);
+            if (serializationOptions.maxObjectDepth !== 0) {
+                let childOptions = this._serializationOptionsForChildValue(serializationOptions);
+                remoteValue.value = this._listItems(value, type).map(item => this._serializeAsRemoteValue(item, childOptions, "none", serializationInternalMap));
             }
-            if (value instanceof Set) {
-                let items = [];
-                for (let v of value.values())
-                    items.push(this.serializeBidiRemoteValue(v, maxObjectDepth, depth + 1, visitedObjects));
-                return { type: "set", value: items };
+            break;
+
+        case "map":
+        case "object":
+            serializationInternalMap.set(value, remoteValue);
+            if (serializationOptions.maxObjectDepth !== 0) {
+                let childOptions = this._serializationOptionsForChildValue(serializationOptions);
+                let entries = type === "map" ? Array.from(mapEntries.call(value)) : Object.entries(value);
+                remoteValue.value = entries.map(([key, item]) => {
+                    let serializedKey = typeof key === "string" ? key : this._serializeAsRemoteValue(key, childOptions, "none", serializationInternalMap);
+                    return [serializedKey, this._serializeAsRemoteValue(item, childOptions, "none", serializationInternalMap)];
+                });
             }
+            break;
 
-            // Handle weak collections and ArrayBuffer types.
-            if (value instanceof WeakMap)
-                return { type: "weakmap" };
-            if (value instanceof WeakSet)
-                return { type: "weakset" };
-            if (value instanceof ArrayBuffer)
-                return { type: "arraybuffer" };
-            if (ArrayBuffer.isView(value))
-                return { type: "typedarray" };
+        case "regexp":
+            remoteValue.value = { pattern: String(value.source), flags: String(value.flags) };
+            break;
 
-            // Check for cyclic references.
-            if (visitedObjects.has(value))
-                return { type: "object", value: {} };
-
-            // Check depth limit.
-            if (depth >= maxObjectDepth)
-                return { type: "object", value: {} };
-
-            visitedObjects.add(value);
-
+        case "date":
             try {
-                if (Array.isArray(value)) {
-                    let serializedArray = [];
-                    for (let i = 0; i < value.length; i++) {
-                        serializedArray[i] = this.serializeBidiRemoteValue(value[i], maxObjectDepth, depth + 1, visitedObjects);
-                    }
-                    return { type: "array", value: serializedArray };
-                } else {
-                    // Deterministic key ordering for plain objects.
-                    let serializedObject = {};
-                    let keys = Object.keys(value).sort();
-                    for (let i = 0; i < keys.length; ++i) {
-                        let key = keys[i];
-                        serializedObject[key] = this.serializeBidiRemoteValue(value[key], maxObjectDepth, depth + 1, visitedObjects);
-                    }
-                    return { type: "object", value: serializedObject };
-                }
-            } finally {
-                visitedObjects.delete(value);
+                remoteValue.value = dateToISOString.call(value);
+            } catch {
+                // toISOString() throws for invalid dates.
+                remoteValue.value = "Invalid Date";
             }
+            break;
+
+        case "node":
+            serializationInternalMap.set(value, remoteValue);
+            remoteValue.sharedId = this._identifierForNode(value);
+            remoteValue.value = this._serializeNode(value, serializationOptions, serializationInternalMap);
+            break;
+
+        case "window":
+            // The UI process replaces the frame identifier with the browsing context id.
+            if (windowFrameIdentifier)
+                remoteValue.value = { context: windowFrameIdentifier };
+            break;
         }
 
-        // Fallback for unknown types.
-        return { type: "undefined" };
+        return remoteValue;
+    }
+
+    _serializeNumber(value)
+    {
+        if (Number.isNaN(value))
+            return "NaN";
+        if (Object.is(value, -0))
+            return "-0";
+        if (value === Infinity)
+            return "Infinity";
+        if (value === -Infinity)
+            return "-Infinity";
+        return value;
+    }
+
+    _remoteValueType(value, windowFrameIdentifier)
+    {
+        if (typeof value === "symbol")
+            return "symbol";
+
+        // Check for proxies and windows first so that no trap or cross-origin access check runs below.
+        if (isProxy(value))
+            return "proxy";
+        if (windowFrameIdentifier !== null)
+            return "window";
+
+        if (Array.isArray(value))
+            return "array";
+        if (isRegExp(value))
+            return "regexp";
+        if (isDate(value))
+            return "date";
+        if (isMap(value))
+            return "map";
+        if (isSet(value))
+            return "set";
+        if (isWeakMap(value))
+            return "weakmap";
+        if (isWeakSet(value))
+            return "weakset";
+
+        switch (objectToString.call(value)) {
+        case "[object Generator]":
+        case "[object AsyncGenerator]":
+            return "generator";
+        case "[object Error]":
+            return "error";
+        case "[object Promise]":
+            return "promise";
+        }
+
+        if (isTypedArray(value))
+            return "typedarray";
+        if (isArrayBuffer(value))
+            return "arraybuffer";
+        if (isNodeList(value))
+            return "nodelist";
+        if (isHTMLCollection(value))
+            return "htmlcollection";
+        if (isNode(value))
+            return "node";
+        if (typeof value === "function")
+            return "function";
+        return "object";
+    }
+
+    _listItems(value, type)
+    {
+        if (type === "set")
+            return Array.from(setValues.call(value));
+
+        // Index rather than iterate, so that sparse arrays serialize holes as undefined.
+        let items = [];
+        for (let i = 0; i < value.length; ++i)
+            items.push(value[i]);
+        return items;
+    }
+
+    _serializationOptionsForChildValue(serializationOptions)
+    {
+        if (serializationOptions.maxObjectDepth === null)
+            return serializationOptions;
+        return { ...serializationOptions, maxObjectDepth: serializationOptions.maxObjectDepth - 1 };
+    }
+
+    _serializeNode(node, serializationOptions, serializationInternalMap)
+    {
+        let serialized = {
+            nodeType: node.nodeType,
+            childNodeCount: node.childNodes.length,
+        };
+
+        let nodeValue = node.nodeValue;
+        if (nodeValue !== null)
+            serialized.nodeValue = nodeValue;
+
+        let nodeIsElement = isElement(node);
+        if (nodeIsElement || isAttr(node)) {
+            serialized.localName = node.localName;
+            serialized.namespaceURI = node.namespaceURI;
+        }
+
+        let includeChildren = serializationOptions.maxDomDepth !== 0;
+        if (isShadowRoot(node)) {
+            serialized.mode = node.mode;
+            let includeShadowTree = serializationOptions.includeShadowTree;
+            if (includeShadowTree === "none" || (includeShadowTree === "open" && node.mode !== "open"))
+                includeChildren = false;
+        }
+
+        if (includeChildren) {
+            let childOptions = serializationOptions;
+            if (serializationOptions.maxDomDepth !== null)
+                childOptions = { ...serializationOptions, maxDomDepth: serializationOptions.maxDomDepth - 1 };
+            serialized.children = Array.from(node.childNodes, child => this._serializeAsRemoteValue(child, childOptions, "none", serializationInternalMap));
+        }
+
+        if (nodeIsElement) {
+            let attributes = Object.create(null);
+            for (let attribute of node.attributes)
+                attributes[attribute.name] = attribute.value;
+            serialized.attributes = attributes;
+
+            // The native helper also returns closed shadow roots, which page script cannot reach.
+            let shadowRoot = shadowRootForElement(node);
+            serialized.shadowRoot = shadowRoot ? this._serializeAsRemoteValue(shadowRoot, serializationOptions, "none", serializationInternalMap) : null;
+        }
+
+        return serialized;
+    }
+
+    _handleForObject(value, ownershipType)
+    {
+        if (ownershipType !== "root")
+            return null;
+
+        // FIXME: Release handles in script.disown <https://webkit.org/b/288059>.
+        let handle = createUUID().toLowerCase();
+        this._bidiHandles.set(handle, value);
+        return handle;
     }
 };
 

@@ -127,6 +127,15 @@ using AutomationCompletionHandler = WTF::CompletionHandler<void(std::optional<Au
 
 using PageAndFrameHandle = std::pair<Inspector::Protocol::Automation::BrowsingContextHandle, Inspector::Protocol::Automation::FrameHandle>;
 
+// https://w3c.github.io/webdriver-bidi/#type-script-SerializationOptions
+// A null depth means there is no limit.
+struct BidiSerializationOptions {
+    std::optional<uint64_t> maxDomDepth { 0 };
+    std::optional<uint64_t> maxObjectDepth;
+    String includeShadowTree { "none"_s };
+    bool resultOwnershipIsRoot { false };
+};
+
 class WebAutomationSession final : public API::ObjectImpl<API::Object::Type::AutomationSession>
     , public IPC::MessageReceiver
     , public Inspector::AutomationBackendDispatcherHandler
@@ -267,7 +276,7 @@ public:
     void reloadBrowsingContext(const String&, std::optional<Inspector::Protocol::Automation::PageLoadStrategy>&&, std::optional<double>&& pageLoadTimeout, Inspector::CommandCallback<void>&&) override;
     void waitForNavigationToComplete(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, std::optional<Inspector::Protocol::Automation::PageLoadStrategy>&&, std::optional<double>&& pageLoadTimeout, Inspector::CommandCallback<void>&&) override;
     void evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&&) override;
-    void evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& expression, bool awaitPromise, int maxObjectDepth, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&&);
+    void evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& expression, bool awaitPromise, const BidiSerializationOptions&, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&&);
     void performMouseInteraction(const Inspector::Protocol::Automation::BrowsingContextHandle&, Ref<JSON::Object>&& requestedPosition, Inspector::Protocol::Automation::MouseButton, Inspector::Protocol::Automation::MouseInteraction, Ref<JSON::Array>&& keyModifiers, Inspector::CommandCallback<Ref<Inspector::Protocol::Automation::Point>>&&) override;
     void performKeyboardInteractions(const Inspector::Protocol::Automation::BrowsingContextHandle&, Ref<JSON::Array>&& interactions, Inspector::CommandCallback<void>&&) override;
     void performInteractionSequence(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, Ref<JSON::Array>&& sources, Ref<JSON::Array>&& steps, Inspector::CommandCallback<void>&&) override;

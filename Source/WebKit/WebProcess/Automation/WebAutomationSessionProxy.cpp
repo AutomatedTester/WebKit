@@ -46,6 +46,7 @@
 #include <JavaScriptCore/JSObjectRef.h>
 #include <JavaScriptCore/JSStringRefPrivate.h>
 #include <JavaScriptCore/OpaqueJSString.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/SourceTaintedness.h>
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/AccessibilityObject.h>
@@ -69,12 +70,17 @@
 #include <WebCore/HTMLOptionElement.h>
 #include <WebCore/HTMLSelectElement.h>
 #include <WebCore/HitTestSource.h>
+#include <WebCore/JSDOMGlobalObject.h>
 #include <WebCore/JSElement.h>
+#include <WebCore/JSNode.h>
+#include <WebCore/JSWindowProxy.h>
 #include <WebCore/LocalDOMWindow.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/RenderElement.h>
 #include <WebCore/ScriptController.h>
+#include <WebCore/ShadowRoot.h>
+#include <WebCore/WindowProxy.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
@@ -290,6 +296,61 @@ static JSValueRef createUUID(JSContextRef context, JSObjectRef function, JSObjec
     return toJSValue(context, createVersion4UUIDString().convertToASCIIUppercase());
 }
 
+static JSValueRef isProxyCallback(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t rawArgumentCount, const JSValueRef rawArguments[], JSValueRef* exception)
+{
+    // This is using the JSC C API so we cannot take a std::span in argument directly.
+    auto arguments = unsafeMakeSpan(rawArguments, rawArgumentCount);
+    if (arguments.size() != 1)
+        return JSValueMakeBoolean(context, false);
+
+    JSC::JSGlobalObject* globalObject = toJS(context);
+    JSC::JSLockHolder locker(globalObject);
+    return JSValueMakeBoolean(context, !!dynamicDowncast<JSC::ProxyObject>(toJS(globalObject, arguments[0])));
+}
+
+static JSValueRef shadowRootForElementCallback(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t rawArgumentCount, const JSValueRef rawArguments[], JSValueRef* exception)
+{
+    // This is using the JSC C API so we cannot take a std::span in argument directly.
+    auto arguments = unsafeMakeSpan(rawArguments, rawArgumentCount);
+    if (arguments.size() != 1)
+        return JSValueMakeNull(context);
+
+    JSC::JSGlobalObject* globalObject = toJS(context);
+    JSC::JSLockHolder locker(globalObject);
+    auto* domGlobalObject = dynamicDowncast<WebCore::JSDOMGlobalObject>(globalObject);
+    auto* elementWrapper = dynamicDowncast<WebCore::JSElement>(toJS(globalObject, arguments[0]));
+    if (!domGlobalObject || !elementWrapper)
+        return JSValueMakeNull(context);
+
+    // Unlike Element.shadowRoot, this also returns closed shadow roots, as WebDriver BiDi serialization requires.
+    RefPtr shadowRoot = elementWrapper->wrapped().shadowRoot();
+    if (!shadowRoot || shadowRoot->mode() == WebCore::ShadowRootMode::UserAgent)
+        return JSValueMakeNull(context);
+
+    return toRef(globalObject, WebCore::toJS(globalObject, domGlobalObject, static_cast<WebCore::Node&>(*shadowRoot)));
+}
+
+static JSValueRef frameIdentifierForWindowCallback(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t rawArgumentCount, const JSValueRef rawArguments[], JSValueRef* exception)
+{
+    // This is using the JSC C API so we cannot take a std::span in argument directly.
+    auto arguments = unsafeMakeSpan(rawArguments, rawArgumentCount);
+    if (arguments.size() != 1)
+        return JSValueMakeNull(context);
+
+    JSC::JSGlobalObject* globalObject = toJS(context);
+    JSC::JSLockHolder locker(globalObject);
+    RefPtr windowProxy = WebCore::JSWindowProxy::toWrapped(globalObject->vm(), toJS(globalObject, arguments[0]));
+    if (!windowProxy)
+        return JSValueMakeNull(context);
+
+    // A window whose browsing context is gone is still a window, it just has no browsing context id.
+    RefPtr frame = windowProxy->frame();
+    if (!frame)
+        return JSValueMakeNumber(context, 0);
+
+    return JSValueMakeNumber(context, frame->frameID().toUInt64());
+}
+
 String WebAutomationSessionProxy::errorTypeFromJavaScriptExceptionName(const String& exceptionName)
 {
     auto errorType = Inspector::Protocol::AutomationHelpers::parseEnumValueFromString<Inspector::Protocol::Automation::ErrorMessage>(exceptionName)
@@ -397,7 +458,10 @@ JSObjectRef WebAutomationSessionProxy::scriptObjectForFrame(WebFrame& frame)
     JSObjectRef isValidNodeIdentifierFunction = JSObjectMakeFunctionWithCallback(context, nullptr, isValidNodeIdentifier);
     JSObjectRef isKnownReferenceFunction = JSObjectMakeFunctionWithCallback(context, nullptr, isKnownReferenceCallback);
     JSObjectRef addKnownReferenceFunction = JSObjectMakeFunctionWithCallback(context, nullptr, addKnownReferenceCallback);
-    JSValueRef arguments[] = { sessionIdentifier, currentFrameIdentifier, evaluateFunction, createUUIDFunction, isValidNodeIdentifierFunction, isKnownReferenceFunction, addKnownReferenceFunction };
+    JSObjectRef isProxyFunction = JSObjectMakeFunctionWithCallback(context, nullptr, isProxyCallback);
+    JSObjectRef shadowRootForElementFunction = JSObjectMakeFunctionWithCallback(context, nullptr, shadowRootForElementCallback);
+    JSObjectRef frameIdentifierForWindowFunction = JSObjectMakeFunctionWithCallback(context, nullptr, frameIdentifierForWindowCallback);
+    JSValueRef arguments[] = { sessionIdentifier, currentFrameIdentifier, evaluateFunction, createUUIDFunction, isValidNodeIdentifierFunction, isKnownReferenceFunction, addKnownReferenceFunction, isProxyFunction, shadowRootForElementFunction, frameIdentifierForWindowFunction };
     JSObjectRef scriptObject = const_cast<JSObjectRef>(JSObjectCallAsFunction(context, scriptObjectFunction, nullptr, std::size(arguments), arguments, &exception));
     ASSERT(JSValueIsObject(context, scriptObject));
 
@@ -614,7 +678,7 @@ void WebAutomationSessionProxy::didEvaluateJavaScriptFunction(WebCore::FrameIden
         callback(String(result), String(errorType));
 }
 
-void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& expression, bool awaitPromise, int maxObjectDepth, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
+void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& expression, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
 {
     RefPtr page = WebProcess::singleton().webPage(pageID);
     if (!page)
@@ -644,7 +708,10 @@ void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageI
     JSValueRef functionArguments[] = {
         toJSValue(context, expression),
         JSValueMakeBoolean(context, awaitPromise),
-        JSValueMakeNumber(context, maxObjectDepth),
+        maxDomDepth ? JSValueMakeNumber(context, static_cast<double>(*maxDomDepth)) : JSValueMakeNull(context),
+        maxObjectDepth ? JSValueMakeNumber(context, static_cast<double>(*maxObjectDepth)) : JSValueMakeNull(context),
+        toJSValue(context, includeShadowTree),
+        toJSValue(context, resultOwnershipIsRoot ? "root"_s : "none"_s),
         JSValueMakeNumber(context, frameID.toUInt64()),
         JSValueMakeNumber(context, callbackID.toUInt64()),
         JSObjectMakeFunctionWithCallback(context, nullptr, evaluateJavaScriptCallback),
