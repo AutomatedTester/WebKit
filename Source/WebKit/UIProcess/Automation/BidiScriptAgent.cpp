@@ -52,6 +52,7 @@
 #include <wtf/ProcessID.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebKit {
@@ -186,34 +187,183 @@ static std::expected<BidiSerializationOptions, AutomationCommandError> parseSeri
     return options;
 }
 
+// The JSON parser already limits nesting, but cap recursion here too so the UIProcess stack
+// stays bounded regardless of how the LocalValue was produced.
+static constexpr unsigned maximumLocalValueDepth = 512;
+
+using LocalValueExpression = std::expected<String, AutomationCommandError>;
+
+static std::unexpected<AutomationCommandError> invalidLocalValue(const String& message)
+{
+    return std::unexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(InvalidParameter, message));
+}
+
+static bool isValidBigIntValue(StringView value)
+{
+    if (value.startsWith('-'))
+        value = value.substring(1);
+    return !value.isEmpty() && value.containsOnly<isASCIIDigit>();
+}
+
+// Converts a BiDi LocalValue JSON object into a JavaScript source expression string.
+// Used to construct the argument list and this-value for script.callFunction.
+// Every client-provided string is either validated or escaped through toJSONString(), since the
+// result is spliced into script source.
+static LocalValueExpression localValueToJSExpression(const JSON::Value& localValue, unsigned depth = 0)
+{
+    if (depth > maximumLocalValueDepth)
+        return invalidLocalValue("LocalValue exceeds the maximum nesting depth"_s);
+
+    auto object = localValue.asObject();
+    if (!object)
+        return invalidLocalValue("LocalValue must be an object"_s);
+
+    String typeString = object->getString("type"_s);
+    if (typeString.isNull()) {
+        // A remote reference has no "type" field (it uses sharedId / handle instead).
+        // FIXME: implement remote reference lookup https://bugs.webkit.org/show_bug.cgi?id=288057
+        if (object->getValue("handle"_s) || object->getValue("sharedId"_s))
+            return std::unexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(NotImplemented, "Remote references are not yet supported"_s));
+        return invalidLocalValue("LocalValue is missing a type"_s);
+    }
+
+    if (typeString == "undefined"_s)
+        return "undefined"_s;
+    if (typeString == "null"_s)
+        return "null"_s;
+
+    if (typeString == "boolean"_s) {
+        auto value = object->getBoolean("value"_s);
+        if (!value)
+            return invalidLocalValue("boolean LocalValue must have a boolean value"_s);
+        return *value ? "true"_s : "false"_s;
+    }
+
+    if (typeString == "string"_s) {
+        String value = object->getString("value"_s);
+        if (value.isNull())
+            return invalidLocalValue("string LocalValue must have a string value"_s);
+        return JSON::Value::create(value)->toJSONString();
+    }
+
+    if (typeString == "number"_s) {
+        if (auto number = object->getDouble("value"_s))
+            return JSON::Value::create(*number)->toJSONString();
+        String special = object->getString("value"_s);
+        if (special == "NaN"_s || special == "Infinity"_s || special == "-Infinity"_s || special == "-0"_s)
+            return special;
+        return invalidLocalValue("number LocalValue has an invalid value"_s);
+    }
+
+    if (typeString == "bigint"_s) {
+        String value = object->getString("value"_s);
+        if (!isValidBigIntValue(value))
+            return invalidLocalValue("bigint LocalValue has an invalid value"_s);
+        return makeString(value, 'n');
+    }
+
+    if (typeString == "date"_s) {
+        String value = object->getString("value"_s);
+        if (value.isNull())
+            return invalidLocalValue("date LocalValue must have a string value"_s);
+        return makeString("new Date("_s, JSON::Value::create(value)->toJSONString(), ')');
+    }
+
+    if (typeString == "regexp"_s) {
+        RefPtr valueObject = object->getObject("value"_s);
+        if (!valueObject)
+            return invalidLocalValue("regexp LocalValue must have an object value"_s);
+        String pattern = valueObject->getString("pattern"_s);
+        if (pattern.isNull())
+            return invalidLocalValue("regexp LocalValue must have a pattern"_s);
+        String patternJSON = JSON::Value::create(pattern)->toJSONString();
+        String flags = valueObject->getString("flags"_s);
+        if (flags.isEmpty())
+            return makeString("new RegExp("_s, patternJSON, ')');
+        return makeString("new RegExp("_s, patternJSON, ',', JSON::Value::create(flags)->toJSONString(), ')');
+    }
+
+    if (typeString == "array"_s || typeString == "set"_s) {
+        RefPtr valueArray = object->getArray("value"_s);
+        if (!valueArray)
+            return invalidLocalValue(makeString(typeString, " LocalValue must have an array value"_s));
+        StringBuilder builder;
+        builder.append(typeString == "set"_s ? "new Set(["_s : "["_s);
+        for (unsigned i = 0; i < valueArray->length(); ++i) {
+            auto element = localValueToJSExpression(valueArray->get(i), depth + 1);
+            if (!element)
+                return std::unexpected(WTF::move(element.error()));
+            if (i)
+                builder.append(',');
+            builder.append(*element);
+        }
+        builder.append(typeString == "set"_s ? "])"_s : "]"_s);
+        return builder.toString();
+    }
+
+    if (typeString == "object"_s || typeString == "map"_s) {
+        // MappingLocalValue = [*[(LocalValue / text), LocalValue]]
+        bool isMap = typeString == "map"_s;
+        RefPtr mappingArray = object->getArray("value"_s);
+        if (!mappingArray)
+            return invalidLocalValue(makeString(typeString, " LocalValue must have an array value"_s));
+        StringBuilder builder;
+        builder.append(isMap ? "new Map(["_s : "({"_s);
+        for (unsigned i = 0; i < mappingArray->length(); ++i) {
+            RefPtr pair = mappingArray->get(i)->asArray();
+            if (!pair || pair->length() != 2)
+                return invalidLocalValue(makeString(typeString, " LocalValue entries must be [key, value] pairs"_s));
+
+            Ref keyValue = pair->get(0);
+            String keyExpression;
+            if (String key = keyValue->asString(); !key.isNull())
+                keyExpression = JSON::Value::create(key)->toJSONString();
+            else {
+                auto keyLocalValue = localValueToJSExpression(keyValue.get(), depth + 1);
+                if (!keyLocalValue)
+                    return std::unexpected(WTF::move(keyLocalValue.error()));
+                keyExpression = WTF::move(*keyLocalValue);
+            }
+
+            auto value = localValueToJSExpression(pair->get(1), depth + 1);
+            if (!value)
+                return std::unexpected(WTF::move(value.error()));
+
+            if (i)
+                builder.append(',');
+            if (isMap)
+                builder.append('[', keyExpression, ',', *value, ']');
+            else
+                builder.append('[', keyExpression, "]:"_s, *value);
+        }
+        builder.append(isMap ? "])"_s : "})"_s);
+        return builder.toString();
+    }
+
+    if (typeString == "channel"_s) {
+        // FIXME: implement channel deserialization https://bugs.webkit.org/show_bug.cgi?id=288057
+        return std::unexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(NotImplemented, "channel arguments are not yet supported"_s));
+    }
+
+    return invalidLocalValue(makeString("Unknown LocalValue type: "_s, typeString));
+}
+
+// FIXME: Implement RemoteReference and Channel types https://bugs.webkit.org/show_bug.cgi?id=288057
 static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
 {
-    // Deserializes a BiDi LocalValue into a JSON::Value that can be passed to evaluateJavaScriptFunction.
-    // Per WebDriver BiDi spec: https://w3c.github.io/webdriver-bidi/#type-script-LocalValue
-    // LocalValue represents primitive values (string, number, boolean, etc.) as well as structured
-    // types (array, object, map, set, date, regexp). This function converts them into a format
-    // that WebKit's script evaluation machinery can consume.
-    //
-    // FIXME: Implement RemoteReference and Channel types.
-    // https://bugs.webkit.org/show_bug.cgi?id=288057
-
     auto object = jsonValue.asObject();
-    if (!object) {
-        // If it's not a LocalValue object, pass it through as-is (backwards compatibility).
+    if (!object)
         return const_cast<JSON::Value&>(jsonValue);
-    }
 
     String typeString = object->getString("type"_s);
 
-    // Primitive types: string, number, bigint, boolean, undefined, null
     if (typeString == "string"_s)
         return JSON::Value::create(object->getString("value"_s));
 
     if (typeString == "number"_s) {
-        // Numbers can be represented as either a double or a special string (NaN, Infinity, -Infinity, -0).
         if (auto num = object->getDouble("value"_s))
             return JSON::Value::create(*num);
-        // Special number values like "NaN", "Infinity", "-Infinity", "-0" are strings in BiDi.
+        // FIXME: special values NaN, Infinity, -Infinity, -0 are lost here since JSON has no representation for them.
         return JSON::Value::create(object->getString("value"_s));
     }
 
@@ -223,30 +373,21 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return JSON::Value::create(false);
     }
 
-    if (typeString == "bigint"_s) {
-        // BigInt values are represented as strings in BiDi (e.g., "42n").
-        // Pass them through as strings since JSON doesn't have native bigint support.
+    if (typeString == "bigint"_s)
         return JSON::Value::create(object->getString("value"_s));
-    }
 
-    if (typeString == "undefined"_s)
-        return JSON::Value::null(); // JSON doesn't have undefined, use null as proxy.
-
-    if (typeString == "null"_s)
+    if (typeString == "undefined"_s || typeString == "null"_s)
         return JSON::Value::null();
 
-    // Date type: ISO 8601 string
     if (typeString == "date"_s)
         return JSON::Value::create(object->getString("value"_s));
 
-    // RegExp type: object with pattern and flags
     if (typeString == "regexp"_s) {
         if (auto value = object->getValue("value"_s))
             return value.releaseNonNull();
         return JSON::Value::null();
     }
 
-    // Array type: recursive deserialization
     if (typeString == "array"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -260,31 +401,24 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // Object type: recursive deserialization of properties
     if (typeString == "object"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
             return JSON::Object::create();
 
         auto resultObject = JSON::Object::create();
-        // Per BiDi spec, object value is an array of [key, value] pairs.
         for (unsigned i = 0; i < valueArray->length(); ++i) {
-            auto pairValue = valueArray->get(i);
-            auto pairArray = pairValue->asArray();
+            auto pairArray = valueArray->get(i)->asArray();
             if (!pairArray || pairArray->length() < 2)
                 continue;
 
-            // Extract key (must be string or convertible to string)
-            String key;
             Ref keyValue = pairArray->get(0);
-            if (auto keyObj = keyValue->asObject()) {
-                // If key is a LocalValue, deserialize it first
-                auto deserializedKey = deserializeLocalValue(keyValue.get());
-                key = deserializedKey->asString();
-            } else
+            String key;
+            if (keyValue->asObject())
+                key = deserializeLocalValue(keyValue.get())->asString();
+            else
                 key = keyValue->asString();
 
-            // Extract value
             if (!key.isEmpty()) {
                 Ref valueElement = pairArray->get(1);
                 resultObject->setValue(key, deserializeLocalValue(valueElement.get()));
@@ -293,7 +427,6 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultObject;
     }
 
-    // Map type: convert to array of [key, value] pairs
     if (typeString == "map"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -317,7 +450,6 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // Set type: convert to array
     if (typeString == "set"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -331,16 +463,15 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // For any unknown types or unsupported types, return null as a safe fallback.
     return JSON::Value::null();
 }
 
-void BidiScriptAgent::callFunction(const String& functionDeclaration, bool awaitPromise, Ref<JSON::Object>&& target, RefPtr<JSON::Array>&& arguments, std::optional<Inspector::Protocol::BidiScript::ResultOwnership>&&, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Object>&& optionalThis, std::optional<bool>&& optionalUserActivation, CommandCallbackOf<Inspector::Protocol::BidiScript::EvaluateResultType, String, RefPtr<Inspector::Protocol::BidiScript::RemoteValue>, RefPtr<Inspector::Protocol::BidiScript::ExceptionDetails>>&& callback)
+void BidiScriptAgent::callFunction(const String& functionDeclaration, bool awaitPromise, Ref<JSON::Object>&& target, RefPtr<JSON::Array>&& arguments, std::optional<Inspector::Protocol::BidiScript::ResultOwnership>&& optionalResultOwnership, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Object>&& optionalThis, std::optional<bool>&& optionalUserActivation, CommandCallbackOf<Inspector::Protocol::BidiScript::EvaluateResultType, String, RefPtr<Inspector::Protocol::BidiScript::RemoteValue>, RefPtr<Inspector::Protocol::BidiScript::ExceptionDetails>>&& callback)
 {
     RefPtr session = m_session.get();
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
 
-    // FIXME: handle non-BrowsingContext obtained from `Target`.
+    // FIXME: handle non-BrowsingContext obtained from `Target` (realm targets).
     std::optional<BrowsingContext> browsingContext = target->getString("context"_s);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!browsingContext, InvalidParameter);
 
@@ -348,69 +479,42 @@ void BidiScriptAgent::callFunction(const String& functionDeclaration, bool await
     ASYNC_FAIL_IF_UNEXPECTED_RESULT(pageAndFrameHandles);
     auto& [topLevelContextHandle, frameHandle] = pageAndFrameHandles.value();
 
-    // FIXME: handle `awaitPromise` option.
-    // FIXME: handle `resultOwnership` option.
-    // FIXME: handle `serializationOptions` option.
-    // FIXME: handle custom `this` option.
-    // FIXME: handle `userActivation` option.
+    auto serializationOptions = parseSerializationOptions(WTF::move(optionalSerializationOptions), optionalResultOwnership);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(serializationOptions);
 
-    // Deserialize LocalValue arguments into plain JSON values for script evaluation.
-    // FIXME: Implement RemoteReference and Channel types for arguments <https://webkit.org/b/288057>
-    auto argumentsArray = JSON::Array::create();
+    // FIXME: handle `userActivation` option. evaluateBidiScript cannot run the script with a user
+    // gesture yet, so the value is ignored.
+
+    String thisExpression = "undefined"_s;
+    if (optionalThis) {
+        auto expression = localValueToJSExpression(*optionalThis);
+        ASYNC_FAIL_IF_UNEXPECTED_RESULT(expression);
+        thisExpression = WTF::move(*expression);
+    }
+
+    StringBuilder argumentsBuilder;
     if (arguments) {
         for (unsigned i = 0; i < arguments->length(); ++i) {
-            Ref argValue = arguments->get(i);
-            argumentsArray->pushValue(deserializeLocalValue(argValue.get()));
+            auto expression = localValueToJSExpression(arguments->get(i));
+            ASYNC_FAIL_IF_UNEXPECTED_RESULT(expression);
+            argumentsBuilder.append(',', *expression);
         }
     }
 
+    // Wrap as (fn).call(this, args) so evaluateBidiScript serializes the result as a BiDi RemoteValue.
+    // The newlines keep a trailing line comment in functionDeclaration from swallowing the call.
+    // https://bugs.webkit.org/show_bug.cgi?id=288058
+    String callExpression = makeString("(\n"_s, functionDeclaration, "\n).call("_s, thisExpression, argumentsBuilder.toString(), ')');
+
     String realmID = generateRealmIdForBrowsingContext(*browsingContext);
-    session->evaluateJavaScriptFunction(topLevelContextHandle, frameHandle, functionDeclaration, WTF::move(argumentsArray), false, optionalUserActivation.value_or(false), std::nullopt, [callback = WTF::move(callback), realmID](Inspector::CommandResult<String>&& stringResult) {
-        // FIXME: Properly serialize RemoteValue types according to WebDriver BiDi spec.
-        // https://bugs.webkit.org/show_bug.cgi?id=301159
 
-        // FIXME: Properly fill ExceptionDetails remaining fields once we have a way to get them instead of just the error message.
-        // https://bugs.webkit.org/show_bug.cgi?id=288058
-        if (!stringResult) {
-            if (stringResult.error().startsWith("JavaScriptError"_s)) {
-                String errorMessage = stringResult.error().substring("JavaScriptError;"_s.length());
-                // Construct error object structure for RemoteValue.value per BiDi spec.
-                auto errorObject = JSON::Object::create();
-                errorObject->setString("message"_s, errorMessage);
-                auto exceptionValue = Inspector::Protocol::BidiScript::RemoteValue::create()
-                    .setType(Inspector::Protocol::BidiScript::RemoteValueType::Error)
-                    .release();
-                exceptionValue->setValue(WTF::move(errorObject));
-                auto stackTrace = Inspector::Protocol::BidiScript::StackTrace::create()
-                    .setCallFrames(JSON::ArrayOf<Inspector::Protocol::BidiScript::StackFrame>::create())
-                    .release();
-                auto exceptionDetails = Inspector::Protocol::BidiScript::ExceptionDetails::create()
-                    .setText(errorMessage)
-                    .setLineNumber(0)
-                    .setColumnNumber(0)
-                    .setException(WTF::move(exceptionValue))
-                    .setStackTrace(WTF::move(stackTrace))
-                    .release();
-
-                callback({ { EvaluateResultType::Exception, realmID, nullptr, WTF::move(exceptionDetails) } });
+    session->evaluateBidiScript(topLevelContextHandle, frameHandle, callExpression, awaitPromise, *serializationOptions, std::nullopt,
+        [weakThis = WeakPtr { *this }, callback = WTF::move(callback), realmID = realmID.isolatedCopy(), callExpression = callExpression.isolatedCopy()](Inspector::CommandResult<String>&& result) mutable {
+            CheckedPtr protectedThis = weakThis;
+            if (!protectedThis)
                 return;
-            }
-
-            callback(makeUnexpected(stringResult.error()));
-            return;
-        }
-
-        auto resultValue = JSON::Value::parseJSON(stringResult.value());
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!resultValue, InternalError, "Failed to parse callFunction result as JSON"_s);
-
-        auto resultObject = Inspector::Protocol::BidiScript::RemoteValue::create()
-            .setType(Inspector::Protocol::BidiScript::RemoteValueType::Object)
-            .release();
-
-        resultObject->setValue(resultValue.releaseNonNull());
-
-        callback({ { EvaluateResultType::Success, realmID, WTF::move(resultObject), nullptr } });
-    });
+            protectedThis->finishEvaluateBidiScriptResult(realmID, callExpression, WTF::move(result), WTF::move(callback));
+        });
 }
 
 void BidiScriptAgent::disown(Ref<JSON::Array>&& handles, Ref<JSON::Object>&& target, CommandCallback<void>&& callback)
