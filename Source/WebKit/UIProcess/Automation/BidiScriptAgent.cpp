@@ -186,34 +186,22 @@ static std::expected<BidiSerializationOptions, AutomationCommandError> parseSeri
     return options;
 }
 
+// FIXME: Implement RemoteReference and Channel types https://bugs.webkit.org/show_bug.cgi?id=288057
 static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
 {
-    // Deserializes a BiDi LocalValue into a JSON::Value that can be passed to evaluateJavaScriptFunction.
-    // Per WebDriver BiDi spec: https://w3c.github.io/webdriver-bidi/#type-script-LocalValue
-    // LocalValue represents primitive values (string, number, boolean, etc.) as well as structured
-    // types (array, object, map, set, date, regexp). This function converts them into a format
-    // that WebKit's script evaluation machinery can consume.
-    //
-    // FIXME: Implement RemoteReference and Channel types.
-    // https://bugs.webkit.org/show_bug.cgi?id=288057
-
     auto object = jsonValue.asObject();
-    if (!object) {
-        // If it's not a LocalValue object, pass it through as-is (backwards compatibility).
+    if (!object)
         return const_cast<JSON::Value&>(jsonValue);
-    }
 
     String typeString = object->getString("type"_s);
 
-    // Primitive types: string, number, bigint, boolean, undefined, null
     if (typeString == "string"_s)
         return JSON::Value::create(object->getString("value"_s));
 
     if (typeString == "number"_s) {
-        // Numbers can be represented as either a double or a special string (NaN, Infinity, -Infinity, -0).
         if (auto num = object->getDouble("value"_s))
             return JSON::Value::create(*num);
-        // Special number values like "NaN", "Infinity", "-Infinity", "-0" are strings in BiDi.
+        // FIXME: special values NaN, Infinity, -Infinity, -0 are lost here since JSON has no representation for them.
         return JSON::Value::create(object->getString("value"_s));
     }
 
@@ -223,30 +211,21 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return JSON::Value::create(false);
     }
 
-    if (typeString == "bigint"_s) {
-        // BigInt values are represented as strings in BiDi (e.g., "42n").
-        // Pass them through as strings since JSON doesn't have native bigint support.
+    if (typeString == "bigint"_s)
         return JSON::Value::create(object->getString("value"_s));
-    }
 
-    if (typeString == "undefined"_s)
-        return JSON::Value::null(); // JSON doesn't have undefined, use null as proxy.
-
-    if (typeString == "null"_s)
+    if (typeString == "undefined"_s || typeString == "null"_s)
         return JSON::Value::null();
 
-    // Date type: ISO 8601 string
     if (typeString == "date"_s)
         return JSON::Value::create(object->getString("value"_s));
 
-    // RegExp type: object with pattern and flags
     if (typeString == "regexp"_s) {
         if (auto value = object->getValue("value"_s))
             return value.releaseNonNull();
         return JSON::Value::null();
     }
 
-    // Array type: recursive deserialization
     if (typeString == "array"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -260,31 +239,24 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // Object type: recursive deserialization of properties
     if (typeString == "object"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
             return JSON::Object::create();
 
         auto resultObject = JSON::Object::create();
-        // Per BiDi spec, object value is an array of [key, value] pairs.
         for (unsigned i = 0; i < valueArray->length(); ++i) {
-            auto pairValue = valueArray->get(i);
-            auto pairArray = pairValue->asArray();
+            auto pairArray = valueArray->get(i)->asArray();
             if (!pairArray || pairArray->length() < 2)
                 continue;
 
-            // Extract key (must be string or convertible to string)
-            String key;
             Ref keyValue = pairArray->get(0);
-            if (auto keyObj = keyValue->asObject()) {
-                // If key is a LocalValue, deserialize it first
-                auto deserializedKey = deserializeLocalValue(keyValue.get());
-                key = deserializedKey->asString();
-            } else
+            String key;
+            if (keyValue->asObject())
+                key = deserializeLocalValue(keyValue.get())->asString();
+            else
                 key = keyValue->asString();
 
-            // Extract value
             if (!key.isEmpty()) {
                 Ref valueElement = pairArray->get(1);
                 resultObject->setValue(key, deserializeLocalValue(valueElement.get()));
@@ -293,7 +265,6 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultObject;
     }
 
-    // Map type: convert to array of [key, value] pairs
     if (typeString == "map"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -317,7 +288,6 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // Set type: convert to array
     if (typeString == "set"_s) {
         auto valueArray = object->getArray("value"_s);
         if (!valueArray)
@@ -331,16 +301,15 @@ static Ref<JSON::Value> deserializeLocalValue(const JSON::Value& jsonValue)
         return resultArray;
     }
 
-    // For any unknown types or unsupported types, return null as a safe fallback.
     return JSON::Value::null();
 }
 
-void BidiScriptAgent::callFunction(const String& functionDeclaration, bool awaitPromise, Ref<JSON::Object>&& target, RefPtr<JSON::Array>&& arguments, std::optional<Inspector::Protocol::BidiScript::ResultOwnership>&&, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Object>&& optionalThis, std::optional<bool>&& optionalUserActivation, CommandCallbackOf<Inspector::Protocol::BidiScript::EvaluateResultType, String, RefPtr<Inspector::Protocol::BidiScript::RemoteValue>, RefPtr<Inspector::Protocol::BidiScript::ExceptionDetails>>&& callback)
+void BidiScriptAgent::callFunction(const String& functionDeclaration, bool awaitPromise, Ref<JSON::Object>&& target, RefPtr<JSON::Array>&& arguments, std::optional<Inspector::Protocol::BidiScript::ResultOwnership>&& optionalResultOwnership, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Object>&& optionalThis, std::optional<bool>&& optionalUserActivation, CommandCallbackOf<Inspector::Protocol::BidiScript::EvaluateResultType, String, RefPtr<Inspector::Protocol::BidiScript::RemoteValue>, RefPtr<Inspector::Protocol::BidiScript::ExceptionDetails>>&& callback)
 {
     RefPtr session = m_session.get();
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
 
-    // FIXME: handle non-BrowsingContext obtained from `Target`.
+    // FIXME: handle non-BrowsingContext obtained from `Target` (realm targets).
     std::optional<BrowsingContext> browsingContext = target->getString("context"_s);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!browsingContext, InvalidParameter);
 
@@ -348,69 +317,26 @@ void BidiScriptAgent::callFunction(const String& functionDeclaration, bool await
     ASYNC_FAIL_IF_UNEXPECTED_RESULT(pageAndFrameHandles);
     auto& [topLevelContextHandle, frameHandle] = pageAndFrameHandles.value();
 
-    // FIXME: handle `awaitPromise` option.
-    // FIXME: handle `resultOwnership` option.
-    // FIXME: handle `serializationOptions` option.
-    // FIXME: handle custom `this` option.
-    // FIXME: handle `userActivation` option.
+    auto serializationOptions = parseSerializationOptions(WTF::move(optionalSerializationOptions), optionalResultOwnership);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(serializationOptions);
 
-    // Deserialize LocalValue arguments into plain JSON values for script evaluation.
-    // FIXME: Implement RemoteReference and Channel types for arguments <https://webkit.org/b/288057>
-    auto argumentsArray = JSON::Array::create();
-    if (arguments) {
-        for (unsigned i = 0; i < arguments->length(); ++i) {
-            Ref argValue = arguments->get(i);
-            argumentsArray->pushValue(deserializeLocalValue(argValue.get()));
-        }
-    }
+    // FIXME: handle `userActivation` option. callBidiFunction cannot run the script with a user
+    // gesture yet, so the value is ignored.
+
+    // The this-value and arguments are deserialized by the injected script, where remote references
+    // to objects and nodes of the target realm can be resolved.
+    String thisLocalValue = optionalThis ? optionalThis->toJSONString() : String();
+    String argumentLocalValues = arguments ? arguments->toJSONString() : "[]"_s;
 
     String realmID = generateRealmIdForBrowsingContext(*browsingContext);
-    session->evaluateJavaScriptFunction(topLevelContextHandle, frameHandle, functionDeclaration, WTF::move(argumentsArray), false, optionalUserActivation.value_or(false), std::nullopt, [callback = WTF::move(callback), realmID](Inspector::CommandResult<String>&& stringResult) {
-        // FIXME: Properly serialize RemoteValue types according to WebDriver BiDi spec.
-        // https://bugs.webkit.org/show_bug.cgi?id=301159
 
-        // FIXME: Properly fill ExceptionDetails remaining fields once we have a way to get them instead of just the error message.
-        // https://bugs.webkit.org/show_bug.cgi?id=288058
-        if (!stringResult) {
-            if (stringResult.error().startsWith("JavaScriptError"_s)) {
-                String errorMessage = stringResult.error().substring("JavaScriptError;"_s.length());
-                // Construct error object structure for RemoteValue.value per BiDi spec.
-                auto errorObject = JSON::Object::create();
-                errorObject->setString("message"_s, errorMessage);
-                auto exceptionValue = Inspector::Protocol::BidiScript::RemoteValue::create()
-                    .setType(Inspector::Protocol::BidiScript::RemoteValueType::Error)
-                    .release();
-                exceptionValue->setValue(WTF::move(errorObject));
-                auto stackTrace = Inspector::Protocol::BidiScript::StackTrace::create()
-                    .setCallFrames(JSON::ArrayOf<Inspector::Protocol::BidiScript::StackFrame>::create())
-                    .release();
-                auto exceptionDetails = Inspector::Protocol::BidiScript::ExceptionDetails::create()
-                    .setText(errorMessage)
-                    .setLineNumber(0)
-                    .setColumnNumber(0)
-                    .setException(WTF::move(exceptionValue))
-                    .setStackTrace(WTF::move(stackTrace))
-                    .release();
-
-                callback({ { EvaluateResultType::Exception, realmID, nullptr, WTF::move(exceptionDetails) } });
+    session->callBidiFunction(topLevelContextHandle, frameHandle, functionDeclaration, thisLocalValue, argumentLocalValues, awaitPromise, *serializationOptions,
+        [weakThis = WeakPtr { *this }, callback = WTF::move(callback), realmID = realmID.isolatedCopy(), functionDeclaration = functionDeclaration.isolatedCopy()](Inspector::CommandResult<String>&& result) mutable {
+            CheckedPtr protectedThis = weakThis;
+            if (!protectedThis)
                 return;
-            }
-
-            callback(makeUnexpected(stringResult.error()));
-            return;
-        }
-
-        auto resultValue = JSON::Value::parseJSON(stringResult.value());
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!resultValue, InternalError, "Failed to parse callFunction result as JSON"_s);
-
-        auto resultObject = Inspector::Protocol::BidiScript::RemoteValue::create()
-            .setType(Inspector::Protocol::BidiScript::RemoteValueType::Object)
-            .release();
-
-        resultObject->setValue(resultValue.releaseNonNull());
-
-        callback({ { EvaluateResultType::Success, realmID, WTF::move(resultObject), nullptr } });
-    });
+            protectedThis->finishEvaluateBidiScriptResult(realmID, functionDeclaration, WTF::move(result), WTF::move(callback));
+        });
 }
 
 void BidiScriptAgent::disown(Ref<JSON::Array>&& handles, Ref<JSON::Object>&& target, CommandCallback<void>&& callback)
@@ -496,6 +422,16 @@ void BidiScriptAgent::finishEvaluateBidiScriptResult(const String& realmID, cons
     using namespace Inspector::Protocol;
 
     if (!result.has_value()) {
+        // Errors such as an invalid argument, an unknown handle or an unknown node fail the command.
+        // https://w3c.github.io/webdriver-bidi/#deserialize-local-value
+        auto separatorIndex = result.error().find(errorNameAndDetailsSeparator);
+        auto errorName = separatorIndex == notFound ? result.error() : result.error().left(separatorIndex);
+        auto errorMessage = Inspector::Protocol::AutomationHelpers::parseEnumValueFromString<Inspector::Protocol::Automation::ErrorMessage>(errorName);
+        if (errorMessage && *errorMessage != Inspector::Protocol::Automation::ErrorMessage::InternalError && *errorMessage != Inspector::Protocol::Automation::ErrorMessage::JavaScriptError) {
+            callback(makeUnexpected(result.error()));
+            return;
+        }
+
         // IPC or internal error - NOT a JavaScript exception.
         // Include diagnostic information from the underlying error.
         String errorText = makeString("Internal error: script evaluation failed"_s);

@@ -2644,6 +2644,23 @@ static WebEventModifier LEGACY_NODELETE protocolModifierToWebEventModifier(Inspe
 }
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
+CompletionHandler<void(String&&, String&&)> WebAutomationSession::bidiScriptCompletionHandler(uint64_t callbackID)
+{
+    return [protectedThis = Ref { *this }, callbackID](String&& result, String&& errorType) {
+        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+        if (!callback)
+            return;
+
+        if (!errorType.isEmpty()) {
+            // Keep the message, so that errors like "no such handle" can say what was not found.
+            callback(makeUnexpected(result.isEmpty() ? errorType : STRING_FOR_PREDEFINED_ERROR_MESSAGE_AND_DETAILS(errorType, result)));
+            return;
+        }
+
+        callback(WTF::move(result));
+    };
+}
+
 void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& expression, bool awaitPromise, const BidiSerializationOptions& serializationOptions, std::optional<double>&& callbackTimeout, CommandCallback<String>&& callback)
 {
     auto page = webPageProxyForHandle(browsingContextHandle);
@@ -2655,18 +2672,21 @@ void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automat
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
     m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
 
-    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, serializationOptions.maxDomDepth, serializationOptions.maxObjectDepth, serializationOptions.includeShadowTree, serializationOptions.resultOwnershipIsRoot, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
-        if (!callback)
-            return;
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, serializationOptions.maxDomDepth, serializationOptions.maxObjectDepth, serializationOptions.includeShadowTree, serializationOptions.resultOwnershipIsRoot, WTF::move(callbackTimeout)), bidiScriptCompletionHandler(callbackID));
+}
 
-        if (!errorType.isEmpty()) {
-            callback(makeUnexpected(errorType));
-            return;
-        }
+void WebAutomationSession::callBidiFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& functionDeclaration, const String& thisLocalValue, const String& argumentLocalValues, bool awaitPromise, const BidiSerializationOptions& serializationOptions, CommandCallback<String>&& callback)
+{
+    auto page = webPageProxyForHandle(browsingContextHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(frameNotFound, FrameNotFound);
 
-        callback(WTF::move(result));
-    } });
+    uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
+    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::CallBidiFunction(page->webPageIDInProcessForFrame(frameID), frameID, functionDeclaration, thisLocalValue, argumentLocalValues, awaitPromise, serializationOptions.maxDomDepth, serializationOptions.maxObjectDepth, serializationOptions.includeShadowTree, serializationOptions.resultOwnershipIsRoot, std::nullopt), bidiScriptCompletionHandler(callbackID));
 }
 
 void WebAutomationSession::performMouseInteraction(const Inspector::Protocol::Automation::BrowsingContextHandle& handle, Ref<JSON::Object>&& requestedPosition, Inspector::Protocol::Automation::MouseButton mouseButton, Inspector::Protocol::Automation::MouseInteraction mouseInteraction, Ref<JSON::Array>&& keyModifierStrings, CommandCallback<Ref<Inspector::Protocol::Automation::Point>>&& callback)

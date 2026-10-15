@@ -33,6 +33,7 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PageIdentifier.h>
+#include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/RefCounted.h>
@@ -96,6 +97,7 @@ private:
     WebCore::AccessibilityObject* getAccessibilityObjectForNode(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, String& error);
 
     void ensureObserverForFrame(WebFrame&);
+    void runBidiScript(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, ASCIILiteral injectedScriptFunctionName, const Function<Vector<JSValueRef>(JSContextRef)>& makeScriptArguments, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&&);
 
     // Implemented in generated WebAutomationSessionProxyMessageReceiver.cpp
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -103,6 +105,7 @@ private:
     // Called by WebAutomationSessionProxy messages
     void evaluateJavaScriptFunction(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, const String& function, Vector<String> arguments, bool expectsImplicitCallbackArgument, bool forceUserGesture, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&&);
     void evaluateBidiScript(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, const String& expression, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&&);
+    void callBidiFunction(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, const String& functionDeclaration, const String& thisLocalValue, const String& argumentLocalValues, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&&);
     void resolveChildFrameWithOrdinal(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, uint32_t ordinal, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FrameIdentifier>)>&&);
     void resolveChildFrameWithNodeHandle(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, const String& nodeHandle, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FrameIdentifier>)>&&);
     void resolveChildFrameWithName(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, const String& name, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FrameIdentifier>)>&&);

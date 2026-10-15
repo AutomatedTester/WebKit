@@ -305,7 +305,7 @@ static JSValueRef isProxyCallback(JSContextRef context, JSObjectRef function, JS
 
     JSC::JSGlobalObject* globalObject = toJS(context);
     JSC::JSLockHolder locker(globalObject);
-    return JSValueMakeBoolean(context, !!JSC::jsDynamicCast<JSC::ProxyObject*>(toJS(globalObject, arguments[0])));
+    return JSValueMakeBoolean(context, !!dynamicDowncast<JSC::ProxyObject>(toJS(globalObject, arguments[0])));
 }
 
 static JSValueRef shadowRootForElementCallback(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t rawArgumentCount, const JSValueRef rawArguments[], JSValueRef* exception)
@@ -317,8 +317,8 @@ static JSValueRef shadowRootForElementCallback(JSContextRef context, JSObjectRef
 
     JSC::JSGlobalObject* globalObject = toJS(context);
     JSC::JSLockHolder locker(globalObject);
-    auto* domGlobalObject = JSC::jsDynamicCast<WebCore::JSDOMGlobalObject*>(globalObject);
-    auto* elementWrapper = JSC::jsDynamicCast<WebCore::JSElement*>(toJS(globalObject, arguments[0]));
+    auto* domGlobalObject = dynamicDowncast<WebCore::JSDOMGlobalObject>(globalObject);
+    auto* elementWrapper = dynamicDowncast<WebCore::JSElement>(toJS(globalObject, arguments[0]));
     if (!domGlobalObject || !elementWrapper)
         return JSValueMakeNull(context);
 
@@ -406,6 +406,10 @@ static JSValueRef evaluateJavaScriptCallback(JSContextRef context, JSObjectRef f
             errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InvalidSelector);
         else if (exceptionName == "ElementNotInteractable"_s)
             errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::ElementNotInteractable);
+        else if (exceptionName == "NoSuchHandle"_s)
+            errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::NoSuchHandle);
+        else if (exceptionName == "NotImplemented"_s)
+            errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::NotImplemented);
 
         JSValueRef messageValue = JSObjectGetProperty(context, error, OpaqueJSString::tryCreate("message"_s).get(), exception);
         auto exceptionMessage = adoptRef(JSValueToStringCopy(context, messageValue, exception))->string();
@@ -678,7 +682,7 @@ void WebAutomationSessionProxy::didEvaluateJavaScriptFunction(WebCore::FrameIden
         callback(String(result), String(errorType));
 }
 
-void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& expression, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
+void WebAutomationSessionProxy::runBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, ASCIILiteral injectedScriptFunctionName, const Function<Vector<JSValueRef>(JSContextRef)>& makeScriptArguments, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
 {
     RefPtr page = WebProcess::singleton().webPage(pageID);
     if (!page)
@@ -705,21 +709,16 @@ void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageI
     auto result = m_webFramePendingEvaluateJavaScriptCallbacksMap.add(frameID, HashMap<JSCallbackIdentifier, CompletionHandler<void(String&&, String&&)>>());
     result.iterator->value.set(callbackID, WTF::move(completionHandler));
 
-    JSValueRef functionArguments[] = {
-        toJSValue(context, expression),
-        JSValueMakeBoolean(context, awaitPromise),
-        maxDomDepth ? JSValueMakeNumber(context, static_cast<double>(*maxDomDepth)) : JSValueMakeNull(context),
-        maxObjectDepth ? JSValueMakeNumber(context, static_cast<double>(*maxObjectDepth)) : JSValueMakeNull(context),
-        toJSValue(context, includeShadowTree),
-        toJSValue(context, resultOwnershipIsRoot ? "root"_s : "none"_s),
+    auto functionArguments = makeScriptArguments(context);
+    functionArguments.appendList({
         JSValueMakeNumber(context, frameID.toUInt64()),
         JSValueMakeNumber(context, callbackID.toUInt64()),
-        JSObjectMakeFunctionWithCallback(context, nullptr, evaluateJavaScriptCallback),
+        static_cast<JSValueRef>(JSObjectMakeFunctionWithCallback(context, nullptr, evaluateJavaScriptCallback)),
         JSValueMakeNumber(context, callbackTimeout.value_or(-1))
-    };
+    });
 
     WebCore::UserGestureIndicator gestureIndicator { std::nullopt, protect(frame->coreLocalFrame()->document()) };
-    callPropertyFunction(context, scriptObject, "evaluateBidiScript"_s, std::size(functionArguments), functionArguments, &exception);
+    callPropertyFunction(context, scriptObject, injectedScriptFunctionName, functionArguments.size(), functionArguments.span().data(), &exception);
 
     if (!exception)
         return;
@@ -733,6 +732,38 @@ void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageI
         exceptionMessage = adoptRef(JSValueToStringCopy(context, exception, nullptr))->string();
 
     didEvaluateJavaScriptFunction(frameID, callbackID, exceptionMessage, errorType);
+}
+
+void WebAutomationSessionProxy::evaluateBidiScript(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& expression, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
+{
+    runBidiScript(pageID, optionalFrameID, "evaluateBidiScript"_s, [&](JSContextRef context) -> Vector<JSValueRef> {
+        return {
+            toJSValue(context, expression),
+            JSValueMakeBoolean(context, awaitPromise),
+            maxDomDepth ? JSValueMakeNumber(context, static_cast<double>(*maxDomDepth)) : JSValueMakeNull(context),
+            maxObjectDepth ? JSValueMakeNumber(context, static_cast<double>(*maxObjectDepth)) : JSValueMakeNull(context),
+            toJSValue(context, includeShadowTree),
+            toJSValue(context, resultOwnershipIsRoot ? "root"_s : "none"_s),
+        };
+    }, callbackTimeout, WTF::move(completionHandler));
+}
+
+void WebAutomationSessionProxy::callBidiFunction(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> optionalFrameID, const String& functionDeclaration, const String& thisLocalValue, const String& argumentLocalValues, bool awaitPromise, std::optional<uint64_t> maxDomDepth, std::optional<uint64_t> maxObjectDepth, const String& includeShadowTree, bool resultOwnershipIsRoot, std::optional<double> callbackTimeout, CompletionHandler<void(String&&, String&&)>&& completionHandler)
+{
+    // The this-value and arguments are passed as LocalValue JSON and deserialized by the injected
+    // script, which is where remote references can be resolved.
+    runBidiScript(pageID, optionalFrameID, "callBidiFunction"_s, [&](JSContextRef context) -> Vector<JSValueRef> {
+        return {
+            toJSValue(context, functionDeclaration),
+            thisLocalValue.isNull() ? JSValueMakeNull(context) : toJSValue(context, thisLocalValue),
+            toJSValue(context, argumentLocalValues),
+            JSValueMakeBoolean(context, awaitPromise),
+            maxDomDepth ? JSValueMakeNumber(context, static_cast<double>(*maxDomDepth)) : JSValueMakeNull(context),
+            maxObjectDepth ? JSValueMakeNumber(context, static_cast<double>(*maxObjectDepth)) : JSValueMakeNull(context),
+            toJSValue(context, includeShadowTree),
+            toJSValue(context, resultOwnershipIsRoot ? "root"_s : "none"_s),
+        };
+    }, callbackTimeout, WTF::move(completionHandler));
 }
 
 void WebAutomationSessionProxy::resolveChildFrameWithOrdinal(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, uint32_t ordinal, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FrameIdentifier>)>&& completionHandler)
