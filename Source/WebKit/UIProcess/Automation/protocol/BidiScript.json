@@ -97,7 +97,8 @@
                 { "name": "type", "$ref": "BidiScript.RemoteValueType" },
                 { "name": "value", "type": "any", "optional": true },
                 { "name": "handle", "$ref": "BidiScript.Handle", "optional": true, "description": "Represents a reference to a remote Node. Applicable if `type` property is `node`, `nodelist`, `htmlcollection`." },
-                { "name": "internalId", "$ref": "BidiScript.InternalId", "optional": true, "description": "Represents a reference to a remote script value. If both `handle` and `internalId` are specified, `internalId` takes precedence." }
+                { "name": "internalId", "$ref": "BidiScript.InternalId", "optional": true, "description": "Represents a reference to a remote script value. If both `handle` and `internalId` are specified, `internalId` takes precedence." },
+                { "name": "sharedId", "$ref": "BidiScript.SharedId", "optional": true, "description": "Represents a reference to a DOM node that is shared across realms. Present if `type` is `node`." }
             ]
         },
         {
@@ -151,6 +152,12 @@
                 { "name": "maxObjectDepth", "type": "number", "optional": true },
                 { "name": "includeShadowTree", "type": "string", "enum": ["none", "open", "all"], "optional": true }
             ]
+        },
+        {
+            "id": "SharedId",
+            "description": "Represents a reference to a DOM node that can be used from any realm in the same navigable.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#type-script-SharedId",
+            "type": "string"
         },
         {
             "id": "StackFrame",
