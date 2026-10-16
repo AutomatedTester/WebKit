@@ -336,6 +336,7 @@ const WebDriverService::Command WebDriverService::s_commands[] = {
 #if ENABLE(WEBDRIVER_BIDI)
 const WebDriverService::BidiCommand WebDriverService::s_bidiCommands[] = {
     { "session.status"_s, &WebDriverService::bidiSessionStatus },
+    { "session.end"_s, &WebDriverService::bidiSessionEnd },
 };
 #endif
 
@@ -573,7 +574,7 @@ void WebDriverService::handleMessage(WebSocketMessageHandler::Message&& message,
     }
 
     auto connection = message.connection;
-    if (m_bidiServer->sessionID(connection) != m_session->id()) {
+    if (!m_session || m_bidiServer->sessionID(connection) != m_session->id()) {
         // FIXME Remove once we support checking static vs non-static methods https://bugs.webkit.org/show_bug.cgi?id=281721
         completionHandler(WebSocketMessageHandler::Message::fail(CommandResult::ErrorCode::InvalidSessionID, connection));
         return;
@@ -2888,10 +2889,33 @@ void WebDriverService::bidiSessionStatus(unsigned id, RefPtr<JSON::Object>&&, Fu
     completionHandler(WebSocketMessageHandler::Message::reply("success"_s, id, WTF::move(result)));
 }
 
+void WebDriverService::bidiSessionEnd(unsigned id, RefPtr<JSON::Object>&&, Function<void(WebSocketMessageHandler::Message&&)>&& completionHandler)
+{
+    // https://w3c.github.io/webdriver-bidi/#command-session-end
+    if (!m_session) {
+        completionHandler(WebSocketMessageHandler::Message::fail(CommandResult::ErrorCode::InvalidSessionID, std::nullopt));
+        return;
+    }
+
+    // 1. End the session.
+    auto session = std::exchange(m_session, nullptr);
+
+    // 2. Return success with data null. The response is sent before the session's
+    // WebSocket connections are closed below.
+    completionHandler(WebSocketMessageHandler::Message::reply("success"_s, id, JSON::Object::create()));
+
+    // 3. Cleanup the session: close the browser and the session's WebSocket connections.
+    session->close([this, session](CommandResult&& result) {
+        if (result.isError() && session->isConnected())
+            RELEASE_LOG_ERROR(WebDriverBiDi, "WebDriverService::bidiSessionEnd() Failed to close the browser for session %s", session->id().utf8());
+        m_bidiServer->disconnectSession(session->id());
+    });
+}
+
 void WebDriverService::clientDisconnected(const WebSocketMessageHandler::Connection& connection)
 {
     // https://w3c.github.io/webdriver-bidi/#handle-a-connection-closing
-    if (m_bidiServer->sessionID(connection) == m_session->id())
+    if (m_session && m_bidiServer->sessionID(connection) == m_session->id())
         m_bidiServer->removeConnection(connection);
     else if (m_bidiServer->isStaticConnection(connection))
         m_bidiServer->removeStaticConnection(connection);
