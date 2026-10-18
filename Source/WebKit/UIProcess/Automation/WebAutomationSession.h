@@ -109,6 +109,7 @@ class WebDriverBidiProcessor;
 #endif
 
 enum class ForceSoftwareCapturingViewportSnapshot : bool;
+enum class SameDocumentNavigationType : uint8_t;
 
 class AutomationCommandError {
 public:
@@ -200,6 +201,8 @@ public:
     void navigationFailedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
     void navigationAbortedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
     void fragmentNavigatedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
+    void historyUpdatedForFrame(const WebFrameProxy&);
+    void sameDocumentNavigationOccurredForFrame(const WebFrameProxy&, SameDocumentNavigationType, std::optional<WebCore::NavigationIdentifier>, const URL& previousURL);
     void emitContextCreatedEvent(const WebPageProxy&);
     void didCreateFrame(const WebFrameProxy&);
     void willDestroyFrame(const WebFrameProxy&);
