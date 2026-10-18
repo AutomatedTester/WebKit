@@ -10949,12 +10949,16 @@ void WebPageProxy::didSameDocumentNavigationForFrame(IPC::Connection& connection
         protectedPageLoadState->didSameDocumentNavigation(transaction, url);
 
     protectedPageLoadState->clearPendingAPIRequest(transaction);
+#if ENABLE(WEBDRIVER_BIDI)
+    RefPtr automationSession = activeAutomationSession();
+    URL previousURL = automationSession ? frame->url() : URL { };
+#endif
     frame->didSameDocumentNavigation(WTF::move(url));
 
     protectedPageLoadState->commitChanges();
 #if ENABLE(WEBDRIVER_BIDI)
-    if (RefPtr automationSession = activeAutomationSession())
-        automationSession->fragmentNavigatedForFrame(*frame, navigationID);
+    if (automationSession)
+        automationSession->sameDocumentNavigationOccurredForFrame(*frame, navigationType, navigationID, previousURL);
 #endif
 
     // Emit browsingContext.fragmentNavigated before completing a pending navigation command (see didFinishLoadForFrame).
@@ -11007,12 +11011,16 @@ void WebPageProxy::didSameDocumentNavigationForFrameViaJS(IPC::Connection& conne
         protectedPageLoadState->didSameDocumentNavigation(transaction, url);
 
     protectedPageLoadState->clearPendingAPIRequest(transaction);
+#if ENABLE(WEBDRIVER_BIDI)
+    RefPtr automationSession = activeAutomationSession();
+    URL previousURL = automationSession ? frame->url() : URL { };
+#endif
     frame->didSameDocumentNavigation(WTF::move(url));
 
     protectedPageLoadState->commitChanges();
 #if ENABLE(WEBDRIVER_BIDI)
-    if (RefPtr automationSession = activeAutomationSession())
-        automationSession->fragmentNavigatedForFrame(*frame, navigation ? std::optional(navigation->navigationID()) : std::nullopt);
+    if (automationSession)
+        automationSession->sameDocumentNavigationOccurredForFrame(*frame, navigationType, navigation ? std::optional(navigation->navigationID()) : std::nullopt, previousURL);
 #endif
 
     // Emit browsingContext.fragmentNavigated before completing a pending navigation command (see didFinishLoadForFrame).
