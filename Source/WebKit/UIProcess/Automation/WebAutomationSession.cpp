@@ -387,6 +387,12 @@ void WebAutomationSession::didDestroyFrame(FrameIdentifier frameID)
     // moved the set onto the replacement frame's identifier, so it drops nothing that
     // is still reachable.
     m_knownNodeReferences.remove(frameID);
+#if ENABLE(WEBDRIVER_BIDI)
+    m_bidiPendingNavigations.removeAllMatching([&](auto& pending) {
+        // A main frame's command outlives the frame when a cross-site navigation replaces it.
+        return !pending->pageID && pending->frameID == frameID;
+    });
+#endif
 }
 
 std::optional<FrameIdentifier> WebAutomationSession::webFrameIDForHandle(const String& handle, bool& frameNotFound)
@@ -779,9 +785,10 @@ void WebAutomationSession::waitForNavigationToCompleteOnPage(WebPageProxy& page,
     }
 }
 
-void WebAutomationSession::waitForNavigationToCompleteOnFrame(WebFrameProxy& frame, Inspector::Protocol::Automation::PageLoadStrategy loadStrategy, Seconds timeout, Inspector::CommandCallback<void>&& callback)
+void WebAutomationSession::waitForNavigationToCompleteOnFrame(WebFrameProxy& frame, Inspector::Protocol::Automation::PageLoadStrategy loadStrategy, Seconds timeout, Inspector::CommandCallback<void>&& callback, LoadStarted loadStarted)
 {
-    if (loadStrategy == Inspector::Protocol::Automation::PageLoadStrategy::None || frame.frameLoadState().state() == FrameLoadState::State::Finished) {
+    bool isLoading = loadStarted == LoadStarted::Yes || frame.frameLoadState().state() != FrameLoadState::State::Finished;
+    if (loadStrategy == Inspector::Protocol::Automation::PageLoadStrategy::None || !isLoading) {
         callback({ });
         return;
     }
@@ -1110,6 +1117,99 @@ void WebAutomationSession::reloadBrowsingContext(const Inspector::Protocol::Auto
     waitForNavigationToCompleteOnPage(*page, pageLoadStrategy, pageLoadTimeout, WTF::move(callback), page->reload({ }));
 }
 
+#if ENABLE(WEBDRIVER_BIDI)
+static String navigationIDToProtocolString(std::optional<WebCore::NavigationIdentifier>);
+
+bool WebAutomationSession::BidiPendingNavigation::matches(const WebFrameProxy& frame) const
+{
+    if (pageID) {
+        RefPtr page = frame.page();
+        return frame.isMainFrame() && page && page->identifier() == *pageID;
+    }
+    return frame.frameID() == frameID;
+}
+
+// A child frame has no API::Navigation, so a command learns its navigation's id from the first navigationStarted or
+// fragmentNavigated WebCore reports for the frame. Navigations start in the order they were requested, so the id goes
+// to the oldest command on the frame that does not have one yet.
+void WebAutomationSession::recordNavigationIDForPendingBidiNavigation(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
+{
+    for (auto& pending : m_bidiPendingNavigations) {
+        if (!pending->navigationID && pending->matches(frame)) {
+            pending->navigationID = navigationID;
+            return;
+        }
+    }
+}
+
+void WebAutomationSession::navigateBrowsingContextForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& pageHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& url, Inspector::Protocol::Automation::PageLoadStrategy pageLoadStrategy, Seconds pageLoadTimeout, Inspector::CommandCallbackOf<String, String>&& callback)
+{
+    RefPtr page = webPageProxyForHandle(pageHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, FrameNotFound);
+
+    RefPtr<WebFrameProxy> frame;
+    if (frameHandle.isEmpty())
+        frame = page->mainFrame();
+    else {
+        bool frameNotFound = false;
+        if (auto frameID = webFrameIDForHandle(frameHandle, frameNotFound); frameID && !frameNotFound)
+            frame = WebFrameProxy::webFrame(*frameID);
+    }
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!frame, FrameNotFound);
+
+    URL targetURL { url };
+
+    // A main frame's navigation is tracked by page, because a cross-site navigation can swap the main frame for one
+    // with another identifier in a new process, and its failure is reported for that frame.
+    Ref pending = BidiPendingNavigation::create(frame->isMainFrame() ? std::optional { page->identifier() } : std::nullopt, frame->frameID());
+    RefPtr<API::Navigation> awaitedNavigation;
+    bool isFragmentNavigation = false;
+    if (frame->isMainFrame()) {
+        // A fragment navigation stays in the current document, and WebCore reports it with that document's
+        // navigation rather than the new one, so only navigations to another document are awaited. WebCore tells
+        // the two apart by the committed document's URL, not by the URL of a load that is still in flight.
+        Ref pageLoadState = page->pageLoadState();
+        isFragmentNavigation = targetURL.hasFragmentIdentifier() && equalIgnoringFragmentIdentifier(targetURL, pageLoadState->url());
+        if (RefPtr navigation = page->loadRequest(WTF::move(targetURL))) {
+            pending->navigationID = navigation->navigationID();
+            if (!isFragmentNavigation)
+                awaitedNavigation = WTF::move(navigation);
+        }
+    } else {
+        // A child frame has no API::Navigation; its id arrives with WebCore's navigationStarted report.
+        frame->loadURL(targetURL);
+    }
+    // Each command keeps its own record, so that an earlier navigate still waiting on this frame reports its own
+    // navigation's id and failure rather than those of the navigation that replaced it.
+    m_bidiPendingNavigations.append(pending);
+
+    auto completion = [this, protectedThis = Ref { *this }, pending, requestedURL = url, callback = WTF::move(callback)](Inspector::CommandResult<void>&& result) mutable {
+        m_bidiPendingNavigations.removeFirstMatching([&](auto& entry) {
+            return entry.ptr() == pending.ptr();
+        });
+        if (!result) {
+            // https://w3c.github.io/webdriver-bidi/#await-a-navigation: a navigation that ends because its
+            // navigable closed is an unknown error, not a missing context.
+            auto& error = result.error();
+            if (error.startsWith(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)) || error.startsWith(STRING_FOR_PREDEFINED_ERROR_NAME(FrameNotFound)))
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+            callback(makeUnexpected(WTF::move(error)));
+            return;
+        }
+
+        // The classic command treats a failed load as a completed navigation; the spec makes it an unknown error.
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(pending->failed, InternalError);
+
+        callback({ { WTF::move(requestedURL), navigationIDToProtocolString(pending->navigationID) } });
+    };
+
+    if (frame->isMainFrame())
+        waitForNavigationToCompleteOnPage(*page, pageLoadStrategy, pageLoadTimeout, WTF::move(completion), WTF::move(awaitedNavigation), isFragmentNavigation ? SameDocumentNavigation::Yes : SameDocumentNavigation::No);
+    else
+        waitForNavigationToCompleteOnFrame(*frame, pageLoadStrategy, pageLoadTimeout, WTF::move(completion), LoadStarted::Yes);
+}
+#endif
+
 void WebAutomationSession::respondToPendingNavigationCallbacksWithSuccess(Vector<Inspector::CommandCallback<void>>&& callbacks)
 {
     if (callbacks.isEmpty())
@@ -1183,6 +1283,7 @@ void WebAutomationSession::navigationOccurredForFrame(const WebFrameProxy& frame
         respondToPendingNavigationCallbacksWithSuccess(takePendingPageNavigationCallbacks(m_pendingEagerNavigationInBrowsingContextCallbacksPerPage, page, finishedNavigation, UnboundWaits::Keep, notification));
         m_domainNotifier->browsingContextCleared(handleForWebPageProxy(page));
     } else {
+        respondToPendingNavigationCallbacksWithSuccess(m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame.take(frame.frameID()));
         respondToPendingNavigationCallbacksWithSuccess(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame.take(frame.frameID()));
     }
 }
@@ -1299,6 +1400,8 @@ void WebAutomationSession::didCreatePage(WebPageProxy& page)
 
 void WebAutomationSession::navigationStartedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    recordNavigationIDForPendingBidiNavigation(frame, navigationID);
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::NavigationStarted, { }, [&]() {
         m_bidiProcessor->browsingContextDomainNotifier().navigationStarted(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
@@ -1319,6 +1422,12 @@ void WebAutomationSession::navigationCommittedForFrame(const WebFrameProxy& fram
 
 void WebAutomationSession::navigationFailedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    // A failure with no id, or for a command whose id is not known yet, is taken to be that command's.
+    for (auto& pending : m_bidiPendingNavigations) {
+        if (pending->matches(frame) && (!navigationID || !pending->navigationID || pending->navigationID == navigationID))
+            pending->failed = true;
+    }
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::NavigationFailed, { }, [&]() {
         m_bidiProcessor->browsingContextDomainNotifier().navigationFailed(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
@@ -1333,6 +1442,8 @@ void WebAutomationSession::navigationAbortedForFrame(const WebFrameProxy& frame,
 
 void WebAutomationSession::fragmentNavigatedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    recordNavigationIDForPendingBidiNavigation(frame, navigationID);
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::FragmentNavigated, { }, [&]() {
         m_bidiProcessor->browsingContextDomainNotifier().fragmentNavigated(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
@@ -1573,6 +1684,19 @@ void WebAutomationSession::willClosePage(const WebPageProxy& page)
         pending.callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
     for (auto& pending : m_pendingEagerNavigationInBrowsingContextCallbacksPerPage.take(page.identifier()))
         pending.callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
+
+    // The web process does not report the frames of a closing page destroyed, so the waits on them end here.
+    auto failPendingFrameNavigationCallbacks = [&](auto& map) {
+        for (auto frameID : copyToVector(map.keys())) {
+            RefPtr frame = WebFrameProxy::webFrame(frameID);
+            if (frame && frame->page() != &page)
+                continue;
+            for (auto& callback : map.take(frameID))
+                callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
+        }
+    };
+    failPendingFrameNavigationCallbacks(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame);
+    failPendingFrameNavigationCallbacks(m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame);
 
 #if ENABLE(WEBDRIVER_BIDI)
     contextDestroyedForPage(page);

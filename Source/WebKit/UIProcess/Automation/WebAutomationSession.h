@@ -48,6 +48,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/RunLoop.h>
+#include <wtf/RefCounted.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/WallTime.h>
 #include <wtf/WeakPtr.h>
@@ -196,6 +197,9 @@ public:
     void wheelEventsFlushedForPage(const WebPageProxy&);
 #if ENABLE(WEBDRIVER_BIDI)
     void didCreatePage(WebPageProxy&);
+    // browsingContext.navigate: loads `url` in the page, or in `frameHandle`'s frame when it is not empty, and resolves with the
+    // requested URL and the navigation id. Unlike the classic command, a navigation that fails or whose context closes is an error.
+    void navigateBrowsingContextForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle&, const Inspector::Protocol::Automation::FrameHandle&, const String& url, Inspector::Protocol::Automation::PageLoadStrategy, Seconds pageLoadTimeout, Inspector::CommandCallbackOf<String, String>&&);
     void navigationStartedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
     void navigationCommittedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
     void navigationFailedForFrame(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
@@ -391,7 +395,10 @@ private:
     void waitForNavigationToCompleteOnPage(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&, RefPtr<API::Navigation>&& = nullptr, SameDocumentNavigation = SameDocumentNavigation::No);
     void waitForHistoryTraversalToComplete(WebPageProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&, RefPtr<API::Navigation>&&);
     bool hasPendingNavigationCallbacks() const;
-    void waitForNavigationToCompleteOnFrame(WebFrameProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&);
+    // A caller that has just started a load in the frame passes LoadStarted::Yes: the frame's load state does not
+    // change until the web process reports the load, so without it the wait would complete at once.
+    enum class LoadStarted : bool { No, Yes };
+    void waitForNavigationToCompleteOnFrame(WebFrameProxy&, Inspector::Protocol::Automation::PageLoadStrategy, Seconds, Inspector::CommandCallback<void>&&, LoadStarted = LoadStarted::No);
     void respondToPendingPageNavigationCallbacksWithTimeout(HashMap<WebPageProxyIdentifier, Vector<PendingPageNavigationCallback>>&);
     void respondToPendingFrameNavigationCallbacksWithTimeout(HashMap<WebCore::FrameIdentifier, Vector<Inspector::CommandCallback<void>>>&);
     void respondToPendingNavigationCallbacksWithSuccess(Vector<Inspector::CommandCallback<void>>&&);
@@ -480,6 +487,33 @@ private:
 
 #if ENABLE(WEBDRIVER_BIDI)
     const UniqueRef<WebDriverBidiProcessor> m_bidiProcessor;
+
+    // A browsingContext.navigate in flight: the id to report, filled in from the API::Navigation for a main frame or
+    // from WebCore's first navigationStarted/fragmentNavigated report for a child frame, and whether WebCore reported
+    // the navigation failed before the classic wait completed it. A main frame's command is matched by page, since a
+    // cross-site navigation can replace the main frame with one that has another identifier.
+    struct BidiPendingNavigation : public RefCounted<BidiPendingNavigation> {
+    public:
+        static Ref<BidiPendingNavigation> create(std::optional<WebPageProxyIdentifier> pageID, WebCore::FrameIdentifier frameID)
+        {
+            return adoptRef(*new BidiPendingNavigation(pageID, frameID));
+        }
+
+        bool matches(const WebFrameProxy&) const;
+
+        std::optional<WebPageProxyIdentifier> pageID;
+        WebCore::FrameIdentifier frameID;
+        std::optional<WebCore::NavigationIdentifier> navigationID;
+        bool failed { false };
+
+    private:
+        BidiPendingNavigation(std::optional<WebPageProxyIdentifier> pageID, WebCore::FrameIdentifier frameID)
+            : pageID(pageID)
+            , frameID(frameID)
+        { }
+    };
+    Vector<Ref<BidiPendingNavigation>> m_bidiPendingNavigations;
+    void recordNavigationIDForPendingBidiNavigation(const WebFrameProxy&, std::optional<WebCore::NavigationIdentifier>);
 #endif
 
     HashMap<WebPageProxyIdentifier, String> m_webPageHandleMap;
