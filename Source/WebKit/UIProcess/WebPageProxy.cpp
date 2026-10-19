@@ -9262,6 +9262,15 @@ void WebPageProxy::didFailProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& p
 
     RefPtr protectedPageClient { pageClient() };
 
+#if ENABLE(WEBDRIVER_BIDI)
+    // Reported before the classic completion below, so that a pending browsingContext.navigate
+    // learns the navigation failed before that completion resolves it.
+    if (willInternallyHandleFailure == WillInternallyHandleFailure::No) {
+        if (RefPtr automationSession = activeAutomationSession())
+            automationSession->navigationFailedForFrame(frame, navigationID);
+    }
+#endif
+
     if (m_controlledByAutomation && willInternallyHandleFailure == WillInternallyHandleFailure::No) {
         if (RefPtr automationSession = process->processPool().automationSession())
             automationSession->navigationOccurredForFrame(frame, navigationID);
@@ -9301,12 +9310,6 @@ void WebPageProxy::didFailProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& p
     frame.didFailProvisionalLoad();
 
     protectedPageLoadState->commitChanges();
-#if ENABLE(WEBDRIVER_BIDI)
-    if (willInternallyHandleFailure == WillInternallyHandleFailure::No) {
-        if (RefPtr automationSession = activeAutomationSession())
-            automationSession->navigationFailedForFrame(frame, navigationID);
-    }
-#endif
 
     ASSERT(!m_failingProvisionalLoadURL);
     m_failingProvisionalLoadURL = WTF::move(provisionalURL);
@@ -10206,6 +10209,13 @@ void WebPageProxy::didFailLoadForFrame(IPC::Connection& connection, FrameIdentif
         internals().pageAllowedToRunInTheBackgroundActivityDueToNotifications = nullptr;
     }
 
+#if ENABLE(WEBDRIVER_BIDI)
+    // Reported before the classic completion below, so that a pending browsingContext.navigate
+    // learns the navigation failed before that completion resolves it.
+    if (RefPtr automationSession = activeAutomationSession())
+        automationSession->navigationFailedForFrame(*frame, navigationID);
+#endif
+
     if (m_controlledByAutomation) {
         if (RefPtr automationSession = m_configuration->processPool().automationSession())
             automationSession->navigationOccurredForFrame(*frame, navigationID);
@@ -10213,10 +10223,6 @@ void WebPageProxy::didFailLoadForFrame(IPC::Connection& connection, FrameIdentif
 
     frame->didFailLoad();
     protectedPageLoadState->commitChanges();
-#if ENABLE(WEBDRIVER_BIDI)
-    if (RefPtr automationSession = activeAutomationSession())
-        automationSession->navigationFailedForFrame(*frame, navigationID);
-#endif
     if (m_loaderClient)
         m_loaderClient->didFailLoadWithErrorForFrame(*this, *frame, navigation.get(), error, process->transformHandlesToObjects(protect(userData.object()).get()).get());
     else {
