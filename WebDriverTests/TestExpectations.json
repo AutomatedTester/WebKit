@@ -3290,22 +3290,14 @@
     },
     "imported/w3c/webdriver/tests/bidi/browsing_context/handle_user_prompt/handle_user_prompt.py": {
         "subtests": {
-            "test_two_top_level_contexts[tab]": {
-                "expected": { "all": { "status": ["PASS"]}}
+            "test_beforeunload[True]": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288344"}}
             },
-            "test_two_top_level_contexts[window]": {
-                "expected": { "all": { "status": ["PASS"]}}
-            }
-        },
-        "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
-    },
-    "imported/w3c/webdriver/tests/bidi/browsing_context/handle_user_prompt/invalid.py": {
-        "subtests": {
-            "test_params_context_invalid_value[]": {
-                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
+            "test_beforeunload[False]": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288344"}}
             },
-            "test_params_context_invalid_value[somestring]": {
-                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
+            "test_multiple_frames": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288330"}}
             }
         }
     },

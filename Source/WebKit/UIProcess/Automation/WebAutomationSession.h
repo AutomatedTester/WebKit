@@ -485,6 +485,9 @@ private:
 
     uint64_t m_nextEvaluateJavaScriptCallbackID { 1 };
     HashMap<uint64_t, Inspector::CommandCallback<String>> m_evaluateJavaScriptFunctionCallbacks;
+    // Kept apart from m_evaluateJavaScriptFunctionCallbacks because a user prompt must not end a BiDi
+    // script.evaluate early; it keeps running until the script finishes after the prompt is handled.
+    HashMap<uint64_t, Inspector::CommandCallback<String>> m_evaluateBidiScriptCallbacks;
 
     enum class WindowTransitionedToState {
         Fullscreen,

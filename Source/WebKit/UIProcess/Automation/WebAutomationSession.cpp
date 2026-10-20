@@ -2682,10 +2682,10 @@ void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automat
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(frameNotFound, FrameNotFound);
 
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
-    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+    m_evaluateBidiScriptCallbacks.set(callbackID, WTF::move(callback));
 
     page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, maxObjectDepth, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+        auto callback = protectedThis->m_evaluateBidiScriptCallbacks.take(callbackID);
         if (!callback)
             return;
 
