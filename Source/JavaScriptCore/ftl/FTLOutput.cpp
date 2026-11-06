@@ -28,8 +28,10 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
+#include "B3BulkMemoryValue.h"
 #include "B3Const32Value.h"
 #include "B3FenceValue.h"
 #include "B3MathExtras.h"
@@ -476,6 +478,13 @@ FenceValue* Output::fence(const AbstractHeap* read, const AbstractHeap* write)
     return result;
 }
 
+void Output::memoryMove(LValue destination, LValue source, LValue byteCount, const AbstractHeap* read, const AbstractHeap* write)
+{
+    BulkMemoryValue* result = m_block->appendNew<BulkMemoryValue>(m_proc, MemoryMove, origin(), destination, source, byteCount);
+    m_heaps->decorateBulkMemoryRead(read, result);
+    m_heaps->decorateBulkMemoryWrite(write, result);
+}
+
 LValue Output::store32As8(LValue value, TypedPointer pointer)
 {
     LValue store = m_block->appendNew<MemoryValue>(m_proc, Store8, origin(), value, pointer.value());
@@ -496,8 +505,13 @@ LValue Output::storeDoubleAsFloat16(LValue value, TypedPointer pointer)
     result->append(value, ValueRep::SomeRegister);
     result->append(pointer.value(), ValueRep::SomeRegister);
     result->numFPScratchRegisters = 1;
+    if (isX86_64()) {
+        result->clobber(RegisterSet::macroClobberedGPRs());
+        result->clobber(RegisterSet::macroClobberedFPRs());
+    }
     result->setGenerator(
         [](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsageIf allowScratchIf(jit, isX86_64());
             FPRReg scratchFPR = params.fpScratch(0);
             jit.convertDoubleToFloat16(params[0].fpr(), scratchFPR);
             jit.storeFloat16(scratchFPR, CCallHelpers::Address(params[1].gpr()));
@@ -887,8 +901,13 @@ LValue Output::f16round(LValue doubleValue)
 {
     PatchpointValue* result = patchpoint(Double);
     result->append(doubleValue, ValueRep::SomeRegister);
+    if (isX86_64()) {
+        result->clobber(RegisterSet::macroClobberedGPRs());
+        result->clobber(RegisterSet::macroClobberedFPRs());
+    }
     result->setGenerator(
         [](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsageIf allowScratchIf(jit, isX86_64());
             jit.convertDoubleToFloat16(params[1].fpr(), params[0].fpr());
             jit.convertFloat16ToDouble(params[0].fpr(), params[0].fpr());
         });

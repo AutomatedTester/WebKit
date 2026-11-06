@@ -25,8 +25,13 @@
 
 #pragma once
 
+#include "MediaPermissionPromptCustomization.h"
 #include <WebCore/SecurityOriginData.h>
+#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+#include <WebCore/CaptureDevice.h>
+#endif
 #include <wtf/CompletionHandler.h>
+#include <wtf/Function.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(COCOA)
@@ -69,10 +74,41 @@ bool checkUsageDescriptionStringForSpeechRecognition();
 
 RetainPtr<NSString> applicationVisibleNameFromOrigin(const WebCore::SecurityOriginData&);
 RetainPtr<NSString> applicationVisibleName();
+
+struct PermissionPromptRequest {
+    MediaPermissionReason reason;
+    WebCore::SecurityOriginData origin;
+    MediaPermissionPromptCustomization customization;
+};
+
+void alertForPermission(WebPageProxy&, PermissionPromptRequest&&, CompletionHandler<void(MediaPermissionPromptResult&&)>&&);
 void alertForPermission(WebPageProxy&, MediaPermissionReason, const WebCore::SecurityOriginData&, CompletionHandler<void(bool)>&&);
 
 void requestAVCaptureAccessForType(MediaPermissionType, CompletionHandler<void(bool authorized)>&&);
 MediaPermissionResult checkAVCaptureAccessForType(MediaPermissionType);
+#endif
+
+#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+using CapturePreviewDeviceListUpdater = Function<void(Vector<WebCore::CaptureDevice>&& videoDevices, Vector<WebCore::CaptureDevice>&& audioDevices)>;
+using CapturePreviewPromptDismisser = Function<void()>;
+using CapturePreviewRestarter = Function<void()>;
+
+struct CapturePreviewPromptRequest {
+    MediaPermissionReason reason;
+    WebCore::SecurityOriginData origin;
+    Vector<WebCore::CaptureDevice> eligibleVideoDevices;
+    Vector<WebCore::CaptureDevice> eligibleAudioDevices;
+    MediaPermissionPromptCustomization customization;
+};
+
+struct CapturePreviewPromptHandles {
+    CapturePreviewDeviceListUpdater deviceListUpdater;
+    CapturePreviewPromptDismisser promptDismisser;
+    CapturePreviewRestarter previewRestarter;
+};
+
+CapturePreviewPromptHandles alertForPermissionWithCapturePreview(WebPageProxy&, CapturePreviewPromptRequest&&, CompletionHandler<void(MediaPermissionPromptResult&&)>&&);
+CapturePreviewPromptHandles alertForPermissionForTesting(WebPageProxy&, CapturePreviewPromptRequest&&, bool showsPreview, CompletionHandler<void(MediaPermissionPromptResult&&)>&&);
 #endif
 
 #if HAVE(SPEECHRECOGNIZER)

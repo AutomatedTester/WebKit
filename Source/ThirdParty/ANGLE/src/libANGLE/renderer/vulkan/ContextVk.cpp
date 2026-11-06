@@ -2213,9 +2213,9 @@ angle::Result ContextVk::handleDirtyEventLogImpl(CommandBufferT *commandBuffer)
     label.pLabelName    = oglCmds.c_str();
     // This is #2 from comment above
     commandBuffer->beginDebugUtilsLabelEXT(label);
-    for (uint32_t i = 0; i < mEventLog.size(); ++i)
+    for (const std::string &event : mEventLog)
     {
-        label.pLabelName = mEventLog[i].c_str();
+        label.pLabelName = event.c_str();
         // NOTE: We have to use a begin/end pair here because AGI does not promote the
         // pLabelName from an insertDebugUtilsLabelEXT() call to the Commands panel.
         // Internal bug b/169243237 is tracking this and once the insert* call shows the
@@ -4928,13 +4928,22 @@ ANGLE_INLINE void ContextVk::updateTopology(gl::PrimitiveMode mode)
     //
     // Note: VK_EXT_extended_dynamic_state3's dynamicPrimitiveTopologyUnrestricted property
     // indicates that the dynamically set primitive topology doesn't need to match even the topology
-    // class used to create the pipeline.  That property seems to only be set on Nvidia.
+    // class used to create the pipeline.  That property is rarely set however.
     if (getFeatures().usePrimitiveTopologyDynamicState.enabled)
     {
         // Update the exact mode dynamically
         mGraphicsDirtyBits.set(DIRTY_BIT_DYNAMIC_PRIMITIVE_TOPOLOGY);
 
-        // Only update the pipeline desc if the primitive class has changed
+        // Nothing to do if dynamicPrimitiveTopologyUnrestricted is set.
+        if (getFeatures().supportsExtendedDynamicState3.enabled &&
+            getRenderer()
+                ->getPhysicalDeviceExtendedDynamicState3Properties()
+                .dynamicPrimitiveTopologyUnrestricted)
+        {
+            return;
+        }
+
+        // Only update the pipeline desc if the primitive class has changed.
         pipelineTopology = kPrimitiveTopologyClass[mode];
         const bool isTopologyClassChanged =
             pipelineTopology != kPrimitiveTopologyClass[currentMode];

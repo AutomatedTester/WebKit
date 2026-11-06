@@ -63,6 +63,7 @@ class InspectorWorkerAgent;
 class FrameCSSAgent;
 class FrameCanvasAgent;
 class FrameDOMAgent;
+class FrameDOMDebuggerAgent;
 class FrameDOMStorageAgent;
 class FrameDebuggerAgent;
 class FrameRuntimeAgent;
@@ -86,6 +87,7 @@ class WebHeapAgent;
 #define DEFINE_INSPECTOR_AGENT_CSS_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameCSSAgent, FrameCSSAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOM(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMAgent, DOMAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMDebugger(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMDebuggerAgent, DOMDebuggerAgent, Getter, Setter)
+#define DEFINE_INSPECTOR_AGENT_DOMDebugger_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameDOMDebuggerAgent, FrameDOMDebuggerAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMDebugger_Page(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, PageDOMDebuggerAgent, PageDOMDebuggerAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMStorage(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, InspectorDOMStorageAgent, DOMStorageAgent, Getter, Setter)
 #define DEFINE_INSPECTOR_AGENT_DOMStorage_Frame(macro, Getter, Setter) DEFINE_INSPECTOR_AGENT(macro, FrameDOMStorageAgent, FrameDOMStorageAgent, Getter, Setter)
@@ -147,6 +149,7 @@ class WebHeapAgent;
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Debugger_Page) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, Debugger_Web) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger) \
+    DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger_Frame) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMDebugger_Page) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMStorage) \
     DEFINE_ENABLED_INSPECTOR_AGENT(macro, DOMStorage_Frame) \
@@ -169,8 +172,8 @@ class WEBCORE_EXPORT InstrumentingAgents : public WTF::RefCountedAndCanMakeWeakP
     WTF_MAKE_NONCOPYABLE(InstrumentingAgents);
     WTF_MAKE_TZONE_ALLOCATED(InstrumentingAgents);
 public:
-    static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&);
-    static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&, InstrumentingAgents& fallbackAgents);
+    NODELETE static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&);
+    NODELETE static Ref<InstrumentingAgents> create(Inspector::InspectorEnvironment&, InstrumentingAgents& fallbackAgents);
 
     ~InstrumentingAgents();
     void reset();

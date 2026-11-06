@@ -193,7 +193,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpIsUndefinedOrNull, operand)
     USES(OpIsBoolean, operand)
     USES(OpIsNumber, operand)
-    USES(OpIsBigInt, operand)
     USES(OpIsObject, operand)
     USES(OpIsCellWithType, operand)
     USES(OpIsCallable, operand)
@@ -267,6 +266,13 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_call_varargs: {
         auto bytecode = instruction->as<OpCallVarargs>();
         useAtEachCheckpoint(bytecode.m_callee, bytecode.m_thisValue, bytecode.m_arguments);
+        return;
+    }
+    case op_call_varargs_with_spread: {
+        auto bytecode = instruction->as<OpCallVarargsWithSpread>();
+        useAtEachCheckpoint(bytecode.m_callee, bytecode.m_thisValue);
+        // The interleaved arguments live in the sequential m_argv range, like op_new_array_with_spread's.
+        handleNewArrayLike(bytecode);
         return;
     }
     case op_tail_call_varargs: {
@@ -505,6 +511,11 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
         defAt(OpCallVarargs::makeCall, bytecode.m_dst);
         return;
     }
+    case op_call_varargs_with_spread: {
+        auto bytecode = instruction->as<OpCallVarargsWithSpread>();
+        defAt(OpCallVarargsWithSpread::makeCall, bytecode.m_dst);
+        return;
+    }
     case op_tail_call_varargs: {
         auto bytecode = instruction->as<OpTailCallVarargs>();
         defAt(OpTailCallVarargs::makeCall, bytecode.m_dst);
@@ -545,7 +556,6 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpIsUndefinedOrNull, dst)
     DEFS(OpIsBoolean, dst)
     DEFS(OpIsNumber, dst)
-    DEFS(OpIsBigInt, dst)
     DEFS(OpIsObject, dst)
     DEFS(OpIsCellWithType, dst)
     DEFS(OpIsCallable, dst)

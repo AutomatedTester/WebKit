@@ -112,6 +112,7 @@
 #include "PCToCodeOriginMap.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCache.h"
+#include "ProxyObject.h"
 #include "RegExpObject.h"
 #include "ScratchRegisterAllocator.h"
 #include "SetupVarargsFrame.h"
@@ -1568,6 +1569,9 @@ private:
         case ConstructForwardVarargs:
             compileCallOrConstructVarargs();
             break;
+        case CallVarargsWithSpread:
+            compileCallVarargsWithSpread();
+            break;
         case CallDirectEval:
             compileCallDirectEval();
             break;
@@ -1584,8 +1588,14 @@ private:
         case VarargsLength:
             compileVarargsLength();
             break;
+        case VarargsLengthWithSpread:
+            compileVarargsLengthWithSpread();
+            break;
         case LoadVarargs:
             compileLoadVarargs();
+            break;
+        case LoadVarargsWithSpread:
+            compileLoadVarargsWithSpread();
             break;
         case ForwardVarargs:
             compileForwardVarargs();
@@ -1645,9 +1655,6 @@ private:
             break;
         case IsNumber:
             compileIsNumber();
-            break;
-        case IsBigInt:
-            compileIsBigInt();
             break;
         case NumberIsInteger:
             compileNumberIsInteger();
@@ -1888,6 +1895,9 @@ private:
         case NewWeakSet:
             compileNewWeakSet();
             break;
+        case NewProxyObject:
+            compileNewProxyObject();
+            break;
         case SetFunctionName:
             compileSetFunctionName();
             break;
@@ -1998,6 +2008,9 @@ private:
             break;
         case DataViewSet:
             compileDataViewSet();
+            break;
+        case TypedArraySet:
+            compileTypedArraySet();
             break;
 
         case ResolvePromiseFirstResolving:
@@ -2760,27 +2773,6 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
-#if USE(BIGINT32)
-        // FIXME: Introduce another BigInt32 code generation: binary use kinds are BigIntUse32, but result is SpecAnyInt and accepting overflow.
-        // Let's distinguish these modes based on result type information by introducing NodeResultBigInt32.
-        // https://bugs.webkit.org/show_bug.cgi?id=210957
-        // https://bugs.webkit.org/show_bug.cgi?id=211040
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-
-            LValue unboxedLeft = unboxBigInt32(left);
-            LValue unboxedRight = unboxBigInt32(right);
-
-            CheckValue* result = m_out.speculateAdd(unboxedLeft, unboxedRight);
-            blessSpeculation(result, BigInt32Overflow, noValue(), nullptr, m_origin);
-
-            LValue boxedResult = boxBigInt32(result);
-            setJSValue(boxedResult);
-            return;
-        }
-#endif
-
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -2801,27 +2793,6 @@ private:
     void compileValueSub()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
-#if USE(BIGINT32)
-        // FIXME: Introduce another BigInt32 code generation: binary use kinds are BigIntUse32, but result is SpecAnyInt and accepting overflow.
-        // Let's distinguish these modes based on result type information by introducing NodeResultBigInt32.
-        // https://bugs.webkit.org/show_bug.cgi?id=210957
-        // https://bugs.webkit.org/show_bug.cgi?id=211040
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-
-            LValue unboxedLeft = unboxBigInt32(left);
-            LValue unboxedRight = unboxBigInt32(right);
-
-            CheckValue* result = m_out.speculateSub(unboxedLeft, unboxedRight);
-            blessSpeculation(result, BigInt32Overflow, noValue(), nullptr, m_origin);
-
-            LValue boxedResult = boxBigInt32(result);
-            setJSValue(boxedResult);
-            return;
-        }
-#endif
 
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
@@ -2859,27 +2830,6 @@ private:
     void compileValueMul()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
-#if USE(BIGINT32)
-        // FIXME: Introduce another BigInt32 code generation: binary use kinds are BigIntUse32, but result is SpecAnyInt and accepting overflow.
-        // Let's distinguish these modes based on result type information by introducing NodeResultBigInt32.
-        // https://bugs.webkit.org/show_bug.cgi?id=210957
-        // https://bugs.webkit.org/show_bug.cgi?id=211040
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-
-            LValue unboxedLeft = unboxBigInt32(left);
-            LValue unboxedRight = unboxBigInt32(right);
-
-            CheckValue* result = m_out.speculateMul(unboxedLeft, unboxedRight);
-            blessSpeculation(result, BigInt32Overflow, noValue(), nullptr, m_origin);
-
-            LValue boxedResult = boxBigInt32(result);
-            setJSValue(boxedResult);
-            return;
-        }
-#endif
 
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
@@ -2988,20 +2938,6 @@ private:
     void compileBinaryMathIC(BinaryArithProfile* arithProfile, Func1 repatchingFunction, Func2 nonRepatchingFunction)
     {
         Node* node = m_node;
-
-#if USE(BIGINT32)
-        if (node->isBinaryUseKind(AnyBigIntUse)) {
-            // FIXME: This is not supported by the IC yet.
-            LValue left = lowJSValue(node->child1(), ManualOperandSpeculation);
-            LValue right = lowJSValue(node->child2(), ManualOperandSpeculation);
-            speculate(node, node->child1());
-            speculate(node, node->child2());
-
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-            setJSValue(vmCall(pointerType(), nonRepatchingFunction, weakPointer(globalObject), left, right));
-            return;
-        }
-#endif
 
         LValue left = lowJSValue(node->child1());
         LValue right = lowJSValue(node->child2());
@@ -3270,8 +3206,6 @@ private:
     void compileValueDiv()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        // FIXME: add a fast path for BigInt32 here
-        // https://bugs.webkit.org/show_bug.cgi?id=211041
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -3350,7 +3284,6 @@ private:
     void compileValueMod()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        // FIXME: add a BigInt32 fast path here
         if (m_node->binaryUseKind() == HeapBigIntUse) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -3360,7 +3293,7 @@ private:
             return;
         }
 
-        DFG_ASSERT(m_graph, m_node, m_node->binaryUseKind() == UntypedUse || m_node->binaryUseKind() == AnyBigIntUse, m_node->binaryUseKind());
+        DFG_ASSERT(m_graph, m_node, m_node->binaryUseKind() == UntypedUse, m_node->binaryUseKind());
         LValue left = lowJSValue(m_node->child1(), ManualOperandSpeculation);
         LValue right = lowJSValue(m_node->child2(), ManualOperandSpeculation);
         speculate(m_node, m_node->child1());
@@ -3593,7 +3526,6 @@ private:
     void compileValuePow()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        // FIXME: maybe add a fast path for BigInt32 here
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue base = lowHeapBigInt(m_node->child1());
             LValue exponent = lowHeapBigInt(m_node->child2());
@@ -3603,7 +3535,7 @@ private:
             return;
         }
 
-        ASSERT(m_node->isBinaryUseKind(UntypedUse) || m_node->isBinaryUseKind(AnyBigIntUse));
+        ASSERT(m_node->isBinaryUseKind(UntypedUse));
         LValue base = lowJSValue(m_node->child1(), ManualOperandSpeculation);
         LValue exponent = lowJSValue(m_node->child2(), ManualOperandSpeculation);
         speculate(m_node, m_node->child1());
@@ -3975,19 +3907,6 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
-#if USE(BIGINT32)
-        if (m_node->child1().useKind() == BigInt32Use) {
-            LValue operand = lowBigInt32(m_node->child1());
-            // The following trick relies on details of the representation of BigInt32, and will have to be updated if we move bits around.
-            static_assert(JSValue::BigInt32Tag == 0x12);
-            static_assert(JSValue::BigInt32Mask == static_cast<int64_t>(0xfffe000000000012));
-            uint64_t maskForBigInt32Bits = 0x0000ffffffff0000;
-            LValue result = m_out.bitXor(operand, m_out.constInt64(maskForBigInt32Bits));
-            setJSValue(result);
-            return;
-        }
-#endif
-
         if (m_node->child1().useKind() == HeapBigIntUse) {
             LValue operand = lowHeapBigInt(m_node->child1());
             LValue result = vmCall(pointerType(), operationBitNotHeapBigInt, weakPointer(globalObject), operand);
@@ -3995,7 +3914,7 @@ private:
             return;
         }
 
-        DFG_ASSERT(m_graph, m_node, m_node->child1().useKind() == UntypedUse || m_node->child1().useKind() == AnyBigIntUse);
+        DFG_ASSERT(m_graph, m_node, m_node->child1().useKind() == UntypedUse);
         LValue operand = lowJSValue(m_node->child1(), ManualOperandSpeculation);
         speculate(m_node, m_node->child1());
         LValue result = vmCall(Int64, operationValueBitNot, weakPointer(globalObject), operand);
@@ -4010,17 +3929,6 @@ private:
     void compileValueBitAnd()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
-#if USE(BIGINT32)
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-            // No need to unbox, since the tagging is not affected by bitAnd
-            LValue result = m_out.bitAnd(left, right);
-            setJSValue(result);
-            return;
-        }
-#endif
 
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
@@ -4043,17 +3951,6 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
-#if USE(BIGINT32)
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-            // No need to unbox, since the tagging is not affected by bitAnd
-            LValue result = m_out.bitOr(left, right);
-            setJSValue(result);
-            return;
-        }
-#endif
-
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -4075,17 +3972,6 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
-#if USE(BIGINT32)
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-            LValue resultMissingTag = m_out.bitXor(left, right);
-            LValue result = m_out.bitOr(resultMissingTag, m_out.constInt64(JSValue::BigInt32Tag));
-            setJSValue(result);
-            return;
-        }
-#endif
-
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -4106,24 +3992,6 @@ private:
     void compileValueBitRShift()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
-#if USE(BIGINT32)
-        if (m_node->isBinaryUseKind(AnyBigIntUse) || m_node->isBinaryUseKind(BigInt32Use)) {
-            // FIXME: do something smarter here
-            // Things are a bit tricky because a right-shift by a negative number is a left-shift for BigInts.
-            // So even a right shift can overflow.
-            // https://bugs.webkit.org/show_bug.cgi?id=210847
-
-            LValue left = lowJSValue(m_node->child1(), ManualOperandSpeculation);
-            LValue right = lowJSValue(m_node->child2(), ManualOperandSpeculation);
-            speculate(m_node, m_node->child1());
-            speculate(m_node, m_node->child2());
-
-            LValue result = vmCall(pointerType(), operationValueBitRShift, weakPointer(globalObject), left, right);
-            setJSValue(result);
-            return;
-        }
-#endif // USE(BIGINT32)
 
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
@@ -4154,7 +4022,6 @@ private:
     void compileValueBitLShift()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        // FIXME: consider adding a fast path for BigInt32 here.
         if (m_node->isBinaryUseKind(HeapBigIntUse)) {
             LValue left = lowHeapBigInt(m_node->child1());
             LValue right = lowHeapBigInt(m_node->child2());
@@ -4164,7 +4031,7 @@ private:
             return;
         }
 
-        DFG_ASSERT(m_graph, m_node, m_node->isBinaryUseKind(UntypedUse) || m_node->isBinaryUseKind(AnyBigIntUse) || m_node->isBinaryUseKind(BigInt32Use));
+        DFG_ASSERT(m_graph, m_node, m_node->isBinaryUseKind(UntypedUse));
         emitBinaryBitOpSnippet<JITLeftShiftGenerator>(operationValueBitLShift);
     }
 
@@ -4754,6 +4621,7 @@ private:
         patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
         patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->clobber(RegisterSet::macroClobberedFPRs());
         patchpoint->numGPScratchRegisters = Options::useHandlerICInFTL() ? 1 : 0;
 
         RefPtr<PatchpointExceptionHandle> exceptionHandle = preparePatchpointForExceptions(patchpoint);
@@ -6687,6 +6555,7 @@ IGNORE_CLANG_WARNINGS_END
             patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
             patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
             patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+            patchpoint->clobber(RegisterSet::macroClobberedFPRs());
             patchpoint->numGPScratchRegisters = Options::useHandlerICInFTL() ? 1 : 0;
 
             RefPtr<PatchpointExceptionHandle> exceptionHandle = preparePatchpointForExceptions(patchpoint);
@@ -7416,6 +7285,8 @@ IGNORE_CLANG_WARNINGS_END
             patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
             patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
             patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+            if (isX86_64())
+                patchpoint->clobber(RegisterSet::macroClobberedFPRs());
             patchpoint->numGPScratchRegisters = Options::useHandlerICInFTL() ? 1 : 0;
 
             RefPtr<PatchpointExceptionHandle> exceptionHandle = preparePatchpointForExceptions(patchpoint);
@@ -9835,7 +9706,7 @@ IGNORE_CLANG_WARNINGS_END
             Int64, operationCreateRest, weakPointer(globalObject), argumentStart, m_out.constInt32(numberOfArgumentsToSkip), arrayLength));
     }
 
-    const AbstractHeap& LEGACY_NODELETE abstractHeapForOwnPropertyKeysCache(NodeType type)
+    NODELETE const AbstractHeap& abstractHeapForOwnPropertyKeysCache(NodeType type)
     {
         switch (type) {
         case ObjectKeys:
@@ -9884,6 +9755,7 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.appendTo(useCacheCase, slowButArrayBufferCase);
                 RegisteredStructure arrayStructure = m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
                 LValue fastArray = allocateObject<JSArray>(arrayStructure, m_out.addPtr(cached, JSCellButterfly::offsetOfData()), slowButArrayBufferCase);
+                mutatorFence();
                 ValueFromBlock fastResult = m_out.anchor(fastArray);
                 m_out.jump(continuation);
 
@@ -10522,6 +10394,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock isFunctionBlock = m_out.newBlock();
         LBasicBlock hasRareData = m_out.newBlock();
+        LBasicBlock polyProtoCase = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
@@ -10531,12 +10404,19 @@ IGNORE_CLANG_WARNINGS_END
         LValue rareDataTags = m_out.loadPtr(callee, m_heaps.JSFunction_executableOrRareData);
         m_out.branch(m_out.testIsZeroPtr(rareDataTags, m_out.constIntPtr(JSFunction::rareDataTag)), rarely(slowPath), usually(hasRareData));
 
-        m_out.appendTo(hasRareData, slowPath);
+        m_out.appendTo(hasRareData, polyProtoCase);
         LValue rareData = m_out.sub(rareDataTags, m_out.constIntPtr(JSFunction::rareDataTag));
         LValue allocator = m_out.loadPtr(rareData, m_heaps.FunctionRareData_allocator);
         LValue structure = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
         LValue butterfly = m_out.constIntPtr(0);
-        ValueFromBlock fastResult = m_out.anchor(allocateObject(allocator, structure, butterfly, slowPath));
+        LValue fastObject = allocateObject(allocator, structure, butterfly, slowPath);
+        ValueFromBlock fastResult = m_out.anchor(fastObject);
+        m_out.branch(m_out.isZero64(m_out.load64(structure, m_heaps.Structure_prototype)), rarely(polyProtoCase), usually(continuation));
+
+        m_out.appendTo(polyProtoCase, slowPath);
+        LValue prototype = m_out.loadPtr(rareData, m_heaps.FunctionRareData_prototype);
+        m_out.store64(prototype, m_out.address(m_heaps.properties.atAnyNumber(), fastObject, offsetRelativeToBase(knownPolyProtoOffset)));
+        ValueFromBlock polyProtoResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
 
         m_out.appendTo(slowPath, continuation);
@@ -10545,7 +10425,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        LValue result = m_out.phi(Int64, fastResult, slowResult);
+        LValue result = m_out.phi(Int64, fastResult, polyProtoResult, slowResult);
 
         mutatorFence();
         setJSValue(result);
@@ -10791,8 +10671,17 @@ IGNORE_CLANG_WARNINGS_END
         else if (m_node->child1().useKind() == SetObjectUse)
             speculateSetObject(m_node->child1());
 
-        bool fastSpreadProven = m_graph.canDoFastSpread(m_node, m_state.forNode(m_node->child1()));
-        bool fastSpreadWithStructureCheck = !fastSpreadProven && m_graph.canDoFastSpreadWithStructureCheck(m_node);
+        // Same two decisions the pre-fix code made, so everything downstream is shared verbatim.
+        constexpr bool canSpeculate = true;
+        Graph::ProtocolWatchResult arrayWatch = Graph::ProtocolWatchResult::Unwatchable;
+        // The structures a RequiresSemanticStructureCheck operand must be narrowed to, which is every
+        // realm the operand's proven structures belong to rather than just the semantic origin's.
+        RegisteredStructureSet arrayStructuresToCheck;
+        if (m_node->child1().useKind() == ArrayUse)
+            std::tie(arrayWatch, arrayStructuresToCheck) = m_graph.tryWatchArrayIteratorProtocol(m_node->child1().node(), m_state.forNode(m_node->child1()), canSpeculate);
+
+        bool fastSpreadProven = arrayWatch == Graph::ProtocolWatchResult::Proven;
+        bool fastSpreadWithStructureCheck = arrayWatch == Graph::ProtocolWatchResult::RequiresSemanticStructureCheck;
 
         if (fastSpreadProven || fastSpreadWithStructureCheck) {
             LBasicBlock indexingTypeCheck = fastSpreadWithStructureCheck ? m_out.newBlock() : nullptr;
@@ -10809,14 +10698,15 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock lastNext = nullptr;
 
             if (fastSpreadWithStructureCheck) {
-                JSGlobalObject* childGlobalObject = m_graph.globalObjectFor(m_node->child1()->origin.semantic);
                 LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
-                constexpr size_t numShapes = std::size(Graph::originalArrayShapesForSpread);
-                for (size_t i = 0; i < numShapes; ++i) {
-                    RegisteredStructure registered = m_graph.registerStructure(childGlobalObject->originalArrayStructureForIndexingType(Graph::originalArrayShapesForSpread[i]));
-                    bool isLast = (i + 1 == numShapes);
+                Vector<RegisteredStructure, 8> structures;
+                arrayStructuresToCheck.forEach([&](RegisteredStructure registered) {
+                    structures.append(registered);
+                });
+                for (size_t i = 0; i < structures.size(); ++i) {
+                    bool isLast = (i + 1 == structures.size());
                     LBasicBlock nextCompare = isLast ? slowPath : m_out.newBlock();
-                    m_out.branch(m_out.equal(structureID, weakStructureID(registered)),
+                    m_out.branch(m_out.equal(structureID, weakStructureID(structures[i])),
                         unsure(indexingTypeCheck), unsure(nextCompare));
                     if (!isLast)
                         m_out.appendTo(nextCompare);
@@ -10924,25 +10814,27 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock slowPath = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
-            // Guard: route prototype-mutated or own-Symbol.iterator Sets to slowPath.
-            // The check can be folded when an upstream CheckStructure has already
-            // proven that the operand carries the original Set structure.
-            // FixupPhase arms the Set iterator protocol watchpoint on m_node->child1(), so
-            // child1's global object must be used.
-            JSGlobalObject* childGlobalObject = m_graph.globalObjectFor(m_node->child1()->origin.semantic);
-            Structure* originalSetStructure = childGlobalObject->setStructureConcurrently();
-            if (!originalSetStructure)
+            // The inline path below walks the Set's storage directly, bypassing Symbol.iterator, so
+            // it is only valid where the iteration protocol has been proven non-observable. Anything
+            // else goes to slowPath, which performs the authoritative
+            // isIteratorProtocolFastAndNonObservable check.
+            auto [setWatch, setStructureToCheck] = m_graph.tryWatchSetIteratorProtocol(m_node->child1().node(), m_state.forNode(m_node->child1()), canSpeculate);
+            switch (setWatch) {
+            case Graph::ProtocolWatchResult::Unwatchable:
                 m_out.jump(slowPath);
-            else {
-                RegisteredStructure registeredSetStructure = m_graph.registerStructure(originalSetStructure);
-                if (m_state.forNode(m_node->child1()).m_structure.isSubsetOf(RegisteredStructureSet { registeredSetStructure }))
-                    m_out.jump(storageCheck);
-                else {
-                    LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
-                    m_out.branch(m_out.notEqual(structureID,
-                        weakStructureID(registeredSetStructure)),
-                        rarely(slowPath), usually(storageCheck));
-                }
+                break;
+
+            case Graph::ProtocolWatchResult::RequiresSemanticStructureCheck: {
+                LValue structureID = m_out.load32(argument, m_heaps.JSCell_structureID);
+                m_out.branch(m_out.notEqual(structureID,
+                    weakStructureID(setStructureToCheck)),
+                    rarely(slowPath), usually(storageCheck));
+                break;
+            }
+
+            case Graph::ProtocolWatchResult::Proven:
+                m_out.jump(storageCheck);
+                break;
             }
             LBasicBlock lastNext = m_out.appendTo(storageCheck, obsoleteCheck);
 
@@ -11112,6 +11004,7 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock loopHeader = m_out.newBlock();
         LBasicBlock loopBody = m_out.newBlock();
         LBasicBlock storeSlot = m_out.newBlock();
+        LBasicBlock releaseScratch = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
         LValue cached = m_out.loadPtr(m_out.absolute(&vm().m_cachedSortScratch));
@@ -11136,17 +11029,24 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(loopBody, storeSlot);
         LValue value = m_out.load64(m_out.baseIndex(sourceHeap, butterfly, index));
-        ValueFromBlock holeResult = m_out.anchor(m_out.constIntPtr(std::bit_cast<void*>(vm().m_sortScratchSentinel.get())));
         LValue isHole = m_out.isZero64(value);
         if (m_node->arrayMode().type() == Array::Contiguous)
             isHole = m_out.bitOr(isHole, m_out.equal(value, m_out.constInt64(JSValue::encode(jsUndefined()))));
-        m_out.branch(isHole, rarely(continuation), usually(storeSlot));
+        m_out.branch(isHole, rarely(releaseScratch), usually(storeSlot));
 
-        m_out.appendTo(storeSlot, continuation);
+        m_out.appendTo(storeSlot, releaseScratch);
         m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, scratch, index, JSValue(), JSCellButterfly::offsetOfData()));
         LValue nextIndex = m_out.add(index, m_out.intPtrOne);
         m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
         m_out.jump(loopHeader);
+
+        // The scratch won't be barriered, so need to undo the writes.
+        // Without this, we could have an unremembered old/black cell referencing new/white cells.
+        m_out.appendTo(releaseScratch, continuation);
+        splatWords(m_out.add(scratch, m_out.constIntPtr(JSCellButterfly::offsetOfData())), m_out.int32Zero, m_out.constInt32(sortScratchSlotCount), m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
+        m_out.storePtr(scratch, m_out.absolute(&vm().m_cachedSortScratch));
+        ValueFromBlock holeResult = m_out.anchor(m_out.constIntPtr(std::bit_cast<void*>(vm().m_sortScratchSentinel.get())));
+        m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(pointerType(), successResult, holeResult));
@@ -11176,14 +11076,15 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.aboveOrEqual(index, length), unsure(continuation), unsure(commitBody));
 
         m_out.appendTo(commitBody, continuation);
-        LValue value = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, scratch, index, JSValue(), JSCellButterfly::offsetOfData()));
+        TypedPointer scratchSlot = m_out.baseIndex(m_heaps.indexedContiguousProperties, scratch, index, JSValue(), JSCellButterfly::offsetOfData());
+        LValue value = m_out.load64(scratchSlot);
         m_out.store64(value, m_out.baseIndex(targetHeap, butterfly, index));
+        m_out.store64(m_out.int64Zero, scratchSlot);
         LValue nextIndex = m_out.add(index, m_out.intPtrOne);
         m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
         m_out.jump(commitHeader);
 
         m_out.appendTo(continuation, lastNext);
-        splatWords(m_out.add(scratch, m_out.constIntPtr(JSCellButterfly::offsetOfData())), m_out.int32Zero, m_out.constInt32(sortScratchSlotCount), m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
         m_out.storePtr(scratch, m_out.absolute(&vm().m_cachedSortScratch));
     }
 
@@ -11448,9 +11349,6 @@ IGNORE_CLANG_WARNINGS_END
 
         if (abstractValue(m_node->child1()).m_type & (SpecBytecodeNumber | SpecBigInt)) {
             LBasicBlock notNumber = m_out.newBlock();
-#if USE(BIGINT32)
-            LBasicBlock notBigInt32 = m_out.newBlock();
-#endif
             LBasicBlock isCellPath = m_out.newBlock();
             LBasicBlock slowPath = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
@@ -11460,10 +11358,6 @@ IGNORE_CLANG_WARNINGS_END
 
             // notNumber case.
             LBasicBlock lastNext = m_out.appendTo(notNumber, continuation);
-#if USE(BIGINT32)
-            m_out.branch(isBigInt32(value, provenType(m_node->child1())), unsure(continuation), unsure(notBigInt32));
-            m_out.appendTo(notBigInt32);
-#endif
             m_out.branch(isCell(value, provenType(m_node->child1())), unsure(isCellPath), unsure(slowPath));
 
             m_out.appendTo(isCellPath);
@@ -11486,13 +11380,6 @@ IGNORE_CLANG_WARNINGS_END
     void compileCallNumberConstructor()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-#if USE(BIGINT32)
-        if (m_node->child1().useKind() == BigInt32Use) {
-            LValue value = lowBigInt32(m_node->child1());
-            setInt32(unboxBigInt32(value));
-            return;
-        }
-#endif
         LValue value = lowJSValue(m_node->child1());
 
         LBasicBlock notNumber = m_out.newBlock();
@@ -12399,6 +12286,23 @@ IGNORE_CLANG_WARNINGS_END
         // const uint8_t* rightData = rightImpl->characters8();
         // size_t commonLength = std::min(leftLength, rightLength);
         // size_t index = 0;
+        // while (commonLength - index >= 4) {
+        //     size_t wordSize = commonLength - index >= 8 ? 8 : 4;
+        //     if (either word at index has a non-ASCII byte)
+        //         break;
+        //     if (the words at index are equal) {
+        //         index += wordSize;
+        //         continue;
+        //     }
+        //     size_t mismatch = index + (offset of the first differing byte in the words);
+        //     uint8_t leftWeight = ducetLevel1Weights[leftData[mismatch]];
+        //     uint8_t rightWeight = ducetLevel1Weights[rightData[mismatch]];
+        //     if ((!leftWeight) | (!rightWeight))
+        //         goto slow_path;
+        //     if (leftWeight != rightWeight)
+        //         return leftWeight > rightWeight ? 1 : -1;
+        //     index = mismatch + 1;
+        // }
         //
         // while (index < commonLength) {
         //     uint8_t leftByte = leftData[index];
@@ -12421,8 +12325,7 @@ IGNORE_CLANG_WARNINGS_END
         //     goto slow_path;
         //
         // const uint8_t* longerData = leftLength > rightLength ? leftData : rightData;
-        // size_t shorterLength = std::min(leftLength, rightLength);
-        // if (!ducetLevel1Weights[longerData[shorterLength]])
+        // if (!ducetLevel1Weights[longerData[commonLength]])
         //     goto slow_path;
         // return leftLength > rightLength ? 1 : -1;
 
@@ -12436,6 +12339,19 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock checkDUCET = m_out.newBlock();
         LBasicBlock is8Bit = m_out.newBlock();
         LBasicBlock loopSetup = m_out.newBlock();
+        LBasicBlock word8Loop = m_out.newBlock();
+        LBasicBlock word8CheckDiff = m_out.newBlock();
+        LBasicBlock word8Advance = m_out.newBlock();
+        LBasicBlock word8NonASCII = m_out.newBlock();
+        LBasicBlock word8Mismatch = m_out.newBlock();
+        LBasicBlock word8Done = m_out.newBlock();
+        LBasicBlock word4Check = m_out.newBlock();
+        LBasicBlock word4Body = m_out.newBlock();
+        LBasicBlock word4CheckDiff = m_out.newBlock();
+        LBasicBlock byteTail = m_out.newBlock();
+        LBasicBlock wordMismatch = m_out.newBlock();
+        LBasicBlock wordMismatchWeights = m_out.newBlock();
+        LBasicBlock wordMismatchResume = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock checkASCII = m_out.newBlock();
         LBasicBlock checkWeights = m_out.newBlock();
@@ -12465,11 +12381,16 @@ IGNORE_CLANG_WARNINGS_END
         ValueFromBlock sameImplResult = m_out.anchor(m_out.int32Zero);
         m_out.branch(m_out.equal(leftImpl, rightImpl), unsure(continuation), unsure(checkDUCET));
 
-        // Check JSGlobalObject.m_canDoASCIIUCADUCETLocaleCompare
+        // Check JSGlobalObject.m_canDoASCIIUCADUCETLocaleCompare. It is set once, when the default
+        // collator is created, and never cleared, so a true value seen here holds forever.
         m_out.appendTo(checkDUCET, is8Bit);
-        m_out.branch(
-            m_out.isZero32(m_out.load8ZeroExt32(weakPointer(globalObject), m_heaps.JSGlobalObject_canDoASCIIUCADUCETLocaleCompare)),
-            rarely(slowCase), usually(is8Bit));
+        if (globalObject->canDoASCIIUCADUCETLocaleCompare())
+            m_out.jump(is8Bit);
+        else {
+            m_out.branch(
+                m_out.isZero32(m_out.load8ZeroExt32(weakPointer(globalObject), m_heaps.JSGlobalObject_canDoASCIIUCADUCETLocaleCompare)),
+                rarely(slowCase), usually(is8Bit));
+        }
 
         // Check both are 8-bit
         m_out.appendTo(is8Bit, loopSetup);
@@ -12487,12 +12408,93 @@ IGNORE_CLANG_WARNINGS_END
         LValue rightData = m_out.loadPtr(rightImpl, m_heaps.StringImpl_data);
         LValue commonLength = m_out.select(m_out.below(leftLength, rightLength), leftLength, rightLength);
         LValue tableBase = m_out.constIntPtr(ducetLevel1Weights);
-        ValueFromBlock indexAtStart = m_out.anchor(m_out.intPtrZero);
-        m_out.branch(m_out.isNull(commonLength), unsure(loopDone), unsure(loop));
+        ValueFromBlock word8IndexAtStart = m_out.anchor(m_out.intPtrZero);
+        ValueFromBlock word4IndexAtStart = m_out.anchor(m_out.intPtrZero);
+        m_out.branch(m_out.below(commonLength, m_out.constIntPtr(8)), unsure(word4Check), unsure(word8Loop));
+
+        // Skip the equal ASCII prefix 8 bytes at a time. On a mismatch, decide from the first differing
+        // byte of the two words; if either word has a non-ASCII byte, let the byte loop decide. The exit
+        // edges get their own blocks so the loop body does not set the exit phis on every iteration.
+        m_out.appendTo(word8Loop, word8CheckDiff);
+        LValue word8Index = m_out.phi(pointerType(), word8IndexAtStart);
+        LValue leftWord8 = m_out.load64(m_out.baseIndex(m_heaps.characters8, leftData, word8Index));
+        LValue rightWord8 = m_out.load64(m_out.baseIndex(m_heaps.characters8, rightData, word8Index));
+        LValue diff8 = m_out.bitXor(leftWord8, rightWord8);
+        m_out.branch(m_out.testNonZero64(m_out.bitOr(leftWord8, rightWord8), m_out.constInt64(0x8080808080808080ULL)), rarely(word8NonASCII), usually(word8CheckDiff));
+
+        m_out.appendTo(word8CheckDiff, word8Advance);
+        m_out.branch(m_out.notZero64(diff8), unsure(word8Mismatch), unsure(word8Advance));
+
+        m_out.appendTo(word8Advance, word8NonASCII);
+        LValue nextWord8Index = m_out.add(word8Index, m_out.constIntPtr(8));
+        m_out.addIncomingToPhi(word8Index, m_out.anchor(nextWord8Index));
+        m_out.branch(m_out.belowOrEqual(m_out.add(nextWord8Index, m_out.constIntPtr(8)), commonLength), unsure(word8Loop), unsure(word8Done));
+
+        m_out.appendTo(word8NonASCII, word8Mismatch);
+        ValueFromBlock byteTailIndexFromWord8 = m_out.anchor(word8Index);
+        m_out.jump(byteTail);
+
+        m_out.appendTo(word8Mismatch, word8Done);
+        ValueFromBlock mismatchIndexFromWord8 = m_out.anchor(word8Index);
+        ValueFromBlock mismatchLeftWordFromWord8 = m_out.anchor(leftWord8);
+        ValueFromBlock mismatchDiffFromWord8 = m_out.anchor(diff8);
+        m_out.jump(wordMismatch);
+
+        m_out.appendTo(word8Done, word4Check);
+        ValueFromBlock word4IndexFromWord8 = m_out.anchor(nextWord8Index);
+        m_out.jump(word4Check);
+
+        m_out.appendTo(word4Check, word4Body);
+        LValue word4Index = m_out.phi(pointerType(), word4IndexAtStart, word4IndexFromWord8);
+        ValueFromBlock byteTailIndexFromWord4Check = m_out.anchor(word4Index);
+        m_out.branch(m_out.above(m_out.add(word4Index, m_out.constIntPtr(4)), commonLength), unsure(byteTail), unsure(word4Body));
+
+        m_out.appendTo(word4Body, word4CheckDiff);
+        LValue leftWord4 = m_out.load32(m_out.baseIndex(m_heaps.characters8, leftData, word4Index));
+        LValue rightWord4 = m_out.load32(m_out.baseIndex(m_heaps.characters8, rightData, word4Index));
+        LValue diff4 = m_out.zeroExt(m_out.bitXor(leftWord4, rightWord4), Int64);
+        ValueFromBlock byteTailIndexFromWord4 = m_out.anchor(word4Index);
+        m_out.branch(m_out.testNonZero32(m_out.bitOr(leftWord4, rightWord4), m_out.constInt32(0x80808080)), rarely(byteTail), usually(word4CheckDiff));
+
+        m_out.appendTo(word4CheckDiff, byteTail);
+        ValueFromBlock mismatchIndexFromWord4 = m_out.anchor(word4Index);
+        ValueFromBlock mismatchLeftWordFromWord4 = m_out.anchor(m_out.zeroExt(leftWord4, Int64));
+        ValueFromBlock mismatchDiffFromWord4 = m_out.anchor(diff4);
+        ValueFromBlock byteTailIndexAfterWord4 = m_out.anchor(m_out.add(word4Index, m_out.constIntPtr(4)));
+        m_out.branch(m_out.notZero64(diff4), unsure(wordMismatch), unsure(byteTail));
+
+        m_out.appendTo(byteTail, wordMismatch);
+        LValue byteTailIndex = m_out.phi(pointerType(), byteTailIndexFromWord8, byteTailIndexFromWord4Check, byteTailIndexFromWord4, byteTailIndexAfterWord4);
+        ValueFromBlock indexFromByteTail = m_out.anchor(byteTailIndex);
+        m_out.branch(m_out.below(byteTailIndex, commonLength), unsure(loop), unsure(loopDone));
+
+        m_out.appendTo(wordMismatch, wordMismatchWeights);
+        LValue mismatchIndex = m_out.phi(pointerType(), mismatchIndexFromWord8, mismatchIndexFromWord4);
+        LValue mismatchLeftWord = m_out.phi(Int64, mismatchLeftWordFromWord8, mismatchLeftWordFromWord4);
+        LValue mismatchDiff = m_out.phi(Int64, mismatchDiffFromWord8, mismatchDiffFromWord4);
+        LValue lowestDiffBit = m_out.bitAnd(mismatchDiff, m_out.neg(mismatchDiff));
+        LValue byteShift = m_out.bitAnd(m_out.bitXor(m_out.ctlz32(lowestDiffBit), m_out.constInt64(63)), m_out.constInt64(~7LL));
+        LValue byteShift32 = m_out.castToInt32(byteShift);
+        LValue mismatchLeftByte = m_out.bitAnd(m_out.lShr(mismatchLeftWord, byteShift32), m_out.constInt64(0xff));
+        LValue mismatchRightByte = m_out.bitAnd(m_out.lShr(m_out.bitXor(mismatchLeftWord, mismatchDiff), byteShift32), m_out.constInt64(0xff));
+        LValue mismatchLeftWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, mismatchLeftByte)));
+        LValue mismatchRightWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, mismatchRightByte)));
+        m_out.branch(m_out.bitOr(m_out.isZero32(mismatchLeftWeight), m_out.isZero32(mismatchRightWeight)), rarely(slowCase), usually(wordMismatchWeights));
+
+        // Equal weights (a case-only difference like A/a) resume the word pass after the differing byte.
+        m_out.appendTo(wordMismatchWeights, wordMismatchResume);
+        ValueFromBlock wordMismatchResult = m_out.anchor(m_out.select(m_out.above(mismatchLeftWeight, mismatchRightWeight), m_out.int32One, m_out.constInt32(-1)));
+        m_out.branch(m_out.notEqual(mismatchLeftWeight, mismatchRightWeight), unsure(continuation), unsure(wordMismatchResume));
+
+        m_out.appendTo(wordMismatchResume, loop);
+        LValue resumeIndex = m_out.add(mismatchIndex, m_out.add(m_out.lShr(byteShift, m_out.constInt32(3)), m_out.intPtrOne));
+        m_out.addIncomingToPhi(word8Index, m_out.anchor(resumeIndex));
+        m_out.addIncomingToPhi(word4Index, m_out.anchor(resumeIndex));
+        m_out.branch(m_out.belowOrEqual(m_out.add(resumeIndex, m_out.constIntPtr(8)), commonLength), unsure(word8Loop), unsure(word4Check));
 
         // Main loop: load bytes and branch on equality
         m_out.appendTo(loop, checkASCII);
-        LValue index = m_out.phi(pointerType(), indexAtStart);
+        LValue index = m_out.phi(pointerType(), indexFromByteTail);
         LValue leftByte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, leftData, index));
         LValue rightByte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, rightData, index));
         m_out.branch(m_out.notEqual(leftByte, rightByte), unsure(checkWeights), unsure(checkASCII));
@@ -12528,8 +12530,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(lengthsDiffer, slowCase);
         LValue isLeftLonger = m_out.above(leftLength, rightLength);
         LValue longerData = m_out.select(isLeftLonger, leftData, rightData);
-        LValue shorterLength = m_out.select(isLeftLonger, rightLength, leftLength);
-        LValue nextChar = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, longerData, shorterLength));
+        LValue nextChar = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, longerData, commonLength));
         LValue nextCharWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, m_out.zeroExtPtr(nextChar))));
         LValue lengthResult = m_out.select(isLeftLonger, m_out.int32One, m_out.constInt32(-1));
         ValueFromBlock lengthResultPhi = m_out.anchor(lengthResult);
@@ -12542,7 +12543,7 @@ IGNORE_CLANG_WARNINGS_END
 
         // Merge results
         m_out.appendTo(continuation, lastNext);
-        setInt32(m_out.phi(Int32, sameStringResult, sameImplResult, differResultPhi, lengthResultPhi, slowResult));
+        setInt32(m_out.phi(Int32, sameStringResult, sameImplResult, wordMismatchResult, differResultPhi, lengthResultPhi, slowResult));
     }
 
     void compileStringIndexOf()
@@ -12646,30 +12647,51 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock notRopeCase = m_out.newBlock();
         LBasicBlock lengthOKCase = m_out.newBlock();
+        LBasicBlock ropeCase = m_out.newBlock();
+        LBasicBlock ropeLengthOKCase = m_out.newBlock();
+        LBasicBlock substringCase = m_out.newBlock();
         LBasicBlock is8BitCase = m_out.newBlock();
         LBasicBlock trueCase = m_out.newBlock();
         LBasicBlock falseCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isRopeString(base, m_node->child1()), rarely(slowCase), usually(notRopeCase));
+        m_out.branch(isRopeString(base, m_node->child1()), rarely(ropeCase), usually(notRopeCase));
 
         LBasicBlock lastNext = m_out.appendTo(notRopeCase, lengthOKCase);
         LValue impl = m_out.loadPtr(base, m_heaps.JSString_value);
         LValue length = m_out.load32(impl, m_heaps.StringImpl_length);
         m_out.branch(m_out.below(length, m_out.constInt32(searchLength)), unsure(falseCase), unsure(lengthOKCase));
 
-        m_out.appendTo(lengthOKCase, is8BitCase);
+        m_out.appendTo(lengthOKCase, ropeCase);
+        ValueFromBlock resolvedData = m_out.anchor(m_out.loadPtr(impl, m_heaps.StringImpl_data));
+        ValueFromBlock resolvedLength = m_out.anchor(length);
         m_out.branch(
             m_out.testIsZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())),
             rarely(slowCase), usually(is8BitCase));
 
+        m_out.appendTo(ropeCase, ropeLengthOKCase);
+        LValue ropeLength = m_out.load32NonNegative(base, m_heaps.JSRopeString_length);
+        m_out.branch(m_out.below(ropeLength, m_out.constInt32(searchLength)), unsure(falseCase), unsure(ropeLengthOKCase));
+
+        m_out.appendTo(ropeLengthOKCase, substringCase);
+        m_out.branch(
+            m_out.testIsZeroPtr(m_out.loadPtr(base, m_heaps.JSRopeString_fiber0), m_out.constIntPtr(JSRopeString::isSubstringInPointer)),
+            unsure(slowCase), unsure(substringCase));
+
+        m_out.appendTo(substringCase, is8BitCase);
+        auto [baseImpl, substringOffset] = substringRopeBaseImplAndOffset(base);
+        ValueFromBlock substringData = m_out.anchor(m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
+        ValueFromBlock substringLength = m_out.anchor(ropeLength);
+        m_out.branch(isNot8BitStringImpl(baseImpl), rarely(slowCase), usually(is8BitCase));
+
         m_out.appendTo(is8BitCase, trueCase);
         // Anchor the window at data[0] for startsWith, or data[length - searchLength] for endsWith.
-        LValue data = m_out.loadPtr(impl, m_heaps.StringImpl_data);
+        LValue data = m_out.phi(pointerType(), resolvedData, substringData);
+        LValue dataLength = m_out.phi(Int32, resolvedLength, substringLength);
         LValue windowBase = isStartsWith
             ? data
-            : m_out.add(data, m_out.zeroExtPtr(m_out.sub(length, m_out.constInt32(searchLength))));
+            : m_out.add(data, m_out.zeroExtPtr(m_out.sub(dataLength, m_out.constInt32(searchLength))));
 
         // Encode the search bytes as little-endian immediates so the comparison is a few
         // wide loads + compares, with overlap when searchLength isn't a power of two.
@@ -13367,9 +13389,7 @@ IGNORE_CLANG_WARNINGS_END
             || m_node->isBinaryUseKind(SymbolUse)
             || m_node->isBinaryUseKind(StringIdentUse)
             || m_node->isBinaryUseKind(StringUse)
-            || m_node->isBinaryUseKind(BigInt32Use)
-            || m_node->isBinaryUseKind(HeapBigIntUse)
-            || m_node->isBinaryUseKind(AnyBigIntUse)) {
+            || m_node->isBinaryUseKind(HeapBigIntUse)) {
             compileCompareStrictEq();
             return;
         }
@@ -13411,105 +13431,6 @@ IGNORE_CLANG_WARNINGS_END
                 m_out.equal(lowInt32(m_node->child1()), lowInt32(m_node->child2())));
             return;
         }
-
-#if USE(BIGINT32)
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-
-            // No need to unbox since the tag bits are the same on both sides
-            LValue result = m_out.equal(left, right);
-            setBoolean(result);
-            return;
-        }
-
-        if (m_node->isBinaryUseKind(AnyBigIntUse)) {
-            LValue left = lowJSValue(m_node->child1(), ManualOperandSpeculation);
-            LValue right = lowJSValue(m_node->child2(), ManualOperandSpeculation);
-
-            // Note that we cannot start with if (left == right), because we must insert the right checks (see ManualOperandSpeculation above)
-            // The code that we generate looks like the following pseudo-code:
-            /*
-             if (isBigInt32(left)) {
-                if (isBigInt32(right))
-                    return left == right;
-                CHECK(isHeapBigInt(right));
-                return call(JSBigInt::equalsToInt32(right, unboxed(left));
-             }
-             CHECK(isHeapBigInt(left))
-             if (left == right)
-                return true;
-             if (isBigInt32(right))
-                return call(JSBigInt::equalsToInt32(left, unboxed(right));
-             CHECK(isHeapBigInt(right));
-             return call(JSBigInt::equals(left, right));
-            */
-            LBasicBlock leftIsBigInt32 = m_out.newBlock();
-            LBasicBlock bothAreBigInt32 = m_out.newBlock();
-            LBasicBlock onlyLeftIsBigInt32 = m_out.newBlock();
-            LBasicBlock leftIsNotBigInt32 = m_out.newBlock();
-            LBasicBlock leftEqualsRight = m_out.newBlock();
-            LBasicBlock leftIsHeapBigInt = m_out.newBlock();
-            LBasicBlock rightIsBigInt32 = m_out.newBlock();
-            LBasicBlock rightIsNotBigInt32 = m_out.newBlock();
-            LBasicBlock continuation = m_out.newBlock();
-
-            // Inserts a check that a value is a HeapBigInt, assuming only that we know it is not a BigInt32
-            auto checkIsHeapBigInt = [&](LValue lowValue, Edge highValue) {
-                if (m_interpreter.needsTypeCheck(highValue, SpecHeapBigInt)) {
-                    ASSERT(mayHaveTypeCheck(highValue.useKind()));
-                    LValue checkFailed = isNotHeapBigIntUnknownWhetherCell(lowValue, provenType(highValue) & ~SpecBigInt32);
-                    appendOSRExit(BadType, jsValueValue(lowValue), highValue.node(), checkFailed, m_origin);
-                }
-            };
-
-            m_out.branch(isBigInt32(left, provenType(m_node->child1())), unsure(leftIsBigInt32), unsure(leftIsNotBigInt32));
-
-            LBasicBlock lastNext = m_out.appendTo(leftIsBigInt32, bothAreBigInt32);
-            m_out.branch(isBigInt32(right, provenType(m_node->child2())), unsure(bothAreBigInt32), unsure(onlyLeftIsBigInt32));
-
-            m_out.appendTo(bothAreBigInt32, onlyLeftIsBigInt32);
-            ValueFromBlock resultBothAreBigInt32 = m_out.anchor(m_out.equal(left, right));
-            m_out.jump(continuation);
-
-            m_out.appendTo(onlyLeftIsBigInt32, leftIsNotBigInt32);
-            checkIsHeapBigInt(right, m_node->child2());
-            LValue unboxedLeft = unboxBigInt32(left);
-            ValueFromBlock resultLeftIsBigInt32 = m_out.anchor(m_out.notNull(vmCall(pointerType(), operationCompareEqHeapBigIntToInt32, weakPointer(globalObject), right, unboxedLeft)));
-            m_out.jump(continuation);
-
-            m_out.appendTo(leftIsNotBigInt32, leftEqualsRight);
-            checkIsHeapBigInt(left, m_node->child1());
-            m_out.branch(m_out.equal(left, right), unsure(leftEqualsRight), unsure(leftIsHeapBigInt));
-
-            m_out.appendTo(leftEqualsRight, leftIsHeapBigInt);
-            ValueFromBlock resultLeftEqualsRight = m_out.anchor(m_out.booleanTrue);
-            m_out.jump(continuation);
-
-            m_out.appendTo(leftIsHeapBigInt, rightIsBigInt32);
-            m_out.branch(isBigInt32(right, provenType(m_node->child2())), unsure(rightIsBigInt32), unsure(rightIsNotBigInt32));
-
-            m_out.appendTo(rightIsBigInt32, rightIsNotBigInt32);
-            LValue unboxedRight = unboxBigInt32(right);
-            ValueFromBlock resultRightIsBigInt32 = m_out.anchor(m_out.notNull(vmCall(pointerType(), operationCompareEqHeapBigIntToInt32, weakPointer(globalObject), left, unboxedRight)));
-            m_out.jump(continuation);
-
-            m_out.appendTo(rightIsNotBigInt32, continuation);
-            checkIsHeapBigInt(right, m_node->child2());
-            // FIXME: [ESNext][BigInt] Create specialized version of strict equals for big ints
-            // https://bugs.webkit.org/show_bug.cgi?id=182895
-            ValueFromBlock resultBothHeapBigInt = m_out.anchor(m_out.notNull(vmCall(pointerType(), operationCompareStrictEq, weakPointer(globalObject), left, right)));
-            m_out.jump(continuation);
-
-            m_out.appendTo(continuation, lastNext);
-            setBoolean(m_out.phi(Int32, resultBothAreBigInt32, resultLeftIsBigInt32, resultLeftEqualsRight, resultRightIsBigInt32, resultBothHeapBigInt));
-
-            m_interpreter.filter(m_node->child1(), SpecBigInt);
-            m_interpreter.filter(m_node->child2(), SpecBigInt);
-            return;
-        }
-#endif // USE(BIGINT32)
 
         if (m_node->isBinaryUseKind(Int52RepUse)) {
             Int52Kind kind;
@@ -13637,11 +13558,7 @@ IGNORE_CLANG_WARNINGS_END
             || m_node->isSymmetricBinaryUseKind(OtherUse, UntypedUse)
             || m_node->isBinaryUseKind(BooleanUse)
             || m_node->isSymmetricBinaryUseKind(BooleanUse, UntypedUse)
-#if !USE(BIGINT32)
             || m_node->isSymmetricBinaryUseKind(NotDoubleUse, NeitherDoubleNorHeapBigIntNorStringUse)) {
-#else
-            ) {
-#endif
             speculate(m_node->child1());
             speculate(m_node->child2());
             LValue left = lowJSValue(m_node->child1(), ManualOperandSpeculation);
@@ -14203,20 +14120,10 @@ IGNORE_CLANG_WARNINGS_END
                     shuffleData.numParameters = jit.codeBlock()->numParameters();
                     shuffleData.setupCalleeSaveRegisters(state->jitCode->calleeSaveRegisters());
 
-                    if (nativeFunction && !vm->isDebuggerHookInjected()) {
-                        jit.store32(
-                            CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-                        CallFrameShuffler(jit, shuffleData).prepareForTailCall();
-                        emitCallTarget();
-                        jit.ret();
-                        return;
-                    }
 
                     auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                     callLinkInfo->setCallType(CallLinkInfo::DirectTailCall);
-                    if (numAllocatedArgs > numPassedArgs)
-                        callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
+                    callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
                     CCallHelpers::Label mainPath = jit.label();
                     jit.store32(
@@ -14260,9 +14167,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                 callLinkInfo->setCallType(isConstruct ? CallLinkInfo::DirectConstruct : CallLinkInfo::DirectCall);
-
-                if (numAllocatedArgs > numPassedArgs)
-                    callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
+                callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
                 CCallHelpers::Label mainPath = jit.label();
                 jit.store32(
@@ -14910,6 +14815,22 @@ IGNORE_CLANG_WARNINGS_END
                 GPRReg scratchGPR3 = forwarding ? allocator.allocateScratchGPR() : InvalidGPRReg;
                 RELEASE_ASSERT(!allocator.numberOfReusedRegisters());
 
+                // The small-array varargs fast path needs extra scratch registers; disable it gracefully
+                // if the target lacks enough free registers.
+                bool useArrayVarargsFastPath = !forwarding && !data->firstVarArgOffset;
+                GPRReg fpArrayGPR = InvalidGPRReg;
+                GPRReg fpScratchGPR1 = InvalidGPRReg;
+                GPRReg fpScratchGPR2 = InvalidGPRReg;
+                GPRReg fpScratchGPR3 = InvalidGPRReg;
+                if (useArrayVarargsFastPath) {
+                    fpArrayGPR = allocator.allocateScratchGPR();
+                    fpScratchGPR1 = allocator.allocateScratchGPR();
+                    fpScratchGPR2 = allocator.allocateScratchGPR();
+                    fpScratchGPR3 = allocator.allocateScratchGPR();
+                    if (allocator.numberOfReusedRegisters())
+                        useArrayVarargsFastPath = false;
+                }
+
                 auto callWithExceptionCheck = [&] (void(*callee)()) {
                     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(callee)), GPRInfo::nonPreservedNonArgumentGPR0);
                     jit.call(GPRInfo::nonPreservedNonArgumentGPR0, OperationPtrTag);
@@ -14935,6 +14856,21 @@ IGNORE_CLANG_WARNINGS_END
 
                     done.link(&jit);
                 } else {
+                    CCallHelpers::JumpList slowArrayFast;
+                    std::optional<CCallHelpers::Jump> arrayFastDone;
+                    if (useArrayVarargsFastPath) {
+                        jit.move(CCallHelpers::TrustedImm32(originalStackHeight / sizeof(EncodedJSValue)), scratchGPR1);
+                        // Copy argumentsGPR aside: the helper clobbers its array reg, and B3 may have
+                        // placed argumentsLateRep in argumentsGPR itself, so preserving it here means the
+                        // slow-path bail needs no (unreliable) restore.
+                        jit.move(argumentsGPR, fpArrayGPR);
+                        emitInlineVarargsFrameForContiguousArray(*vm, jit, fpArrayGPR, scratchGPR1 /*numUsed*/, scratchGPR2 /*resultFrame*/, fpScratchGPR1, fpScratchGPR2, fpScratchGPR3, slowArrayFast);
+                        calleeLateRep.emitRestore(jit, BaselineJITRegisters::Call::calleeGPR);
+                        thisLateRep.emitRestore(jit, thisGPR);
+                        arrayFastDone = jit.jump();
+                        slowArrayFast.link(&jit);
+                    }
+
                     jit.move(CCallHelpers::TrustedImm32(originalStackHeight / sizeof(EncodedJSValue)), scratchGPR1);
                     jit.setupArguments<decltype(operationSizeFrameForVarargs)>(CCallHelpers::TrustedImmPtr(jit.codeBlock()->globalObjectFor(semanticNodeOrigin)), argumentsGPR, scratchGPR1, CCallHelpers::TrustedImm32(data->firstVarArgOffset));
                     jit.prepareCallOperation(jit.vm());
@@ -14956,6 +14892,9 @@ IGNORE_CLANG_WARNINGS_END
                     // This may not emit code if thisGPR got a callee-save. Also, we're guaranteed
                     // that thisGPR != GPRInfo::regT0 (BaselineJITRegisters::Call::calleeGPR) because regT0 interferes with it.
                     thisLateRep.emitRestore(jit, thisGPR);
+
+                    if (arrayFastDone)
+                        arrayFastDone->link(&jit);
                 }
 
                 jit.store64(BaselineJITRegisters::Call::calleeGPR, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
@@ -15001,11 +14940,240 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
+    void compileCallVarargsWithSpread()
+    {
+        // Fill a scratch buffer with the elements (kept live as patchpoint arguments for GC), then the
+        // C++ frame-setup ops expand it into the callee frame. Eliminated spreads are handled without
+        // allocation: a forwarded rest (PhantomCreateRest) becomes an empty-JSValue sentinel plus a
+        // descriptor consumed by the *Forward ops; a PhantomNewArrayBuffer becomes its constant butterfly
+        // cell, flowing through the ordinary spread-cell path.
+        Node* node = m_node;
+        LValue jsCallee = lowJSValue(m_graph.varArgChild(node, 0));
+        LValue thisArg = lowJSValue(m_graph.varArgChild(node, 1));
+        unsigned numElems = node->numChildren() - 2;
+
+        BitVector* bitVector = node->bitVector();
+        // Per-operand forwarding plan, kept 1:1 with elems so it can be indexed by operand number. The
+        // generator runs long after the graph is gone, so it captures this by value rather than the nodes.
+        // See the operand shapes documented next to eliminatedSpreadForwardedRest(). Note that a forwarded
+        // rest in the outermost frame has a null inlineCallFrame, so the flag is what identifies one.
+        struct ForwardedRest {
+            bool isForwardedRest { false };
+            InlineCallFrame* inlineCallFrame { nullptr };
+            unsigned numberOfArgumentsToSkip { 0 };
+        };
+        Vector<ForwardedRest> forwardedRests(numElems, [](size_t) { return ForwardedRest { }; });
+        bool hasForward = false;
+        Vector<LValue, 8> elems(numElems, [&](size_t e) -> LValue {
+            Edge edge = m_graph.varArgChild(node, 2 + e);
+            if (!bitVector->get(e)) {
+                ASSERT(!edge->isPhantomAllocation());
+                return lowJSValue(edge);
+            }
+            if (Node* rest = eliminatedSpreadForwardedRest(edge.node())) {
+                forwardedRests[e] = { true, rest->origin.semantic.inlineCallFrame(), rest->numberOfArgumentsToSkip() };
+                hasForward = true;
+                return m_out.int64Zero; // placeholder; real data comes from the descriptor
+            }
+            if (Node* constantButterfly = eliminatedSpreadConstantButterfly(edge.node()))
+                return weakPointer(constantButterfly->castOperand<JSCellButterfly*>());
+            ASSERT(!edge->isPhantomAllocation());
+            return lowCell(edge);
+        });
+
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(varargsSpreadScratchBufferSize(numElems));
+        EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+        auto* descriptors = varargsSpreadForwardDescriptors(buffer, numElems);
+
+        // Fast path for the single-trailing-spread shape f(prefix..., ...c): build the frame inline.
+        bool singleTrailingSpread = numElems && bitVector->get(numElems - 1);
+        for (unsigned e = 0; singleTrailingSpread && e + 1 < numElems; ++e) {
+            if (bitVector->get(e))
+                singleTrailingSpread = false;
+        }
+        // Eliminating the only spread turns the whole call into a CallVarargs, so this one is materialized.
+        ASSERT(!singleTrailingSpread || !m_graph.varArgChild(node, 2 + numElems - 1)->isPhantomAllocation());
+        unsigned numPrefix = numElems - 1;
+
+        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+        patchpoint->append(jsCallee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR));
+        patchpoint->append(thisArg, ValueRep::WarmAny);
+        patchpoint->appendVectorWithRep(elems, ValueRep::WarmAny);
+        // The frame-setup calls clobber the register the callee is pinned to, so ask for it a second
+        // time as a late use, which cannot be assigned a volatile register.
+        patchpoint->append(jsCallee, ValueRep::LateColdAny);
+
+        RefPtr<PatchpointExceptionHandle> exceptionHandle = preparePatchpointForExceptions(patchpoint);
+
+        patchpoint->append(m_notCellMask, ValueRep::reg(GPRInfo::notCellMaskRegister));
+        patchpoint->append(m_numberTag, ValueRep::reg(GPRInfo::numberTagRegister));
+
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        // Clobbering the volatile registers early as well as late keeps every operand out of them. The
+        // operands therefore survive the frame-setup calls, and the entire volatile set is left free for
+        // the generator's scratch registers, whose count does not depend on the number of operands.
+        patchpoint->clobber(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+
+        unsigned minimumJSCallAreaSize =
+            sizeof(CallerFrameAndPC) +
+            WTF::roundUpToMultipleOf<stackAlignmentBytes()>(5 * sizeof(EncodedJSValue));
+        m_proc.requestCallArgAreaSizeInBytes(minimumJSCallAreaSize);
+
+        CodeOrigin codeOrigin = codeOriginDescriptionOfCallSite();
+        State* state = &m_ftlState;
+        VM* vm = &this->vm();
+        CodeOrigin semanticNodeOrigin = node->origin.semantic;
+        patchpoint->setGenerator(
+            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                CallSiteIndex callSiteIndex = state->jitCode->common.codeOrigins->addUniqueCallSiteIndex(codeOrigin);
+
+                Box<CCallHelpers::JumpList> exceptions = exceptionHandle->scheduleExitCreation(params)->jumps(jit);
+                exceptionHandle->scheduleExitCreationForUnwind(params, callSiteIndex);
+
+                jit.store32(CCallHelpers::TrustedImm32(callSiteIndex.bits()), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+
+                auto* callLinkInfo = state->addCallLinkInfo(semanticNodeOrigin);
+
+                unsigned argIndex = 1;
+                GPRReg calleeGPR = params[argIndex++].gpr();
+                ASSERT(calleeGPR == GPRInfo::regT0);
+                unsigned thisArgIndex = argIndex++;
+                unsigned firstElemIndex = argIndex;
+                argIndex += numElems;
+                B3::ValueRep calleeLateRep = params[argIndex++];
+
+                // No operand can be in a volatile register, so all of them are free for scratch.
+                auto usedRegisters = RegisterSet(RegisterSet::allScalarRegisters())
+                    .exclude(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+                usedRegisters.add(calleeGPR, IgnoreVectors);
+                ScratchRegisterAllocator allocator(usedRegisters);
+                GPRReg scratchGPR1 = allocator.allocateScratchGPR();
+                GPRReg scratchGPR2 = allocator.allocateScratchGPR();
+                RELEASE_ASSERT(!allocator.numberOfReusedRegisters());
+
+                // The inline spread fast path needs four more scratch registers; disable it gracefully if
+                // the target lacks enough free ones.
+                bool useSpreadFast = singleTrailingSpread;
+                GPRReg spreadButterflyGPR = InvalidGPRReg;
+                GPRReg spreadNumUsedGPR = InvalidGPRReg;
+                GPRReg spreadScratch1 = InvalidGPRReg;
+                GPRReg spreadScratch2 = InvalidGPRReg;
+                if (useSpreadFast) {
+                    spreadButterflyGPR = allocator.allocateScratchGPR();
+                    spreadNumUsedGPR = allocator.allocateScratchGPR();
+                    spreadScratch1 = allocator.allocateScratchGPR();
+                    spreadScratch2 = allocator.allocateScratchGPR();
+                    if (allocator.numberOfReusedRegisters())
+                        useSpreadFast = false;
+                }
+
+                auto getValueFromRep = [&](B3::ValueRep rep, GPRReg result) {
+                    ASSERT(!usedRegisters.contains(result, IgnoreVectors));
+
+                    if (rep.isConstant()) {
+                        jit.move(CCallHelpers::Imm64(rep.value()), result);
+                        return;
+                    }
+
+                    // Only 64 bit values are requested here.
+                    if (rep.isStack()) {
+                        jit.load64(CCallHelpers::Address(GPRInfo::callFrameRegister, rep.offsetFromFP()), result);
+                        return;
+                    }
+
+                    RELEASE_ASSERT(rep.isGPR());
+                    jit.move(rep.gpr(), result);
+                };
+
+                // Store the elements into the scratch buffer while they are still available. A forwarded
+                // rest operand has no value of its own: write the empty-JSValue sentinel plus its descriptor.
+                jit.move(CCallHelpers::TrustedImmPtr(buffer), scratchGPR1);
+                for (unsigned e = 0; e < numElems; ++e) {
+                    if (forwardedRests[e].isForwardedRest) {
+                        jit.store64(CCallHelpers::TrustedImm64(JSValue::encode(JSValue())), CCallHelpers::Address(scratchGPR1, e * sizeof(EncodedJSValue)));
+                        unsigned descByteOffset = static_cast<unsigned>(std::bit_cast<uintptr_t>(&descriptors[e]) - std::bit_cast<uintptr_t>(buffer));
+                        jit.store64(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(forwardedRests[e].inlineCallFrame)), CCallHelpers::Address(scratchGPR1, descByteOffset + OBJECT_OFFSETOF(VarargsSpreadForwardDescriptor, inlineCallFrame)));
+                        jit.store32(CCallHelpers::TrustedImm32(forwardedRests[e].numberOfArgumentsToSkip), CCallHelpers::Address(scratchGPR1, descByteOffset + OBJECT_OFFSETOF(VarargsSpreadForwardDescriptor, numberOfArgumentsToSkip)));
+                    } else {
+                        getValueFromRep(params[firstElemIndex + e], scratchGPR2);
+                        jit.store64(scratchGPR2, CCallHelpers::Address(scratchGPR1, e * sizeof(EncodedJSValue)));
+                    }
+                }
+
+                auto callWithExceptionCheck = [&](void(*callee)()) {
+                    jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(callee)), GPRInfo::nonPreservedNonArgumentGPR0);
+                    jit.call(GPRInfo::nonPreservedNonArgumentGPR0, OperationPtrTag);
+                    exceptions->append(jit.emitExceptionCheck(*vm, AssemblyHelpers::NormalExceptionCheck, AssemblyHelpers::FarJumpWidth));
+                };
+
+                unsigned originalStackHeight = params.proc().frameSize();
+
+                CCallHelpers::JumpList slowSpread;
+                std::optional<CCallHelpers::Jump> spreadFastDone;
+                if (useSpreadFast) {
+                    // scratchGPR1 still holds the buffer base; the spread butterfly is buffer[numPrefix].
+                    jit.load64(CCallHelpers::Address(scratchGPR1, numPrefix * sizeof(EncodedJSValue)), spreadButterflyGPR);
+                    jit.move(CCallHelpers::TrustedImm32(originalStackHeight / sizeof(EncodedJSValue)), spreadNumUsedGPR);
+                    emitInlineVarargsFrameForSpreadButterfly(*vm, jit, spreadButterflyGPR, spreadNumUsedGPR, scratchGPR2 /*resultFrame*/, spreadScratch1, spreadScratch2, slowSpread, numPrefix);
+                    for (unsigned p = 0; p < numPrefix; ++p) {
+                        jit.load64(CCallHelpers::Address(scratchGPR1, p * sizeof(EncodedJSValue)), spreadScratch1);
+                        jit.store64(spreadScratch1, CCallHelpers::calleeArgumentSlot(1 + p));
+                    }
+                    spreadFastDone = jit.jump();
+                    slowSpread.link(&jit);
+                }
+
+                jit.move(CCallHelpers::TrustedImm32(originalStackHeight / sizeof(EncodedJSValue)), scratchGPR1);
+                if (hasForward) {
+                    jit.setupArguments<decltype(operationSizeFrameForVarargsWithSpreadForwardBuffer)>(CCallHelpers::TrustedImmPtr(jit.codeBlock()->globalObjectFor(semanticNodeOrigin)), CCallHelpers::TrustedImmPtr(buffer), CCallHelpers::TrustedImm32(numElems), CCallHelpers::TrustedImmPtr(descriptors), scratchGPR1);
+                    jit.prepareCallOperation(jit.vm());
+                    callWithExceptionCheck(reinterpret_cast<void(*)()>(operationSizeFrameForVarargsWithSpreadForwardBuffer));
+                } else {
+                    jit.setupArguments<decltype(operationSizeFrameForVarargsWithSpreadBuffer)>(CCallHelpers::TrustedImmPtr(jit.codeBlock()->globalObjectFor(semanticNodeOrigin)), CCallHelpers::TrustedImmPtr(buffer), CCallHelpers::TrustedImm32(numElems), scratchGPR1);
+                    jit.prepareCallOperation(jit.vm());
+                    callWithExceptionCheck(reinterpret_cast<void(*)()>(operationSizeFrameForVarargsWithSpreadBuffer));
+                }
+
+                jit.move(GPRInfo::returnValueGPR, scratchGPR1);
+                jit.move(CCallHelpers::TrustedImm32(originalStackHeight / sizeof(EncodedJSValue)), scratchGPR2);
+                emitSetVarargsFrame(jit, scratchGPR1, false, scratchGPR2, scratchGPR2);
+                jit.addPtr(CCallHelpers::TrustedImm32(-minimumJSCallAreaSize), scratchGPR2, CCallHelpers::stackPointerRegister);
+                if (hasForward) {
+                    jit.setupArguments<decltype(operationSetupVarargsFrameWithSpreadForwardBuffer)>(CCallHelpers::TrustedImmPtr(jit.codeBlock()->globalObjectFor(semanticNodeOrigin)), scratchGPR2, CCallHelpers::TrustedImmPtr(buffer), CCallHelpers::TrustedImm32(numElems), CCallHelpers::TrustedImmPtr(descriptors), scratchGPR1);
+                    jit.prepareCallOperation(jit.vm());
+                    callWithExceptionCheck(reinterpret_cast<void(*)()>(operationSetupVarargsFrameWithSpreadForwardBuffer));
+                } else {
+                    jit.setupArguments<decltype(operationSetupVarargsFrameWithSpreadBuffer)>(CCallHelpers::TrustedImmPtr(jit.codeBlock()->globalObjectFor(semanticNodeOrigin)), scratchGPR2, CCallHelpers::TrustedImmPtr(buffer), CCallHelpers::TrustedImm32(numElems), scratchGPR1);
+                    jit.prepareCallOperation(jit.vm());
+                    callWithExceptionCheck(reinterpret_cast<void(*)()>(operationSetupVarargsFrameWithSpreadBuffer));
+                }
+
+                jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), GPRInfo::returnValueGPR, CCallHelpers::stackPointerRegister);
+
+                calleeLateRep.emitRestore(jit, BaselineJITRegisters::Call::calleeGPR);
+
+                // The fast path does no C calls, so the pinned callee register is still live there.
+                if (spreadFastDone)
+                    spreadFastDone->link(&jit);
+
+                jit.store64(BaselineJITRegisters::Call::calleeGPR, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
+                getValueFromRep(params[thisArgIndex], scratchGPR1);
+                jit.store64(scratchGPR1, CCallHelpers::calleeArgumentSlot(0));
+
+                callLinkInfo->setUpCall(CallLinkInfo::CallVarargs);
+                CallLinkInfo::emitFastPath(jit, callLinkInfo);
+                jit.addPtr(CCallHelpers::TrustedImm32(-originalStackHeight), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+            });
+
+        setJSValue(patchpoint);
+    }
+
     void compileCallDirectEval()
     {
         Node* node = m_node;
         unsigned numArgs = node->numChildren() - 3; // callee, thisValue, scope
-
         LValue jsCallee = lowJSValue(m_graph.varArgChild(node, 0));
         LValue thisValue = lowJSValue(m_graph.varArgChild(node, node->numChildren() - 2));
         LValue callerScope = lowCell(m_graph.varArgChild(node, node->numChildren() - 1));
@@ -15356,9 +15524,13 @@ IGNORE_CLANG_WARNINGS_END
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LoadVarargsData* data = m_node->loadVarargsData();
-        LValue jsArguments = lowJSValue(m_node->argumentsChild());
 
-        LValue length = vmCall(Int32, operationSizeOfVarargs, weakPointer(globalObject), jsArguments, m_out.constInt32(data->offset));
+        LValue length;
+        if (m_node->argumentsChild().useKind() == KnownCellUse) {
+            length = m_out.load32NonNegative(toButterfly(lowCell(m_node->argumentsChild())), m_heaps.Butterfly_publicLength);
+            speculate(VarargsOverflow, noValue(), nullptr, m_out.above(length, m_out.constInt32(maxArguments)));
+        } else
+            length = vmCall(Int32, operationSizeOfVarargs, weakPointer(globalObject), lowJSValue(m_node->argumentsChild()), m_out.constInt32(data->offset));
 
         LValue lengthIncludingThis = m_out.add(length, m_out.int32One);
 
@@ -15385,6 +15557,12 @@ IGNORE_CLANG_WARNINGS_END
             vmCall(Void, operationLoadVarargs, weakPointer(globalObject), m_out.castToInt32(machineStart), jsArguments, m_out.constInt32(data->offset), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
             break;
         }
+        case KnownCellUse: {
+            speculate(VarargsOverflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(lengthIncludingThis), m_out.above(lengthIncludingThis, m_out.constInt32(data->limit))));
+            m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
+            emitLoadVarargsFromContiguousStorage(m_heaps.indexedContiguousProperties, toButterfly(lowCell(m_node->argumentsChild())), lengthIncludingThis);
+            break;
+        }
         case OtherUse: {
             // lengthIncludingThis is 1
             if (!data->limit) {
@@ -15402,6 +15580,78 @@ IGNORE_CLANG_WARNINGS_END
             DFG_CRASH(m_graph, m_node, "Bad use kind"_s);
             break;
         }
+    }
+
+    EncodedJSValue* fillSpreadArgumentsBuffer(Node* node, unsigned base, unsigned numArgs, VarargsSpreadForwardDescriptor*& descriptors, bool& hasForward)
+    {
+        BitVector* bitVector = node->bitVector();
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(varargsSpreadScratchBufferSize(numArgs));
+        EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+        descriptors = varargsSpreadForwardDescriptors(buffer, numArgs);
+        hasForward = false;
+        for (unsigned e = 0; e < numArgs; ++e) {
+            Edge edge = m_graph.varArgChild(node, base + e);
+            if (!bitVector->get(e)) {
+                ASSERT(!edge->isPhantomAllocation());
+                m_out.store64(lowJSValue(edge), m_out.absolute(buffer + e));
+                continue;
+            }
+            // See the operand shapes documented next to eliminatedSpreadForwardedRest().
+            if (Node* rest = eliminatedSpreadForwardedRest(edge.node())) {
+                VarargsSpreadForwardDescriptor* d = &descriptors[e];
+                m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), m_out.absolute(buffer + e));
+                m_out.store64(m_out.constInt64(std::bit_cast<int64_t>(rest->origin.semantic.inlineCallFrame())), m_out.absolute(&d->inlineCallFrame));
+                m_out.store32(m_out.constInt32(rest->numberOfArgumentsToSkip()), m_out.absolute(&d->numberOfArgumentsToSkip));
+                hasForward = true;
+                continue;
+            }
+            if (Node* constantButterfly = eliminatedSpreadConstantButterfly(edge.node())) {
+                m_out.store64(weakPointer(constantButterfly->castOperand<JSCellButterfly*>()), m_out.absolute(buffer + e));
+                continue;
+            }
+            ASSERT(!edge->isPhantomAllocation());
+            m_out.store64(lowCell(edge), m_out.absolute(buffer + e));
+        }
+        return buffer;
+    }
+
+    void compileVarargsLengthWithSpread()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        Node* node = m_node;
+        unsigned numArgs = node->numChildren();
+
+        VarargsSpreadForwardDescriptor* descriptors = nullptr;
+        bool hasForward = false;
+        EncodedJSValue* buffer = fillSpreadArgumentsBuffer(node, 0, numArgs, descriptors, hasForward);
+
+        LValue length;
+        if (hasForward)
+            length = vmCall(Int32, operationSizeOfVarargsWithSpreadForward, weakPointer(globalObject), m_out.constIntPtr(buffer), m_out.constInt32(numArgs), m_out.constIntPtr(descriptors));
+        else
+            length = vmCall(Int32, operationSizeOfVarargsWithSpread, weakPointer(globalObject), m_out.constIntPtr(buffer), m_out.constInt32(numArgs));
+        setInt32(m_out.add(length, m_out.int32One));
+    }
+
+    void compileLoadVarargsWithSpread()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        Node* node = m_node;
+        LoadVarargsData* data = node->loadVarargsData();
+        LValue lengthIncludingThis = lowInt32(m_graph.varArgChild(node, 0));
+
+        unsigned numArgs = node->numChildren() - 1;
+        VarargsSpreadForwardDescriptor* descriptors = nullptr;
+        bool hasForward = false;
+        EncodedJSValue* buffer = fillSpreadArgumentsBuffer(node, 1, numArgs, descriptors, hasForward);
+
+        speculate(VarargsOverflow, noValue(), nullptr, m_out.bitOr(m_out.isZero32(lengthIncludingThis), m_out.above(lengthIncludingThis, m_out.constInt32(data->limit))));
+        m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
+        LValue machineStart = m_out.lShr(m_out.sub(addressFor(data->machineStart).value(), m_callFrame), m_out.constIntPtr(3));
+        if (hasForward)
+            vmCall(Void, operationLoadVarargsWithSpreadForward, weakPointer(globalObject), m_out.castToInt32(machineStart), m_out.constIntPtr(buffer), m_out.constInt32(numArgs), m_out.constIntPtr(descriptors), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
+        else
+            vmCall(Void, operationLoadVarargsWithSpread, weakPointer(globalObject), m_out.castToInt32(machineStart), m_out.constIntPtr(buffer), m_out.constInt32(numArgs), lengthIncludingThis, m_out.constInt32(data->mandatoryMinimum));
     }
 
     void compileForwardVarargs()
@@ -15424,14 +15674,19 @@ IGNORE_CLANG_WARNINGS_END
         unsigned numberOfArgumentsToSkip = data->offset;
         LValue lengthIncludingThis = lowInt32(m_node->child1());
 
-        LValue length = m_out.sub(lengthIncludingThis, m_out.int32One);
         speculate(
             VarargsOverflow, noValue(), nullptr,
             m_out.above(lengthIncludingThis, m_out.constInt32(data->limit)));
 
         m_out.store32(lengthIncludingThis, lowWordFor(data->machineCount));
 
-        LValue sourceStart = getArgumentsStart(inlineCallFrame, numberOfArgumentsToSkip);
+        emitLoadVarargsFromContiguousStorage(m_heaps.variables, getArgumentsStart(inlineCallFrame, numberOfArgumentsToSkip), lengthIncludingThis);
+    }
+
+    void emitLoadVarargsFromContiguousStorage(IndexedAbstractHeap& sourceHeap, LValue sourceStart, LValue lengthIncludingThis)
+    {
+        LoadVarargsData* data = m_node->loadVarargsData();
+        LValue length = m_out.sub(lengthIncludingThis, m_out.int32One);
         LValue targetStart = addressFor(data->machineStart).value();
 
         LBasicBlock undefinedLoop = m_out.newBlock();
@@ -15464,7 +15719,7 @@ IGNORE_CLANG_WARNINGS_END
         previousIndex = m_out.phi(pointerType(), loopBound);
         currentIndex = m_out.sub(previousIndex, m_out.intPtrOne);
         LValue value = m_out.load64(
-            m_out.baseIndex(m_heaps.variables, sourceStart, currentIndex));
+            m_out.baseIndex(sourceHeap, sourceStart, currentIndex));
         m_out.store64(value, m_out.baseIndex(m_heaps.variables, targetStart, currentIndex));
         nextIndex = m_out.anchor(currentIndex);
         m_out.addIncomingToPhi(previousIndex, nextIndex);
@@ -15647,7 +15902,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 m_out.appendTo(isNotInt, isDouble);
                 m_out.branch(
-                    isCellOrMiscOrBigInt32(boxedValue, provenType(m_node->child1())),
+                    isCellOrMisc(boxedValue, provenType(m_node->child1())),
                     usually(lowBlock(data->fallThrough.block)), rarely(isDouble));
 
                 m_out.appendTo(isDouble, innerLastNext);
@@ -15863,7 +16118,7 @@ IGNORE_CLANG_WARNINGS_END
         terminate(InadequateCoverage);
     }
 
-    void LEGACY_NODELETE compileCPUIntrinsic()
+    NODELETE void compileCPUIntrinsic()
     {
 #if CPU(X86_64)
         Intrinsic intrinsic = m_node->intrinsic();
@@ -16197,36 +16452,6 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-#if USE(BIGINT32)
-    void compileIsBigInt()
-    {
-        LValue value = lowJSValue(m_node->child1());
-
-        LBasicBlock isCellCase = m_out.newBlock();
-        LBasicBlock isNotCellCase = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-
-        m_out.branch(isCell(value, provenType(m_node->child1())), unsure(isCellCase), unsure(isNotCellCase));
-
-        LBasicBlock lastNext = m_out.appendTo(isNotCellCase, isCellCase);
-        // FIXME: we should filter the provenType to include the fact that we know we are not dealing with a cell
-        ValueFromBlock notCellResult = m_out.anchor(isBigInt32(value, provenType(m_node->child1())));
-        m_out.jump(continuation);
-
-        m_out.appendTo(isCellCase, continuation);
-        ValueFromBlock cellResult = m_out.anchor(isCellWithType(value, m_node->queriedType(), m_node->speculatedTypeForQuery(), provenType(m_node->child1())));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation, lastNext);
-        setBoolean(m_out.phi(Int32, notCellResult, cellResult));
-    }
-#else // if !USE(BIGINT32)
-    NO_RETURN_DUE_TO_CRASH ALWAYS_INLINE void compileIsBigInt()
-    {
-        // If we are not dealing with BigInt32, we should just emit IsCellWithType(HeapBigInt) instead.
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-#endif
     void compileIsCellWithType()
     {
         if (m_node->child1().useKind() == UntypedUse) {
@@ -16365,9 +16590,6 @@ IGNORE_CLANG_WARNINGS_END
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         switch (m_node->child1().useKind()) {
-#if USE(BIGINT32)
-        case BigInt32Use:
-#endif
         case BooleanUse:
         case Int32Use:
         case SymbolUse:
@@ -16577,13 +16799,26 @@ IGNORE_CLANG_WARNINGS_END
         TypedPointer entryKeySlot = m_out.baseIndex(m_heaps.indexedContiguousProperties, mapStorageData, m_out.zeroExt(entryKeyIndex, Int64));
         LValue entryKey = m_out.load64(entryKeySlot);
 
+        // Two resolved strings are equal if they share a StringImpl, and two distinct atoms are never equal.
+        auto compareStrings = [&](LValue keyString, LValue entryString) {
+            LBasicBlock bothResolved = m_out.newBlock();
+            LBasicBlock implsDiffer = m_out.newBlock();
+            LValue keyImpl = m_out.loadPtr(keyString, m_heaps.JSString_value);
+            LValue entryImpl = m_out.loadPtr(entryString, m_heaps.JSString_value);
+            m_out.branch(m_out.testNonZeroPtr(m_out.bitOr(keyImpl, entryImpl), m_out.constIntPtr(JSString::isRopeInPointer)), rarely(slowPath), usually(bothResolved));
+
+            m_out.appendTo(bothResolved);
+            m_out.branch(m_out.equal(keyImpl, entryImpl), unsure(presentInTable), unsure(implsDiffer));
+
+            m_out.appendTo(implsDiffer);
+            LValue flags = m_out.bitAnd(m_out.load32(keyImpl, m_heaps.StringImpl_hashAndFlags), m_out.load32(entryImpl, m_heaps.StringImpl_hashAndFlags));
+            m_out.branch(m_out.testNonZero32(flags, m_out.constInt32(StringImpl::flagIsAtom())), unsure(loopAround), unsure(slowPath));
+        };
+
         // A deleted entry holds a VM-private symbol, which is never a key and is neither a string
         // nor a BigInt, so every case below already sends it to loopAround.
         switch (m_node->child2().useKind()) {
         case BooleanUse:
-#if USE(BIGINT32)
-        case BigInt32Use:
-#endif
         case Int32Use:
         case SymbolUse:
         case ObjectUse: {
@@ -16606,13 +16841,17 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isString(entryKey), unsure(entryKeyIsString), unsure(entryKeyIsNotString));
 
             m_out.appendTo(entryKeyIsString, entryKeyIsNotString);
-            m_out.branch(isString(key, provenType(m_node->child2())), unsure(slowPath), unsure(loopAround));
+            LBasicBlock bothAreStrings = m_out.newBlock();
+            m_out.branch(isString(key, provenType(m_node->child2())), unsure(bothAreStrings), unsure(loopAround));
 
             m_out.appendTo(entryKeyIsNotString, entryKeyIsHeapBigInt);
             m_out.branch(isHeapBigInt(entryKey), unsure(entryKeyIsHeapBigInt), unsure(loopAround));
 
             m_out.appendTo(entryKeyIsHeapBigInt, loopAround);
             m_out.branch(isHeapBigInt(key, provenType(m_node->child2())), unsure(slowPath), unsure(loopAround));
+
+            m_out.appendTo(bothAreStrings);
+            compareStrings(key, entryKey);
             break;
         }
         case StringUse: {
@@ -16625,7 +16864,11 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isCell(entryKey), unsure(entryKeyIsCell), unsure(loopAround));
 
             m_out.appendTo(entryKeyIsCell, loopAround);
-            m_out.branch(isString(entryKey), unsure(slowPath), unsure(loopAround));
+            LBasicBlock bothAreStrings = m_out.newBlock();
+            m_out.branch(isString(entryKey), unsure(bothAreStrings), unsure(loopAround));
+
+            m_out.appendTo(bothAreStrings);
+            compareStrings(key, entryKey);
             break;
         }
         case HeapBigIntUse: {
@@ -16661,13 +16904,17 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isString(entryKey), unsure(entryKeyIsString), unsure(entryKeyIsNotString));
 
             m_out.appendTo(entryKeyIsString, entryKeyIsNotString);
-            m_out.branch(isString(key, provenType(m_node->child2())), unsure(slowPath), unsure(loopAround));
+            LBasicBlock bothAreStrings = m_out.newBlock();
+            m_out.branch(isString(key, provenType(m_node->child2())), unsure(bothAreStrings), unsure(loopAround));
 
             m_out.appendTo(entryKeyIsNotString, entryKeyIsHeapBigInt);
             m_out.branch(isHeapBigInt(entryKey), unsure(entryKeyIsHeapBigInt), unsure(loopAround));
 
             m_out.appendTo(entryKeyIsHeapBigInt, loopAround);
             m_out.branch(isHeapBigInt(key, provenType(m_node->child2())), unsure(slowPath), unsure(loopAround));
+
+            m_out.appendTo(bothAreStrings);
+            compareStrings(key, entryKey);
             break;
         }
         default:
@@ -18865,6 +19112,8 @@ IGNORE_CLANG_WARNINGS_END
         patchpoint->append(m_notCellMask, ValueRep::lateReg(GPRInfo::notCellMaskRegister));
         patchpoint->append(m_numberTag, ValueRep::lateReg(GPRInfo::numberTagRegister));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        if (isX86_64())
+            patchpoint->clobber(RegisterSet::macroClobberedFPRs());
         patchpoint->numGPScratchRegisters = Options::useHandlerICInFTL() ? 1 : 0;
 
         RefPtr<PatchpointExceptionHandle> exceptionHandle = preparePatchpointForExceptions(patchpoint);
@@ -19533,6 +19782,26 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(result);
     }
 
+    // For a JSRopeString known to be a substring rope: the current StringImpl of its base (which is always resolved)
+    // and the substring's offset into it. Callers must check that impl's width rather than the rope's cached
+    // is8BitInPointer, since atomizing the base can swap in an existing atom of the other width after the rope was
+    // created. For an 8-bit impl, the first character is at StringImpl_data + offset.
+    std::pair<LValue, LValue> substringRopeBaseImplAndOffset(LValue rope)
+    {
+        LValue packedLengthAndBaseLower = m_out.load64(rope, m_heaps.JSRopeString_fiber1);
+        LValue packedBaseUpperAndOffset = m_out.load64(rope, m_heaps.JSRopeString_fiber2);
+        LValue substringBase = m_out.bitOr(
+            m_out.lShr(packedLengthAndBaseLower, m_out.constInt32(32)),
+            m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
+        LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
+        return { m_out.loadPtr(substringBase, m_heaps.JSString_value), substringOffset };
+    }
+
+    LValue isNot8BitStringImpl(LValue stringImpl)
+    {
+        return m_out.testIsZero32(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit()));
+    }
+
     // Nonzero iff `character` (0..255) might begin a match per the first-character `bitmap`.
     LValue firstCharacterBitmapContains(LValue character, const uint8_t* bitmap)
     {
@@ -19560,12 +19829,17 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock isStringCase = knownString ? nullptr : m_out.newBlock();
         LBasicBlock check8Bit = m_out.newBlock();
         LBasicBlock checkLength = m_out.newBlock();
+        LBasicBlock resolvedCase = m_out.newBlock();
+        LBasicBlock ropeCase = m_out.newBlock();
+        LBasicBlock substringCheck8Bit = m_out.newBlock();
+        LBasicBlock substringCheckLength = m_out.newBlock();
+        LBasicBlock substringCase = m_out.newBlock();
         LBasicBlock filterCase = m_out.newBlock();
 
         if (!knownString)
             emitFirstCharacterGuardStringCheck(argument, argumentEdge, isCellCase, isStringCase, check8Bit, operationCase);
 
-        m_out.branch(isRopeString(argument, argumentEdge), rarely(operationCase), usually(check8Bit));
+        m_out.branch(isRopeString(argument, argumentEdge), rarely(ropeCase), usually(check8Bit));
 
         m_out.appendTo(check8Bit, checkLength);
         LValue stringImpl = m_out.loadPtr(argument, m_heaps.JSString_value);
@@ -19576,12 +19850,36 @@ IGNORE_CLANG_WARNINGS_END
             rarely(operationCase), usually(checkLength));
 
         // An anchored pattern that reaches here cannot match empty, so delegate an empty string.
-        m_out.appendTo(checkLength, filterCase);
-        m_out.branch(m_out.equal(m_out.load32(stringImpl, m_heaps.StringImpl_length), m_out.int32Zero), rarely(operationCase), usually(filterCase));
+        m_out.appendTo(checkLength, resolvedCase);
+        m_out.branch(m_out.equal(m_out.load32(stringImpl, m_heaps.StringImpl_length), m_out.int32Zero), rarely(operationCase), usually(resolvedCase));
+
+        m_out.appendTo(resolvedCase, ropeCase);
+        LValue stringData = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
+        ValueFromBlock resolvedCharacter = m_out.anchor(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, stringData, m_out.constIntPtr(0))));
+        m_out.jump(filterCase);
+
+        // A substring rope (what slice() and substring() produce) is readable in place through its base, just
+        // as the operation would read it, so there is no need to delegate it. Other ropes still are.
+        m_out.appendTo(ropeCase, substringCheck8Bit);
+        LValue fiber0 = m_out.loadPtr(argument, m_heaps.JSRopeString_fiber0);
+        m_out.branch(
+            m_out.testIsZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::isSubstringInPointer)),
+            unsure(operationCase), unsure(substringCheck8Bit));
+
+        m_out.appendTo(substringCheck8Bit, substringCheckLength);
+        auto [baseImpl, substringOffset] = substringRopeBaseImplAndOffset(argument);
+        m_out.branch(isNot8BitStringImpl(baseImpl), unsure(operationCase), unsure(substringCheckLength));
+
+        m_out.appendTo(substringCheckLength, substringCase);
+        m_out.branch(m_out.equal(m_out.load32NonNegative(argument, m_heaps.JSRopeString_length), m_out.int32Zero), rarely(operationCase), usually(substringCase));
+
+        m_out.appendTo(substringCase, filterCase);
+        LValue substringCharacters = m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset);
+        ValueFromBlock substringCharacter = m_out.anchor(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, substringCharacters, m_out.constIntPtr(0))));
+        m_out.jump(filterCase);
 
         m_out.appendTo(filterCase, noMatchCase);
-        LValue stringData = m_out.loadPtr(stringImpl, m_heaps.StringImpl_data);
-        LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, stringData, m_out.constIntPtr(0)));
+        LValue character = m_out.phi(Int32, resolvedCharacter, substringCharacter);
         m_out.branch(firstCharacterBitmapContains(character, bitmap), unsure(operationCase), unsure(noMatchCase));
     }
 
@@ -20246,6 +20544,37 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(m_out.phi(pointerType(), fastResult, slowResult));
     }
 
+    void compileNewProxyObject()
+    {
+        LValue target = lowObject(m_node->child1());
+        LValue handler = lowObject(m_node->child2());
+
+        LBasicBlock fastCase = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(m_out.bitOr(isType(target, FinalObjectType), isType(target, ArrayType)), usually(fastCase), rarely(slowCase));
+
+        LBasicBlock lastNext = m_out.appendTo(fastCase, slowCase);
+        LValue object = allocateObject<ProxyObject>(sizeof(ProxyObject), m_node->structure(), m_out.intPtrZero, slowCase);
+        m_out.store64(target, object, m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(ProxyObject::Field::Target)]);
+        m_out.store64(handler, object, m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(ProxyObject::Field::Handler)]);
+        m_out.store32(m_out.int32Zero, object, m_heaps.ProxyObject_handlerStructureID);
+        m_out.store32(m_out.int32Zero, object, m_heaps.ProxyObject_handlerPrototypeStructureID);
+        for (size_t offset = ProxyObject::offsetOfHandlerTrapsOffsetsCache(); offset < sizeof(ProxyObject); offset += sizeof(uint64_t))
+            m_out.store64(m_out.constInt64(ProxyObject::emptyHandlerTrapsOffsetsCacheWord()), m_out.address(m_heaps.ProxyObject_handlerTrapsOffsetsCache, object, offset));
+        mutatorFence();
+        ValueFromBlock fastResult = m_out.anchor(object);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationNewProxyObject, weakPointer(m_node->structure()->realm()), target, handler));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(pointerType(), fastResult, slowResult));
+    }
+
     void compileSetFunctionName()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
@@ -20552,12 +20881,12 @@ IGNORE_CLANG_WARNINGS_END
 
         if (edge.useKind() == NumberUse) {
             m_out.appendTo(notIntCase, continuation);
-            FTL_TYPE_CHECK(jsValueValue(value), edge, SpecBytecodeNumber, isCellOrMiscOrBigInt32(value));
+            FTL_TYPE_CHECK(jsValueValue(value), edge, SpecBytecodeNumber, isCellOrMisc(value));
             results.append(m_out.anchor(doubleToInt32(unboxDouble(value))));
             m_out.jump(continuation);
         } else {
             m_out.appendTo(notIntCase, doubleCase);
-            m_out.branch(isCellOrMiscOrBigInt32(value, provenType(edge)), unsure(notNumberCase), unsure(doubleCase));
+            m_out.branch(isCellOrMisc(value, provenType(edge)), unsure(notNumberCase), unsure(doubleCase));
 
             m_out.appendTo(doubleCase, notNumberCase);
             results.append(m_out.anchor(doubleToInt32(unboxDouble(value))));
@@ -20566,9 +20895,6 @@ IGNORE_CLANG_WARNINGS_END
             m_out.appendTo(notNumberCase, continuation);
 
             FTL_TYPE_CHECK(jsValueValue(value), edge, ~SpecCellCheck, isCell(value));
-#if USE(BIGINT32)
-            FTL_TYPE_CHECK(jsValueValue(value), edge, ~SpecCellCheck & ~SpecBigInt, isBigInt32(value));
-#endif
 
             LValue specialResult = m_out.equal(value, m_out.constInt64(JSValue::encode(jsBoolean(true))));
             results.append(m_out.anchor(specialResult));
@@ -20715,6 +21041,9 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue allocatePropertyStorage(LValue object, Structure* previousStructure)
     {
+        if (previousStructure->couldHaveIndexingHeader() && previousStructure->canAllocatePropertyStorageInJIT())
+            return allocatePropertyStorageWithIndexingHeader(object, previousStructure, initialOutOfLineCapacity);
+
         if (previousStructure->couldHaveIndexingHeader()) {
             return vmCall(
                 pointerType(),
@@ -20740,6 +21069,9 @@ IGNORE_CLANG_WARNINGS_END
 
         ASSERT_UNUSED(next, newSize == next->outOfLineCapacity());
 
+        if (previous->couldHaveIndexingHeader() && previous->canAllocatePropertyStorageInJIT())
+            return allocatePropertyStorageWithIndexingHeader(object, previous, newSize);
+
         if (previous->couldHaveIndexingHeader()) {
             LValue newAllocSize = m_out.constIntPtr(newSize);
             return vmCall(pointerType(), operationAllocateComplexPropertyStorage, m_vmValue, object, newAllocSize);
@@ -20762,6 +21094,60 @@ IGNORE_CLANG_WARNINGS_END
             m_out.int64Zero, m_heaps.properties.atAnyNumber());
 
         return result;
+    }
+
+    LValue allocatePropertyStorageWithIndexingHeader(LValue object, Structure* previousStructure, size_t newSize)
+    {
+        size_t oldSize = previousStructure->outOfLineCapacity();
+
+        LBasicBlock copyLoop = m_out.newBlock();
+        LBasicBlock copyDone = m_out.newBlock();
+        LBasicBlock slowPath = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(copyLoop);
+
+        LValue oldButterfly = m_out.loadPtr(object, m_heaps.JSObject_butterfly);
+        LValue vectorLength = m_out.zeroExtPtr(m_out.load32NonNegative(oldButterfly, m_heaps.Butterfly_vectorLength));
+        size_t sizeBeforeVector = newSize * sizeof(JSValue) + sizeof(IndexingHeader);
+        LValue allocationSize = m_out.add(m_out.shl(vectorLength, m_out.constInt32(3)), m_out.constIntPtr(sizeBeforeVector));
+
+        LValue startOfStorage = allocateHeapCell(allocatorForSize(vm().auxiliarySpace(), allocationSize, slowPath), slowPath);
+        LValue fastButterfly = m_out.add(startOfStorage, m_out.constIntPtr(sizeBeforeVector));
+
+        splatWords(
+            fastButterfly,
+            m_out.constInt32(-newSize - 1), m_out.constInt32(-oldSize - 1),
+            m_out.int64Zero, m_heaps.properties.atAnyNumber());
+
+        ptrdiff_t headerSize = -sizeof(IndexingHeader) - sizeof(void*);
+        ptrdiff_t endStorage = headerSize - static_cast<ptrdiff_t>(oldSize * sizeof(JSValue));
+        for (ptrdiff_t offset = headerSize; offset > endStorage; offset -= sizeof(void*)) {
+            LValue loaded = m_out.loadPtr(m_out.address(m_heaps.properties.atAnyNumber(), oldButterfly, offset));
+            m_out.storePtr(loaded, m_out.address(m_heaps.properties.atAnyNumber(), fastButterfly, offset));
+        }
+
+        ValueFromBlock startIndex = m_out.anchor(m_out.constIntPtr(-1));
+        m_out.jump(copyLoop);
+
+        m_out.appendTo(copyLoop, copyDone);
+        LValue index = m_out.phi(pointerType(), startIndex);
+        LValue value = m_out.load64(m_out.baseIndex(m_heaps.root, oldButterfly, index, ScaleEight));
+        m_out.store64(value, m_out.baseIndex(m_heaps.root, fastButterfly, index, ScaleEight));
+        LValue nextIndex = m_out.add(index, m_out.intPtrOne);
+        m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
+        m_out.branch(m_out.notEqual(nextIndex, vectorLength), unsure(copyLoop), unsure(copyDone));
+
+        m_out.appendTo(copyDone, slowPath);
+        ValueFromBlock fastResult = m_out.anchor(fastButterfly);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowPath, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationAllocateComplexPropertyStorage, m_vmValue, object, m_out.constIntPtr(newSize)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(pointerType(), fastResult, slowResult);
     }
 
     LValue allocatePropertyStorageWithSizeImpl(size_t sizeInValues)
@@ -21034,15 +21420,6 @@ IGNORE_CLANG_WARNINGS_END
             return;
         }
 
-#if USE(BIGINT32)
-        if (m_node->isBinaryUseKind(BigInt32Use)) {
-            LValue left = lowBigInt32(m_node->child1());
-            LValue right = lowBigInt32(m_node->child2());
-            setBoolean(intFunctor(unboxBigInt32(left), unboxBigInt32(right)));
-            return;
-        }
-#endif
-
         if (m_node->isBinaryUseKind(StringIdentUse)) {
             LValue left = lowStringIdent(m_node->child1());
             LValue right = lowStringIdent(m_node->child2());
@@ -21097,7 +21474,7 @@ IGNORE_CLANG_WARNINGS_END
             return;
         }
 
-        DFG_ASSERT(m_graph, m_node, m_node->isBinaryUseKind(UntypedUse) || m_node->isBinaryUseKind(AnyBigIntUse), m_node->child1().useKind(), m_node->child2().useKind());
+        DFG_ASSERT(m_graph, m_node, m_node->isBinaryUseKind(UntypedUse), m_node->child1().useKind(), m_node->child2().useKind());
         genericJSValueCompare(intFunctor, fallbackFunction);
     }
 
@@ -22225,7 +22602,12 @@ IGNORE_CLANG_WARNINGS_END
                     PatchpointValue* patchpoint = m_out.patchpoint(Int32);
                     patchpoint->appendSomeRegister(valueToStore);
                     patchpoint->numFPScratchRegisters = 1;
+                    if (isX86_64()) {
+                        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+                        patchpoint->clobber(RegisterSet::macroClobberedFPRs());
+                    }
                     patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+                        AllowMacroScratchRegisterUsageIf allowScratchIf(jit, isX86_64());
                         FPRReg scratchFPR = params.fpScratch(0);
                         jit.convertDoubleToFloat16(params[1].fpr(), scratchFPR);
                         jit.moveFloat16To16(scratchFPR, params[0].gpr());
@@ -22378,6 +22760,33 @@ IGNORE_CLANG_WARNINGS_END
                 RELEASE_ASSERT_NOT_REACHED();
             }
         }
+    }
+
+    void compileTypedArraySet()
+    {
+        LValue base = lowCell(m_node->child1());
+        LValue source = lowCell(m_node->child2());
+        LValue offset = lowInt32(m_node->child3());
+
+        TypedArrayType type = m_node->typedArrayType();
+
+        LValue baseLength = typedArrayLength(base, false, type, m_node->child1());
+        LValue sourceLength = typedArrayLength(source, false, type, m_node->child2());
+        speculate(OutOfBounds, noValue(), nullptr, m_out.lessThan(offset, m_out.int32Zero));
+        LValue offsetPtr = m_out.zeroExtPtr(offset);
+        speculate(OutOfBounds, noValue(), nullptr, m_out.above(m_out.add(offsetPtr, sourceLength), baseLength));
+
+        LValue baseVector = m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector);
+        LValue sourceVector = m_out.loadPtr(source, m_heaps.JSArrayBufferView_vector);
+        speculate(BadIndexingType, jsValueValue(base), m_node->child1().node(), m_out.isNull(baseVector));
+        speculate(BadIndexingType, jsValueValue(source), m_node->child2().node(), m_out.isNull(sourceVector));
+
+        LValue shift = m_out.constInt32(logElementSize(type));
+        LValue basePointer = m_out.add(caged(Gigacage::Primitive, baseVector, base), m_out.shl(offsetPtr, shift));
+        LValue sourcePointer = caged(Gigacage::Primitive, sourceVector, source);
+        m_out.memoryMove(basePointer, sourcePointer, m_out.shl(sourceLength, shift), &m_heaps.TypedArrayProperties, &m_heaps.TypedArrayProperties);
+        ensureStillAliveHere(base);
+        ensureStillAliveHere(source);
     }
 
     void compileDateNow()
@@ -22786,12 +23195,18 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue stringsEqual(LValue leftJSString, LValue rightJSString, Edge leftJSStringEdge = Edge(), Edge rightJSStringEdge = Edge())
     {
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
         String leftConst = leftJSStringEdge ? leftJSStringEdge->tryGetString(m_graph) : String();
         String rightConst = rightJSStringEdge ? rightJSStringEdge->tryGetString(m_graph) : String();
         bool leftAtom = !leftConst.isNull() && leftConst.impl()->isAtom();
         bool rightAtom = !rightConst.isNull() && rightConst.impl()->isAtom();
+
+        auto isShortConstant = [](const String& string) {
+            return !string.isNull() && string.length() <= maxInlineConstantStringCompareLength;
+        };
+        if (isShortConstant(rightConst) && leftConst.isNull())
+            return stringEqualsShortConstant(leftJSString, leftJSStringEdge, rightJSString, rightConst);
+        if (isShortConstant(leftConst) && rightConst.isNull())
+            return stringEqualsShortConstant(rightJSString, rightJSStringEdge, leftJSString, leftConst);
 
         LBasicBlock notTriviallyUnequalCase = m_out.newBlock();
         LBasicBlock notEmptyCase = m_out.newBlock();
@@ -22959,7 +23374,16 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.notEqual(leftRopeCaseLength, rightRopeCaseLength), usually(falseCase), rarely(slowCase));
 
         m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(callStringEqualThunk(leftJSString, rightJSString));
+        m_out.jump(continuation);
 
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(Int32, trueResult, falseResult, slowResult);
+    }
+
+    LValue callStringEqualThunk(LValue leftJSString, LValue rightJSString)
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         VM* vmPtr = &vm();
         callPreflight();
         auto global = weakPointer(globalObject);
@@ -22979,11 +23403,151 @@ IGNORE_CLANG_WARNINGS_END
                 jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(vmPtr->getCTIStub(stringEqualThunkGenerator).code()));
             });
         LValue result = operationExceptionCheckAndExtractResultIfNeeded<ExceptionOperationResult<EncodedJSValue>>(thunkCall);
-        ValueFromBlock slowResult = m_out.anchor(unboxBoolean(result));
+        return unboxBoolean(result);
+    }
+
+    static constexpr unsigned maxInlineConstantStringCompareLength = 16;
+
+    // Substring ropes are decoded inline rather than calling out, so that a chain like
+    // `id === "while" || id === "break"` on a sliced identifier stays free of calls.
+    LValue stringEqualsShortConstant(LValue jsString, Edge edge, LValue constantJSString, const String& constant)
+    {
+        unsigned length = constant.length();
+        ASSERT(length <= maxInlineConstantStringCompareLength);
+        // A constant outside Latin-1 can only equal 16-bit data, so the 16-bit path is not rare for it.
+        bool fitsIn8Bit = constant.containsOnlyLatin1();
+        auto to16BitCase = fitsIn8Bit ? rarely : unsure;
+        auto to8BitCase = fitsIn8Bit ? usually : unsure;
+
+        LBasicBlock nonRopeCase = m_out.newBlock();
+        LBasicBlock nonRopeLengthMatched = m_out.newBlock();
+        LBasicBlock ropeCase = m_out.newBlock();
+        LBasicBlock ropeLengthMatched = m_out.newBlock();
+        LBasicBlock substringCase = m_out.newBlock();
+        LBasicBlock substring8BitCase = m_out.newBlock();
+        LBasicBlock substring16BitCase = m_out.newBlock();
+        LBasicBlock compare8BitCase = m_out.newBlock();
+        LBasicBlock compare16BitCase = m_out.newBlock();
+        LBasicBlock falseCase = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue value = m_out.loadPtr(jsString, m_heaps.JSString_value);
+        if (canBeRope(edge))
+            m_out.branch(m_out.testNonZeroPtr(value, m_out.constIntPtr(JSString::isRopeInPointer)), unsure(ropeCase), unsure(nonRopeCase));
+        else
+            m_out.jump(nonRopeCase);
+
+        LBasicBlock lastNext = m_out.appendTo(nonRopeCase, nonRopeLengthMatched);
+        m_out.branch(m_out.notEqual(m_out.load32(value, m_heaps.StringImpl_length), m_out.constInt32(length)), unsure(falseCase), unsure(nonRopeLengthMatched));
+
+        m_out.appendTo(nonRopeLengthMatched, ropeCase);
+        LValue nonRopeData = m_out.loadPtr(value, m_heaps.StringImpl_data);
+        ValueFromBlock nonRopeData8Bit = m_out.anchor(nonRopeData);
+        ValueFromBlock nonRopeData16Bit = m_out.anchor(nonRopeData);
+        m_out.branch(m_out.testIsZero32(m_out.load32(value, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), to16BitCase(compare16BitCase), to8BitCase(compare8BitCase));
+
+        m_out.appendTo(ropeCase, ropeLengthMatched);
+        m_out.branch(m_out.notEqual(m_out.load32NonNegative(jsString, m_heaps.JSRopeString_length), m_out.constInt32(length)), unsure(falseCase), unsure(ropeLengthMatched));
+
+        m_out.appendTo(ropeLengthMatched, substringCase);
+        m_out.branch(m_out.testIsZeroPtr(value, m_out.constIntPtr(JSRopeString::isSubstringInPointer)), rarely(slowCase), usually(substringCase));
+
+        m_out.appendTo(substringCase, substring8BitCase);
+        LValue packedLengthAndBaseLower = m_out.load64(jsString, m_heaps.JSRopeString_fiber1);
+        LValue packedBaseUpperAndOffset = m_out.load64(jsString, m_heaps.JSRopeString_fiber2);
+        LValue substringBase = m_out.bitOr(
+            m_out.lShr(packedLengthAndBaseLower, m_out.constInt32(32)),
+            m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
+        LValue baseImpl = m_out.loadPtr(substringBase, m_heaps.JSString_value);
+        LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
+        LValue baseData = m_out.loadPtr(baseImpl, m_heaps.StringImpl_data);
+        // The rope's cached is8Bit bit can go stale: atomizing the base may swap in an equal 16-bit StringImpl.
+        m_out.branch(m_out.testIsZero32(m_out.load32(baseImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), to16BitCase(substring16BitCase), to8BitCase(substring8BitCase));
+
+        m_out.appendTo(substring8BitCase, substring16BitCase);
+        ValueFromBlock substringData8Bit = m_out.anchor(m_out.add(baseData, substringOffset));
+        m_out.jump(compare8BitCase);
+
+        m_out.appendTo(substring16BitCase, compare8BitCase);
+        ValueFromBlock substringData16Bit = m_out.anchor(m_out.add(baseData, m_out.shl(substringOffset, m_out.constInt32(1))));
+        m_out.jump(compare16BitCase);
+
+        auto emitCompare = [&](IndexedAbstractHeap& heap, LValue data, std::span<const uint8_t> expected) -> LValue {
+            unsigned size = expected.size();
+            if (!size)
+                return m_out.booleanTrue;
+            auto loadChunk = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                TypedPointer pointer(heap.atAnyIndex(), m_out.add(data, m_out.constIntPtr(offset)));
+                switch (chunkSize) {
+                case 1:
+                    return m_out.load8ZeroExt32(pointer);
+                case 2:
+                    return m_out.load16ZeroExt32(pointer);
+                case 4:
+                    return m_out.load32(pointer);
+                case 8:
+                    return m_out.load64(pointer);
+                }
+                RELEASE_ASSERT_NOT_REACHED();
+                return nullptr;
+            };
+            auto expectedChunk = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                uint64_t bits = 0;
+                memcpySpan(asMutableByteSpan(bits).first(chunkSize), expected.subspan(offset, chunkSize));
+                if (chunkSize == 8)
+                    return m_out.constInt64(static_cast<int64_t>(bits));
+                return m_out.constInt32(static_cast<int32_t>(bits));
+            };
+            auto difference = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                return m_out.bitXor(loadChunk(offset, chunkSize), expectedChunk(offset, chunkSize));
+            };
+
+            if (size > 8) {
+                // The last chunk overlaps the previous one when the size is not a multiple of 8.
+                LValue differences = difference(0, 8);
+                for (unsigned offset = 8; offset + 8 < size; offset += 8)
+                    differences = m_out.bitOr(differences, difference(offset, 8));
+                differences = m_out.bitOr(differences, difference(size - 8, 8));
+                return m_out.isZero64(differences);
+            }
+
+            unsigned chunkSize = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+            if (size == chunkSize)
+                return m_out.equal(loadChunk(0, chunkSize), expectedChunk(0, chunkSize));
+            // The tail chunk overlaps the head chunk when the remainder is not a power of two.
+            unsigned tailSize = roundUpToPowerOfTwo(size - chunkSize);
+            return m_out.isZero32(m_out.bitOr(difference(0, chunkSize), difference(size - tailSize, tailSize)));
+        };
+
+        std::array<Latin1Character, maxInlineConstantStringCompareLength> characters8 { };
+        std::array<char16_t, maxInlineConstantStringCompareLength> characters16 { };
+        for (unsigned i = 0; i < length; ++i) {
+            characters16[i] = constant[i];
+            characters8[i] = static_cast<Latin1Character>(characters16[i]);
+        }
+
+        m_out.appendTo(compare8BitCase, compare16BitCase);
+        LValue data8Bit = m_out.phi(pointerType(), nonRopeData8Bit, substringData8Bit);
+        LValue compare8Bit = fitsIn8Bit ? emitCompare(m_heaps.characters8, data8Bit, asByteSpan(std::span { characters8 }.first(length))) : m_out.booleanFalse;
+        ValueFromBlock compare8BitResult = m_out.anchor(compare8Bit);
+        m_out.jump(continuation);
+
+        m_out.appendTo(compare16BitCase, falseCase);
+        LValue data16Bit = m_out.phi(pointerType(), nonRopeData16Bit, substringData16Bit);
+        ValueFromBlock compare16BitResult = m_out.anchor(emitCompare(m_heaps.characters16, data16Bit, asByteSpan(std::span { characters16 }.first(length))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(falseCase, slowCase);
+        ValueFromBlock falseResult = m_out.anchor(m_out.booleanFalse);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(callStringEqualThunk(jsString, constantJSString));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        return m_out.phi(Int32, trueResult, falseResult, slowResult);
+        return m_out.phi(Int32, compare8BitResult, compare16BitResult, falseResult, slowResult);
     }
 
     enum ScratchFPRUsage {
@@ -23066,7 +23630,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         Node* node = m_node;
 
-        DFG_ASSERT(m_graph, node, node->isBinaryUseKind(UntypedUse) || node->isBinaryUseKind(AnyBigIntUse) || node->isBinaryUseKind(BigInt32Use));
+        DFG_ASSERT(m_graph, node, node->isBinaryUseKind(UntypedUse));
         LValue left = lowJSValue(node->child1(), ManualOperandSpeculation);
         LValue right = lowJSValue(node->child2(), ManualOperandSpeculation);
         speculate(node, node->child1());
@@ -23815,8 +24379,6 @@ IGNORE_CLANG_WARNINGS_END
             //     result = !!unboxInt32(value)
             // } else if (value is number) {
             //     result = !!unboxDouble(value)
-            // } else if (value is BigInt32) {
-            //     result = (value != BigInt32Tag)
             // } else {
             //     result = value == jsTrue
             // }
@@ -23831,10 +24393,6 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock notInt32Case = m_out.newBlock();
             LBasicBlock doubleCase = m_out.newBlock();
             LBasicBlock notDoubleCase = m_out.newBlock();
-#if USE(BIGINT32)
-            LBasicBlock bigInt32Case = m_out.newBlock();
-            LBasicBlock notBigInt32Case = m_out.newBlock();
-#endif
             LBasicBlock continuation = m_out.newBlock();
 
             Vector<ValueFromBlock> results;
@@ -23905,21 +24463,7 @@ IGNORE_CLANG_WARNINGS_END
             results.append(m_out.anchor(doubleIsTruthy));
             m_out.jump(continuation);
 
-#if USE(BIGINT32)
-            m_out.appendTo(notDoubleCase, bigInt32Case);
-            m_out.branch(
-                isBigInt32(value, provenType(edge) & ~SpecCell),
-                unsure(bigInt32Case), unsure(notBigInt32Case));
-
-            m_out.appendTo(bigInt32Case, notBigInt32Case);
-            LValue bigInt32NotZero = m_out.notEqual(value, m_out.constInt64(JSValue::BigInt32Tag));
-            results.append(m_out.anchor(bigInt32NotZero));
-            m_out.jump(continuation);
-
-            m_out.appendTo(notBigInt32Case, continuation);
-#else
             m_out.appendTo(notDoubleCase, continuation);
-#endif
             LValue miscIsTruthy = m_out.equal(
                 value, m_out.constInt64(JSValue::encode(jsBoolean(true))));
             results.append(m_out.anchor(miscIsTruthy));
@@ -24201,20 +24745,11 @@ IGNORE_CLANG_WARNINGS_END
             unsure(concatRopeBlock), unsure(isSubstringBlock));
 
         m_out.appendTo(isSubstringBlock, substringBlock);
-        m_out.branch(
-            m_out.testIsZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
-            unsure(concatRopeBlock), unsure(substringBlock));
+        auto [baseImpl, substringOffset] = substringRopeBaseImplAndOffset(string);
+        m_out.branch(isNot8BitStringImpl(baseImpl), unsure(concatRopeBlock), unsure(substringBlock));
 
         m_out.appendTo(substringBlock, concatRopeBlock);
-        LValue packedLengthAndBaseLower = m_out.load64(string, m_heaps.JSRopeString_fiber1);
-        LValue packedBaseUpperAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
-        LValue substringBase = m_out.bitOr(
-            m_out.lShr(packedLengthAndBaseLower, m_out.constInt32(32)),
-            m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
-        LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
-        LValue baseImpl = m_out.loadPtr(substringBase, m_heaps.JSString_value);
-        ValueFromBlock substringBuffer = m_out.anchor(
-            m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
+        ValueFromBlock substringBuffer = m_out.anchor(m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
         ValueFromBlock substringLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));
         m_out.jump(binarySwitchBlock);
 
@@ -24291,7 +24826,7 @@ IGNORE_CLANG_WARNINGS_END
         {
         }
 
-        bool LEGACY_NODELETE operator<(const CharacterCase& other) const
+        NODELETE bool operator<(const CharacterCase& other) const
         {
             return character < other.character;
         }
@@ -24531,8 +25066,6 @@ IGNORE_CLANG_WARNINGS_END
         //     }
         // } else if (is number) {
         //     return number
-        // } else if (is bigint32) {
-        //     return bigint
         // } else if (is null) {
         //     return object
         // } else if (is boolean) {
@@ -24562,9 +25095,6 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock notCellCase = m_out.newBlock();
         LBasicBlock numberCase = m_out.newBlock();
         LBasicBlock notNumberCase = m_out.newBlock();
-#if USE(BIGINT32)
-        LBasicBlock notBigInt32Case = m_out.newBlock();
-#endif
         LBasicBlock notNullCase = m_out.newBlock();
         LBasicBlock booleanCase = m_out.newBlock();
         LBasicBlock undefinedCase = m_out.newBlock();
@@ -24645,14 +25175,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(numberCase, notNumberCase);
         functor(TypeofType::Number);
 
-#if USE(BIGINT32)
-        m_out.appendTo(notNumberCase, notBigInt32Case);
-        m_out.branch(isBigInt32(value, provenType(child) & ~SpecCell), unsure(bigIntCase), unsure(notBigInt32Case));
-
-        m_out.appendTo(notBigInt32Case, notNullCase);
-#else
         m_out.appendTo(notNumberCase, notNullCase);
-#endif
         LValue isNull;
         if (provenType(child) & SpecOther)
             isNull = m_out.equal(value, m_out.constInt64(JSValue::ValueNull));
@@ -25102,7 +25625,7 @@ IGNORE_CLANG_WARNINGS_END
         didAlreadyTerminate();
     }
 
-    void LEGACY_NODELETE didAlreadyTerminate()
+    NODELETE void didAlreadyTerminate()
     {
         m_state.setIsValid(false);
     }
@@ -25139,7 +25662,7 @@ IGNORE_CLANG_WARNINGS_END
             simulatedTypeCheck(edge, SpecInt32Only);
             if (!value.isInt32()) {
                 if (mayHaveTypeCheck(edge.useKind()))
-                    terminate(Uncountable);
+                    terminate(BadType);
                 return m_out.int32Zero;
             }
             LValue result = m_out.constInt32(value.asInt32());
@@ -25180,7 +25703,7 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
+            terminate(BadType);
         return m_out.int32Zero;
     }
 
@@ -25214,7 +25737,7 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
+            terminate(BadType);
         return m_out.int64Zero;
     }
 
@@ -25268,7 +25791,7 @@ IGNORE_CLANG_WARNINGS_END
             simulatedTypeCheck(edge, SpecCellCheck);
             if (!value->value().isCell()) {
                 if (mayHaveTypeCheck(edge.useKind()))
-                    terminate(Uncountable);
+                    terminate(BadType);
                 return m_out.intPtrZero;
             }
             LValue result = frozenPointer(value);
@@ -25285,7 +25808,7 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
+            terminate(BadType);
         return m_out.intPtrZero;
     }
 
@@ -25434,11 +25957,6 @@ IGNORE_CLANG_WARNINGS_END
     LValue allocateHeapBigInt64(LValue value, bool isSigned)
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-#if USE(BIGINT32)
-        if (isSigned)
-            return vmCall(Int64, operationInt64ToBigInt, weakPointer(globalObject), value);
-        return vmCall(Int64, operationUInt64ToBigInt, weakPointer(globalObject), value);
-#else
         Structure* structure = vm().bigIntStructure.get();
         uint8_t inlineTypeFlags = structure->typeInfo().inlineTypeFlags();
 
@@ -25495,26 +26013,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         return m_out.phi(pointerType(), zeroResult, fastResult, slowResult);
-#endif
     }
-
-#if USE(BIGINT32)
-    LValue lowBigInt32(Edge edge, OperandSpeculationMode mode = AutomaticOperandSpeculation)
-    {
-        ASSERT_UNUSED(mode, mode == ManualOperandSpeculation || edge.useKind() == BigInt32Use);
-
-        LoweredNodeValue value = m_jsValueValues.get(edge.node());
-        if (isValid(value)) {
-            LValue result = value.value();
-            FTL_TYPE_CHECK(jsValueValue(result), edge, SpecBigInt32, isNotBigInt32(result));
-            return result;
-        }
-
-        if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
-        return m_out.bigInt32Zero;
-    }
-#endif
 
     LValue lowNonNullObject(Edge edge, OperandSpeculationMode mode = AutomaticOperandSpeculation)
     {
@@ -25534,7 +26033,7 @@ IGNORE_CLANG_WARNINGS_END
             simulatedTypeCheck(edge, SpecBoolean);
             if (!value.isBoolean()) {
                 if (mayHaveTypeCheck(edge.useKind()))
-                    terminate(Uncountable);
+                    terminate(BadType);
                 return m_out.booleanFalse;
             }
             LValue result = m_out.constBool(value.asBoolean());
@@ -25559,7 +26058,7 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
+            terminate(BadType);
         return m_out.booleanFalse;
     }
 
@@ -25571,7 +26070,7 @@ IGNORE_CLANG_WARNINGS_END
         if (isValid(value))
             return value.value();
         if (mayHaveTypeCheck(edge.useKind()))
-            terminate(Uncountable);
+            terminate(BadType);
         return m_out.doubleZero;
     }
 
@@ -25714,83 +26213,16 @@ IGNORE_CLANG_WARNINGS_END
         return m_out.add(m_out.zeroExt(value, Int64), m_numberTag);
     }
 
-#if USE(BIGINT32)
-    LValue isBigInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
-    {
-        if (LValue proven = isProvenValue(type, SpecBigInt32))
-            return proven;
-        return m_out.equal(m_out.bitAnd(jsValue, m_out.constInt64(JSValue::BigInt32Mask)), m_out.constInt64(JSValue::BigInt32Tag));
-    }
-    LValue isNotBigInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
-    {
-        if (LValue proven = isProvenValue(type, ~SpecBigInt32))
-            return proven;
-        return m_out.notEqual(m_out.bitAnd(jsValue, m_out.constInt64(JSValue::BigInt32Mask)), m_out.constInt64(JSValue::BigInt32Tag));
-    }
-    LValue unboxBigInt32(LValue jsValue)
-    {
-        return m_out.castToInt32(m_out.lShr(jsValue, m_out.constInt64(16)));
-    }
-    LValue boxBigInt32(LValue int32Value)
-    {
-        return m_out.bitOr(
-            m_out.shl(m_out.zeroExt(int32Value, B3::Int64), m_out.constInt64(16)),
-            m_out.constInt64(JSValue::BigInt32Tag));
-    }
-    LValue isNotAnyBigInt(LValue jsValue, SpeculatedType type = SpecFullTop)
-    {
-        if (LValue proven = isProvenValue(type, ~SpecBigInt))
-            return proven;
-
-        // if (isBigInt32)
-        //   return false
-        // if (!isCell)
-        //   return true;
-        // return !isHeapBigInt
-        LBasicBlock isBigInt32Case = m_out.newBlock();
-        LBasicBlock isNotBigInt32Case = m_out.newBlock();
-        LBasicBlock isNotCellCase = m_out.newBlock();
-        LBasicBlock isCellCase = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-
-        m_out.branch(isBigInt32(jsValue, type), unsure(isBigInt32Case), unsure(isNotBigInt32Case));
-
-        LBasicBlock lastNext = m_out.appendTo(isBigInt32Case, isNotBigInt32Case);
-        ValueFromBlock returnFalse = m_out.anchor(m_out.booleanFalse);
-        m_out.jump(continuation);
-
-        m_out.appendTo(isNotBigInt32Case, isNotCellCase);
-        m_out.branch(isCell(jsValue, type & ~SpecBigInt32), unsure(isCellCase), unsure(isNotCellCase));
-
-        m_out.appendTo(isNotCellCase, isCellCase);
-        ValueFromBlock returnTrue = m_out.anchor(m_out.booleanTrue);
-        m_out.jump(continuation);
-
-        m_out.appendTo(isCellCase, continuation);
-        ValueFromBlock returnIsNotHeapBigInt = m_out.anchor(isNotHeapBigInt(jsValue, type));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation, lastNext);
-        return m_out.phi(Int32, returnFalse, returnTrue, returnIsNotHeapBigInt);
-    }
-#endif // USE(BIGINT32)
-
-    LValue isCellOrMiscOrBigInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
+    LValue isCellOrMisc(LValue jsValue, SpeculatedType type = SpecFullTop)
     {
         SpeculatedType filter = SpecCellCheck | SpecMisc;
-#if USE(BIGINT32)
-        filter |= SpecBigInt32;
-#endif // USE(BIGINT32)
         if (LValue proven = isProvenValue(type, filter))
             return proven;
         return m_out.testIsZero64(jsValue, m_numberTag);
     }
-    LValue isNotCellOrMiscOrBigInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
+    LValue isNotCellOrMisc(LValue jsValue, SpeculatedType type = SpecFullTop)
     {
         SpeculatedType filter = SpecCellCheck | SpecMisc;
-#if USE(BIGINT32)
-        filter |= SpecBigInt32;
-#endif // USE(BIGINT32)
         if (LValue proven = isProvenValue(type, ~filter))
             return proven;
         return m_out.testNonZero64(jsValue, m_numberTag);
@@ -25913,13 +26345,13 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (LValue proven = isProvenValue(type, SpecFullNumber))
             return proven;
-        return isNotCellOrMiscOrBigInt32(jsValue);
+        return isNotCellOrMisc(jsValue);
     }
     LValue isNotNumber(LValue jsValue, SpeculatedType type = SpecFullTop)
     {
         if (LValue proven = isProvenValue(type, ~SpecFullNumber))
             return proven;
-        return isCellOrMiscOrBigInt32(jsValue);
+        return isCellOrMisc(jsValue);
     }
 
     LValue isNotCell(LValue jsValue, SpeculatedType type = SpecFullTop)
@@ -25995,7 +26427,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.constInt64(JSValue::ValueNull));
     }
 
-    LValue LEGACY_NODELETE isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
+    NODELETE LValue isProvenValue(SpeculatedType provenType, SpeculatedType wantedType)
     {
         if (!(provenType & ~wantedType))
             return m_out.booleanTrue;
@@ -26113,14 +26545,6 @@ IGNORE_CLANG_WARNINGS_END
         case BooleanUse:
             speculateBoolean(edge);
             break;
-#if USE(BIGINT32)
-        case BigInt32Use:
-            speculateBigInt32(edge);
-            break;
-        case AnyBigIntUse:
-            speculateAnyBigInt(edge);
-            break;
-#endif // USE(BIGINT32)
         case HeapBigIntUse:
             speculateHeapBigInt(edge);
             break;
@@ -26186,14 +26610,7 @@ IGNORE_CLANG_WARNINGS_END
 
     void speculateNotCellNorBigInt(Edge edge)
     {
-#if USE(BIGINT32)
-        if (!m_interpreter.needsTypeCheck(edge))
-            return;
-        LValue nonCell = lowNotCell(edge);
-        FTL_TYPE_CHECK(jsValueValue(nonCell), edge, ~SpecCellCheck & ~SpecBigInt, isBigInt32(nonCell));
-#else
         speculateNotCell(edge);
-#endif
     }
 
     void speculateNotDouble(Edge edge)
@@ -26424,26 +26841,6 @@ IGNORE_CLANG_WARNINGS_END
         return m_out.equal(
             m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType),
             m_out.constInt32(SymbolType));
-    }
-
-    LValue isNotHeapBigIntUnknownWhetherCell(LValue value, SpeculatedType type = SpecFullTop)
-    {
-        if (LValue proven = isProvenValue(type, ~SpecHeapBigInt))
-            return proven;
-
-        LBasicBlock isCellCase = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-
-        ValueFromBlock defaultToTrue = m_out.anchor(m_out.booleanTrue);
-        m_out.branch(isCell(value, type), unsure(isCellCase), unsure(continuation));
-
-        LBasicBlock lastNext = m_out.appendTo(isCellCase, continuation);
-        ValueFromBlock returnForCell = m_out.anchor(isNotHeapBigInt(value, type));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation, lastNext);
-        LValue result = m_out.phi(Int32, defaultToTrue, returnForCell);
-        return result;
     }
 
     LValue isNotHeapBigInt(LValue cell, SpeculatedType type = SpecFullTop)
@@ -26982,20 +27379,6 @@ IGNORE_CLANG_WARNINGS_END
     {
         speculateHeapBigInt(edge, lowCell(edge));
     }
-
-#if USE(BIGINT32)
-    void speculateBigInt32(Edge edge)
-    {
-        LValue value = lowJSValue(edge, ManualOperandSpeculation);
-        FTL_TYPE_CHECK(jsValueValue(value), edge, SpecBigInt32, isNotBigInt32(value));
-    }
-
-    void speculateAnyBigInt(Edge edge)
-    {
-        LValue value = lowJSValue(edge, ManualOperandSpeculation);
-        FTL_TYPE_CHECK(jsValueValue(value), edge, SpecBigInt, isNotAnyBigInt(value));
-    }
-#endif
 
     void speculateNonNullObject(Edge edge, LValue cell)
     {
@@ -27808,7 +28191,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         m_doubleValues.set(node, LoweredNodeValue(value, m_highBlock));
     }
-    void LEGACY_NODELETE setTuple(Node* tuple, unsigned index, LValue value)
+    NODELETE void setTuple(Node* tuple, unsigned index, LValue value)
     {
         ASSERT(index < tuple->tupleSize());
         m_tupleValues.at(tuple->tupleOffset() + index) = LoweredNodeValue(value, m_highBlock);
@@ -27846,12 +28229,12 @@ IGNORE_CLANG_WARNINGS_END
     {
         setDouble(m_node, value);
     }
-    void LEGACY_NODELETE setTuple(unsigned index, LValue value)
+    NODELETE void setTuple(unsigned index, LValue value)
     {
         setTuple(m_node, index, value);
     }
 
-    bool LEGACY_NODELETE isValid(const LoweredNodeValue& value)
+    NODELETE bool isValid(const LoweredNodeValue& value)
     {
         if (!value)
             return false;
@@ -28078,10 +28461,10 @@ IGNORE_CLANG_WARNINGS_END
         return result;
     }
 
-    AvailabilityMap& LEGACY_NODELETE availabilityMap() { return m_availabilityCalculator.m_availability; }
+    NODELETE AvailabilityMap& availabilityMap() { return m_availabilityCalculator.m_availability; }
 
-    VM& LEGACY_NODELETE vm() { return m_graph.m_vm; }
-    CodeBlock* LEGACY_NODELETE codeBlock() { return m_graph.m_codeBlock; }
+    NODELETE VM& vm() { return m_graph.m_vm; }
+    NODELETE CodeBlock* codeBlock() { return m_graph.m_codeBlock; }
 
     Graph& m_graph;
     State& m_ftlState;

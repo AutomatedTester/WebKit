@@ -49,7 +49,7 @@ GCAwareJITStubRoutine::GCAwareJITStubRoutine(Type type, const MacroAssemblerCode
 
 void GCAwareJITStubRoutine::makeGCAware(VM& vm)
 {
-    vm.heap.m_jitStubRoutines->add(this);
+    vm.heap.addGCAwareJITStubRoutine(this);
     m_isGCAware = true;
 }
 
@@ -169,6 +169,8 @@ bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)
     bool isValid = true;
     for (StructureID weakReference : m_weakStructures)
         isValid &= vm.heap.isMarked(weakReference.decode());
+    for (auto& accessCase : m_cases)
+        isValid &= accessCase->isStillLive(vm);
     isValid &= Base::reconcileWeakReferencesAtGCEndImpl(vm);
     return isValid;
 }

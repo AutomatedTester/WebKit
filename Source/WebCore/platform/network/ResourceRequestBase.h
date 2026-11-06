@@ -32,6 +32,7 @@
 #include <WebCore/HTTPHeaderMap.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/ResourceLoadPriority.h>
+#include <WebCore/ThirdPartyCookieBlockingMode.h>
 #include <optional>
 #include <wtf/EnumTraits.h>
 #include <wtf/Platform.h>
@@ -74,7 +75,7 @@ public:
     struct RequestData {
         RequestData() { }
 
-        RequestData(URL&& url, URL&& firstPartyForCookies, double timeoutInterval, String&& httpMethod, HTTPHeaderMap&& httpHeaderFields, Vector<String>&& responseContentDispositionEncodingFallbackArray, ResourceRequestCachePolicy cachePolicy, SameSiteDisposition sameSiteDisposition, ResourceLoadPriority priority, ResourceRequestRequester requester, bool allowCookies, bool isTopSite, bool isAppInitiated = true, bool privacyProxyFailClosedForUnreachableNonMainHosts = false, bool useAdvancedPrivacyProtections = false, bool didFilterLinkDecoration = false, bool isPrivateTokenUsageByThirdPartyAllowed = false, bool wasSchemeOptimisticallyUpgraded = false, IPAddressSpace targetAddressSpace = IPAddressSpace::Public)
+        RequestData(URL&& url, URL&& firstPartyForCookies, double timeoutInterval, String&& httpMethod, HTTPHeaderMap&& httpHeaderFields, Vector<String>&& responseContentDispositionEncodingFallbackArray, ResourceRequestCachePolicy cachePolicy, SameSiteDisposition sameSiteDisposition, ResourceLoadPriority priority, ResourceRequestRequester requester, bool allowCookies, bool isTopSite, bool isAppInitiated = true, bool privacyProxyFailClosedForUnreachableNonMainHosts = false, bool useAdvancedPrivacyProtections = false, bool didFilterLinkDecoration = false, bool isPrivateTokenUsageByThirdPartyAllowed = false, bool wasSchemeOptimisticallyUpgraded = false, IPAddressSpace targetAddressSpace = IPAddressSpace::Public, ThirdPartyCookieBlockingDecision latchedThirdPartyCookieBlockingDecision = ThirdPartyCookieBlockingDecision::None)
             : m_url(WTF::move(url))
             , m_firstPartyForCookies(WTF::move(firstPartyForCookies))
             , m_timeoutInterval(timeoutInterval)
@@ -94,6 +95,7 @@ public:
             , m_isPrivateTokenUsageByThirdPartyAllowed(isPrivateTokenUsageByThirdPartyAllowed)
             , m_wasSchemeOptimisticallyUpgraded(wasSchemeOptimisticallyUpgraded)
             , m_targetAddressSpace(targetAddressSpace)
+            , m_latchedThirdPartyCookieBlockingDecision(latchedThirdPartyCookieBlockingDecision)
         {
         }
 
@@ -122,6 +124,7 @@ public:
         bool m_isPrivateTokenUsageByThirdPartyAllowed : 1 { false };
         bool m_wasSchemeOptimisticallyUpgraded : 1 { false };
         IPAddressSpace m_targetAddressSpace { IPAddressSpace::Public };
+        ThirdPartyCookieBlockingDecision m_latchedThirdPartyCookieBlockingDecision { ThirdPartyCookieBlockingDecision::None };
     };
 
     ResourceRequestBase(RequestData&& requestData)
@@ -274,8 +277,8 @@ public:
     void upgradeInsecureRequest();
     void upgradeInsecureRequestIfNeeded(ShouldUpgradeLocalhostAndIPAddress, const std::optional<uint16_t>&);
 
-    WEBCORE_EXPORT static double LEGACY_NODELETE defaultTimeoutInterval(); // May return 0 when using platform default.
-    WEBCORE_EXPORT static void LEGACY_NODELETE setDefaultTimeoutInterval(double);
+    NODELETE WEBCORE_EXPORT static double defaultTimeoutInterval(); // May return 0 when using platform default.
+    NODELETE WEBCORE_EXPORT static void setDefaultTimeoutInterval(double);
 
     WEBCORE_EXPORT static bool equal(const ResourceRequest&, const ResourceRequest&);
 
@@ -289,13 +292,16 @@ public:
     WEBCORE_EXPORT void setUseAdvancedPrivacyProtections(bool);
 
     bool didFilterLinkDecoration() const { return m_requestData.m_didFilterLinkDecoration; }
-    WEBCORE_EXPORT void LEGACY_NODELETE setDidFilterLinkDecoration(bool);
+    NODELETE WEBCORE_EXPORT void setDidFilterLinkDecoration(bool);
 
     bool isPrivateTokenUsageByThirdPartyAllowed() const { return m_requestData.m_isPrivateTokenUsageByThirdPartyAllowed; }
-    void LEGACY_NODELETE setIsPrivateTokenUsageByThirdPartyAllowed(bool);
+    NODELETE void setIsPrivateTokenUsageByThirdPartyAllowed(bool);
 
     bool wasSchemeOptimisticallyUpgraded() const { return m_requestData.m_wasSchemeOptimisticallyUpgraded; }
-    void LEGACY_NODELETE setWasSchemeOptimisticallyUpgraded(bool);
+    NODELETE void setWasSchemeOptimisticallyUpgraded(bool);
+
+    ThirdPartyCookieBlockingDecision latchedThirdPartyCookieBlockingDecision() const { return m_requestData.m_latchedThirdPartyCookieBlockingDecision; }
+    NODELETE WEBCORE_EXPORT void setLatchedThirdPartyCookieBlockingDecision(ThirdPartyCookieBlockingDecision);
 
 protected:
     // Used when ResourceRequest is initialized from a platform representation of the request
@@ -338,7 +344,7 @@ protected:
     bool m_hiddenFromInspector : 1;
 
 private:
-    const ResourceRequest& LEGACY_NODELETE asResourceRequest() const;
+    NODELETE const ResourceRequest& asResourceRequest() const;
 
     WEBCORE_EXPORT static double s_defaultTimeoutInterval;
 };

@@ -35,11 +35,12 @@
 #include <WebCore/GlyphBuffer.h>
 #include <WebCore/Gradient.h>
 #include <WebCore/GraphicsContext.h>
-#include <WebCore/Image.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TextFlags.h>
+#include <wtf/ArgumentCoder.h>
 #include <wtf/Box.h>
 #include <wtf/TypeCasts.h>
 
@@ -50,7 +51,7 @@ class TextStream;
 namespace WebCore {
 
 class ControlFactory;
-struct ImagePaintingOptions;
+struct RasterDrawingOptions;
 
 namespace DisplayList {
 class DisplayList;
@@ -455,6 +456,37 @@ private:
     WindRule m_windRule;
 };
 
+class ClipTransformedPath {
+public:
+    static constexpr char name[] = "clip-transformed-path";
+
+    ClipTransformedPath(const AffineTransform& pathTransform, Path&& path, WindRule windRule)
+        : m_pathTransform(pathTransform)
+        , m_path(WTF::move(path))
+        , m_windRule(windRule)
+    {
+    }
+
+    ClipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule windRule)
+        : m_pathTransform(pathTransform)
+        , m_path(path)
+        , m_windRule(windRule)
+    {
+    }
+
+    const AffineTransform& pathTransform() const LIFETIME_BOUND { return m_pathTransform; }
+    const Path& path() const LIFETIME_BOUND { return m_path; }
+    WindRule windRule() const { return m_windRule; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    AffineTransform m_pathTransform;
+    Path m_path;
+    WindRule m_windRule;
+};
+
 class ResetClip {
 public:
     static constexpr char name[] = "reset-clip";
@@ -478,6 +510,12 @@ public:
     {
     }
 
+    DrawFilteredImageBuffer(const FloatRect& sourceImageRect, Ref<Filter>&& filter)
+        : m_sourceImageRect(sourceImageRect)
+        , m_filter(WTF::move(filter))
+    {
+    }
+
     ImageBuffer* sourceImage() const { return m_sourceImage.get(); }
     FloatRect sourceImageRect() const { return m_sourceImageRect; }
     Filter& filter() const { return m_filter; }
@@ -486,6 +524,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<DrawFilteredImageBuffer>;
+
     const RefPtr<ImageBuffer> m_sourceImage;
     FloatRect m_sourceImageRect;
     const Ref<Filter> m_filter;
@@ -504,8 +544,33 @@ public:
     {
     }
 
+    DrawGlyphs(uint64_t fontIndex, Vector<GlyphBufferGlyph>&& glyphs, Vector<FloatSize>&& sizes, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_font(fontIndex)
+        , m_glyphs(WTF::move(glyphs))
+        , m_advances(makeGlyphBufferAdvances(sizes))
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
+    {
+    }
+
+    const FontBase& font() const LIFETIME_BOUND
+    {
+        RELEASE_ASSERT(isResolved());
+        return std::get<Ref<const FontBase>>(m_font);
+    }
+    void setFont(Ref<const FontBase>&& font) { m_font = WTF::move(font); }
+    void setFontIndex(uint64_t fontIndex) { m_font = fontIndex; }
+    bool isResolved() const { return std::holds_alternative<Ref<const FontBase>>(m_font); }
+
+    uint64_t fontIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_font);
+    }
+
     const Vector<GlyphBufferGlyph>& glyphs() const LIFETIME_BOUND { return m_glyphs; }
     const Vector<GlyphBufferAdvance>& advances() const LIFETIME_BOUND { return m_advances; }
+    Vector<FloatSize> sizes() const { return WebCore::sizes(m_advances); }
     size_t length() const { return m_glyphs.size(); }
 
     FloatPoint localAnchor() const { return m_localAnchor; }
@@ -515,7 +580,7 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const FontBase> m_font;
+    Variant<Ref<const FontBase>, uint64_t> m_font;
     Vector<GlyphBufferGlyph> m_glyphs;
     Vector<GlyphBufferAdvance> m_advances;
     FloatPoint m_localAnchor;
@@ -568,27 +633,36 @@ class DrawDisplayList {
 public:
     static constexpr char name[] = "draw-display-list";
 
-    DrawDisplayList(Ref<const DisplayList>&&);
-    ~DrawDisplayList();
+    WEBCORE_EXPORT DrawDisplayList(Ref<const DisplayList>&&);
+    WEBCORE_EXPORT explicit DrawDisplayList(uint64_t displayListIndex);
+    WEBCORE_EXPORT ~DrawDisplayList();
 
-    Ref<const DisplayList> LEGACY_NODELETE displayList() const;
+    NODELETE WEBCORE_EXPORT Ref<const DisplayList> displayList() const;
+    WEBCORE_EXPORT void setDisplayList(Ref<const DisplayList>&&);
+    bool isResolved() const { return std::holds_alternative<Ref<const DisplayList>>(m_displayList); }
+
+    uint64_t displayListIndex() const
+    {
+        RELEASE_ASSERT(!isResolved());
+        return std::get<uint64_t>(m_displayList);
+    }
 
     void apply(GraphicsContext&, ControlFactory&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
-    Ref<const DisplayList> m_displayList;
+    Variant<Ref<const DisplayList>, uint64_t> m_displayList;
 };
 
 class DrawPlaceholder {
 public:
     static constexpr char name[] = "draw-placeholder";
 
-    DrawPlaceholder(Function<void(GraphicsContext&)>&&);
-    ~DrawPlaceholder();
+    WEBCORE_EXPORT DrawPlaceholder(Function<void(GraphicsContext&)>&&);
+    WEBCORE_EXPORT ~DrawPlaceholder();
 
-    void apply(GraphicsContext&) const;
-    void LEGACY_NODELETE dump(TextStream&, OptionSet<AsTextFlag>) const;
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    NODELETE void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
     using FunctionHolder = Box<Function<void(GraphicsContext&)>>;
@@ -599,7 +673,7 @@ class DrawImageBuffer {
 public:
     static constexpr char name[] = "draw-image-buffer";
 
-    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+    DrawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
         : m_imageBuffer(imageBuffer)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
@@ -610,7 +684,7 @@ public:
     ImageBuffer& imageBuffer() const { return m_imageBuffer; }
     FloatRect source() const { return m_srcRect; }
     FloatRect destinationRect() const { return m_destinationRect; }
-    ImagePaintingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -619,14 +693,14 @@ private:
     const Ref<ImageBuffer> m_imageBuffer;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
-    ImagePaintingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawNativeImage {
 public:
     static constexpr char name[] = "draw-native-image";
 
-    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+    DrawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
         : m_image(image)
         , m_destinationRect(destRect)
         , m_srcRect(srcRect)
@@ -637,7 +711,7 @@ public:
     const NativeImage& nativeImage() const { return m_image; }
     const FloatRect& destinationRect() const LIFETIME_BOUND { return m_destinationRect; }
     const FloatRect& source() const LIFETIME_BOUND { return m_srcRect; }
-    ImagePaintingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -646,7 +720,7 @@ private:
     const Ref<const NativeImage> m_image;
     FloatRect m_destinationRect;
     FloatRect m_srcRect;
-    ImagePaintingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawSystemImage {
@@ -674,7 +748,7 @@ class DrawPatternNativeImage {
 public:
     static constexpr char name[] = "draw-pattern-nativeimage";
 
-    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+    DrawPatternNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
         : m_image(image)
         , m_destination(destRect)
         , m_tileRect(tileRect)
@@ -690,7 +764,7 @@ public:
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
     FloatPoint phase() const { return m_phase; }
     FloatSize spacing() const { return m_spacing; }
-    ImagePaintingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -702,14 +776,14 @@ private:
     AffineTransform m_patternTransform;
     FloatPoint m_phase;
     FloatSize m_spacing;
-    ImagePaintingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class DrawPatternImageBuffer {
 public:
     static constexpr char name[] = "draw-pattern-imagebuffer";
 
-    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+    DrawPatternImageBuffer(ImageBuffer& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
         : m_imageBuffer(image)
         , m_destination(destRect)
         , m_tileRect(tileRect)
@@ -725,7 +799,7 @@ public:
     const AffineTransform& patternTransform() const LIFETIME_BOUND { return m_patternTransform; }
     FloatPoint phase() const { return m_phase; }
     FloatSize spacing() const { return m_spacing; }
-    ImagePaintingOptions options() const { return m_options; }
+    RasterDrawingOptions options() const { return m_options; }
 
     void apply(GraphicsContext&) const;
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
@@ -737,7 +811,7 @@ private:
     AffineTransform m_patternTransform;
     FloatPoint m_phase;
     FloatSize m_spacing;
-    ImagePaintingOptions m_options;
+    RasterDrawingOptions m_options;
 };
 
 class BeginTransparencyLayer {
@@ -849,6 +923,27 @@ private:
     bool m_printing;
     bool m_doubleLines;
     StrokeStyle m_style;
+};
+
+class DrawMeshGradient {
+public:
+    static constexpr char name[] = "draw-mesh-gradient";
+
+    DrawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+        : m_gradient(gradient)
+        , m_destination(destination)
+    {
+    }
+
+    const MeshGradient& gradient() const { return m_gradient; }
+    const FloatRect& destination() const LIFETIME_BOUND { return m_destination; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    const Ref<MeshGradient> m_gradient;
+    FloatRect m_destination;
 };
 
 class DrawDotsForDocumentMarker {
@@ -1039,6 +1134,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradient>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
 };
@@ -1059,6 +1156,8 @@ public:
     void dump(TextStream&, OptionSet<AsTextFlag>) const;
 
 private:
+    friend struct IPC::ArgumentCoder<FillRectWithGradientAndSpaceTransform>;
+
     FloatRect m_rect;
     const Ref<Gradient> m_gradient;
     AffineTransform m_gradientSpaceTransform;

@@ -41,7 +41,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
@@ -383,30 +382,20 @@ std::pair<LayoutUnit, LayoutUnit> RenderFragmentContainer::computeIntrinsicLogic
     return RenderBlockFlow::computeIntrinsicLogicalWidths();
 }
 
-void RenderFragmentContainer::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderFragmentContainer::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    if (!isValid()) {
-        RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
+    if (!isValid())
+        return RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 
     // FIXME: Currently, the code handles only the <length> case for min-width/max-width.
     // It should also support other values, like percentage, calc or viewport relative.
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-
-    CheckedRef styleToUse = style();
-    if (auto fixedLogicalWidth = styleToUse->logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+    if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 LayoutRect RenderFragmentContainer::computedVisualOverflowRectForBox(const RenderBox& box) const

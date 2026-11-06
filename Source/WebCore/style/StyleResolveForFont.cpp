@@ -42,12 +42,14 @@
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 #include "Document.h"
+#include "Element.h"
 #include "FontCascade.h"
 #include "FontCascadeDescription.h"
 #include "FontSelectionValueInlines.h"
 #include "ScriptExecutionContext.h"
 #include "Settings.h"
 #include "StyleBuilderChecking.h"
+#include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle.h"
 #include "StyleFontFamily.h"
 #include "StyleFontSizeFunctions.h"
@@ -114,9 +116,9 @@ static FontSelectionValue fontWeightFromUnresolvedFontWeight(const CSSPropertyPa
     );
 }
 
-// MARK: - 'font-stretch'
+// MARK: - 'font-width'
 
-FontSelectionValue fontStretchFromCSSValueDeprecated(const CSSValue& value)
+FontSelectionValue fontWidthFromCSSValueDeprecated(const CSSValue& value)
 {
     if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
         ASSERT(primitiveValue->isPercentage());
@@ -129,6 +131,20 @@ FontSelectionValue fontStretchFromCSSValueDeprecated(const CSSValue& value)
 
     ASSERT(CSSPropertyParserHelpers::isSystemFontShorthand(keywordValue.valueID()));
     return normalWidthValue();
+}
+
+static FontSelectionValue fontWidthFromUnresolvedFontWidth(const CSSPropertyParserHelpers::UnresolvedFontWidth& unresolvedWidth)
+{
+    return WTF::switchOn(unresolvedWidth,
+        [&](CSSValueID ident) {
+            return fontWidthValue(ident).value_or(normalWidthValue());
+        },
+        [&](const CSSPropertyParserHelpers::UnresolvedFontWidthPercentage& percentage) {
+            if (requiresConversionData(percentage))
+                return normalWidthValue();
+            return FontSelectionValue::clampFloat(Style::toStyleNoConversionDataRequired(percentage).value);
+        }
+    );
 }
 
 // MARK: - 'font-style'
@@ -271,11 +287,16 @@ static ResolvedFontSize fontSizeFromUnresolvedFontSize(const CSSPropertyParserHe
                             //        It's unclear in the specification if they're expected to work on OffscreenCanvas, given
                             //        that it's off-screen and therefore doesn't strictly have an associated viewport.
                             //        This needs clarification and possibly fixing.
-                            // FIXME: How should root font units work in OffscreenCanvas?
+                            // Root font units resolve against the root element's font whenever the context is a document,
+                            // including for an OffscreenCanvas created in a window. They fall back to the element's own
+                            // font only in a worker, where there is no root element.
+                            // See https://github.com/whatwg/html/issues/10893 for the open question of how non-absolute
+                            // <length> values should behave here.
 
                             RefPtr document = dynamicDowncast<Document>(context);
+                            CheckedPtr rootFontCascade = rootFontCascadeForRootFontUnits(context);
                             return {
-                                .size = static_cast<float>(Style::resolveLength(lengthPercentage.value, lengthUnit, CSSPropertyID::FontSize, fontCascade, document ? document->renderView() : nullptr)),
+                                .size = static_cast<float>(Style::resolveLength(lengthPercentage.value, lengthUnit, CSSPropertyID::FontSize, fontCascade, rootFontCascade ? *rootFontCascade : fontCascade, document ? document->renderView() : nullptr)),
                                 .keyword = CSSValueID::Invalid
                             };
                         }
@@ -298,7 +319,7 @@ static ResolvedFontSize fontSizeFromUnresolvedFontSize(const CSSPropertyParserHe
 
 // MARK: - 'font-variant-caps'
 
-static FontVariantCaps LEGACY_NODELETE fontVariantCapsFromUnresolvedFontVariantCaps(const CSSPropertyParserHelpers::UnresolvedFontVariantCaps& unresolvedVariantCaps)
+NODELETE static FontVariantCaps fontVariantCapsFromUnresolvedFontVariantCaps(const CSSPropertyParserHelpers::UnresolvedFontVariantCaps& unresolvedVariantCaps)
 {
     return fromCSSValueID<FontVariantCaps>(unresolvedVariantCaps);
 }
@@ -347,6 +368,25 @@ static ResolvedFontFamily fontFamilyFromUnresolvedFontFamily(const CSSPropertyPa
     };
 }
 
+// MARK: - Root Font Units
+
+const FontCascade* rootFontCascadeForRootFontUnits(ScriptExecutionContext& context)
+{
+    RefPtr document = dynamicDowncast<Document>(context);
+    if (!document)
+        return nullptr;
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return nullptr;
+
+    // Deliberately does not resolve style. Callers run with script disallowed and update style
+    // before getting here, so a missing style means there is nothing to resolve against.
+    CheckedPtr rootStyle = documentElement->existingComputedStyle();
+    if (!rootStyle)
+        return nullptr;
+    return &rootStyle->fontCascade();
+}
+
 // MARK: - Unresolved Font Shorthand Resolution
 
 std::optional<FontCascade> resolveForUnresolvedFont(const CSSPropertyParserHelpers::UnresolvedFont& unresolvedFont, FontCascadeDescription&& fontDescription, ScriptExecutionContext& context)
@@ -390,6 +430,9 @@ std::optional<FontCascade> resolveForUnresolvedFont(const CSSPropertyParserHelpe
 
     auto resolvedWeight = fontWeightFromUnresolvedFontWeight(unresolvedFont.weight, fontDescription);
     fontDescription.setWeight(resolvedWeight);
+
+    auto resolvedWidth = fontWidthFromUnresolvedFontWidth(unresolvedFont.width);
+    fontDescription.setWidth(resolvedWidth);
 
     auto resolvedSize = fontSizeFromUnresolvedFontSize(unresolvedFont.size, parentSize, fontDescription, protectedContext);
     fontDescription.setKeywordSizeFromIdentifier(resolvedSize.keyword);

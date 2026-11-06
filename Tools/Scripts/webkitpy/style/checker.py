@@ -387,6 +387,7 @@ _PATH_RULES_SPECIFIER = [
       os.path.join('Source', 'ThirdParty', 'openvr'),
       os.path.join('Source', 'ThirdParty', 'skia'),
       os.path.join('Source', 'ThirdParty', 'xdgmime'),
+      os.path.join('Source', 'WTF', 'wtf', 'zmij'),
       os.path.join('Tools', 'WebGPUAPIStructure')],
      ["-",
       "+pep8/W191",  # Tabs
@@ -441,7 +442,8 @@ _PATH_RULES_SPECIFIER = [
 
     ([  # libwebrtc source and some SPI headers have identifier names with underscores.
       os.path.join('Source', 'ThirdParty', 'libwebrtc', 'Source', 'webrtc'),
-      os.path.join('Source', 'WebCore', 'PAL', 'pal', 'spi')],
+      os.path.join('Source', 'WebCore', 'PAL', 'pal', 'spi'),
+      os.path.join('Source', 'WebDriver', 'cocoa', 'WebDriverNetworkSPI.h')],
      ["-readability/naming/underscores"]),
 
     ([  # c code with underscores in variable names and tabs for the Makefile
@@ -467,7 +469,9 @@ _PATH_RULES_SPECIFIER = [
      os.path.join('Tools', 'MiniBrowser')],
      ["-runtime/wtf_make_unique",
       "-runtime/wtf_move",
-      "-runtime/wtf_to_array"]),
+      "-runtime/wtf_to_array",
+      "-safercpp/dispatch_get_global_queue",
+      "-safercpp/dispatch_get_main_queue"]),
 
     ([  # Ignore formatting and whitespace issues in gmock.
      os.path.join('Source', 'ThirdParty', 'gmock')],
@@ -633,7 +637,6 @@ _SKIPPED_FILES_WITH_WARNING = [
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'webkit-web-process-extension.h'),
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'DOM', 'webkitdom.h'),
     os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPU.h'),
-    os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPUExt.h'),
     os.path.join('Source', 'WebGPU', 'WebGPU', 'metal-cpp', 'SingleHeader', 'MakeSingleHeader.py')]
 
 # Files to skip that are more common or obvious.
@@ -695,6 +698,7 @@ def _all_categories():
     categories = categories.union(JSTestChecker.categories)
     categories = categories.union(TestExpectationsChecker.categories)
     categories = categories.union(APITestExpectationsChecker.categories)
+    categories = categories.union(APITestAllowlistChecker.categories)
     categories = categories.union(ChangeLogChecker.categories)
     categories = categories.union(PNGChecker.categories)
     categories = categories.union(FeatureDefinesChecker.categories)
@@ -987,6 +991,8 @@ class CheckerDispatcher(object):
             return FileType.PNG
         elif ((file_extension == _CMAKE_FILE_EXTENSION) or os.path.basename(file_path) == 'CMakeLists.txt'):
             return FileType.CMAKE
+        elif 'api_tests' in file_path and os.path.basename(file_path) == 'allowlist.txt':
+            return FileType.API_TEST_ALLOWLIST
         elif ((not file_extension and os.path.join("Tools", "Scripts") in file_path) or
               file_extension in _TEXT_FILE_EXTENSIONS or os.path.basename(file_path) == 'TestExpectations'):
             return FileType.TEXT
@@ -998,8 +1004,6 @@ class CheckerDispatcher(object):
             return FileType.BASE_XCCONFIG
         elif os.path.basename(file_path).startswith('AllowedSPI') and file_extension == 'toml':
             return FileType.SPI_ALLOWLIST
-        elif 'api_tests' in file_path and os.path.basename(file_path) == 'allowlist.txt':
-            return FileType.API_TEST_ALLOWLIST
         else:
             return FileType.NONE
 

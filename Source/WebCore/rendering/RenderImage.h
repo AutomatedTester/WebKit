@@ -91,8 +91,6 @@ public:
     bool isShowingAltText() const;
 
     virtual bool shouldDisplayBrokenImageIcon() const;
-    bool shouldRespectZeroIntrinsicWidth() const final;
-    bool shouldRespectZeroIntrinsicHeight() const final;
 
     String accessibilityDescription() const;
 
@@ -100,16 +98,28 @@ public:
     bool isMultiRepresentationHEIC() const;
 #endif
 
-    LayoutRect imagePaintRect() const;
     WEBCORE_EXPORT std::optional<FloatSize> usedImageSize() const final;
 
-    WEBCORE_EXPORT virtual RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const;
+    // FIXME: Condense these into fewer concrete categories of sizing algorithms once we know all the different sizing rules needed.
+    ConcreteObjectSize concreteObjectSizeForPainting() const;
+    ConcreteObjectSize concreteObjectSizeForInteractionRegion() const;
+    WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForPasteboard() const;
+    ConcreteObjectSize concreteObjectSizeForAccessibility() const;
+    ConcreteObjectSize concreteObjectSizeForImageAnalysis() const;
+    ConcreteObjectSize concreteObjectSizeForDragImageOriginalSizeComparison() const;
+    WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForPositionInformation() const;
+    WEBCORE_EXPORT ConcreteObjectSize concreteObjectSizeForElementImage() const;
+
+    // FIXME: Condense these into fewer concrete categories of bitmap extraction once we know all the different behaviors needed.
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForHitTestResult() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForPositionInformation(FloatSize screenSizeInPixels) const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForImageBitmapRequest() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForFullScreen() const;
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmapForImageServices() const;
+    WEBCORE_EXPORT Ref<NativePromise<Ref<ShareableBitmap>, void>> createShareableBitmapAsyncForImageAnalysis(CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages) const;
 
     // Returns an image as `paint()` would draw it. Sized and placed respecting 'object-fit', 'object-position', 'object-view-box', and orientation, and clipped to the content box.
     RefPtr<NativeImage> createNativeImageAsPainted(float deviceScaleFactor, const FloatSize& maximumSize);
-
-    // FIXME: Condense these into fewer concrete categories of sizing algorithms once we know all the different sizing rules needed.
-    ConcreteObjectSize concreteObjectSizeForPasteboard() const;
 
     FloatSize preferredAspectRatioAsSize() const final;
 
@@ -122,7 +132,6 @@ protected:
 #endif
 
     bool shouldInvalidateContentWidths() const final;
-    NaturalDimensions zoomedNaturalDimensions() const override;
     RenderReplaced* embeddedSVGRoot() const final;
     bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const override;
 
@@ -130,6 +139,7 @@ protected:
     void styleDidChange(Style::Difference, const Style::ComputedStyle*) override;
 
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
+    void forEachStyleImage(NOESCAPE const ScopedLambda<void(Style::Image&)>&) override final;
 
     ImageDrawResult paintIntoRect(PaintInfo&, const FloatRect&);
     void paint(PaintInfo&, const LayoutPoint&) final;
@@ -139,6 +149,14 @@ protected:
     {
         imageChanged(imageResource().imagePtr());
     }
+
+    NaturalDimensions zoomedNaturalDimensions() const override;
+
+    ConcreteObjectSize defaultConcreteObjectSize() const;
+    ConcreteObjectSize defaultConcreteObjectSize(NaturalDimensions) const;
+
+    virtual RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const;
+    virtual Ref<NativePromise<Ref<ShareableBitmap>, void>> createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions& = { }) const;
 
 private:
     ASCIILiteral renderName() const override { return "RenderImage"_s; }

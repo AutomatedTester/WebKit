@@ -183,6 +183,9 @@ class Manager(object):
             self._expectations[(driver_name, device_type)] = test_expectations.TestExpectations(self._port, test_names, force_expectations_pass=self._options.force, device_type=device_type)
             self._expectations[(driver_name, device_type)].parse_all_expectations()
             self._expectations[(driver_name, device_type)].add_test_list_expectations(self._finder.get_test_list_expectations())
+            if driver_name == 'DumpRenderTree':
+                # FIXME: DumpRenderTree can't render WPT print reftests as printed pages (rdar://191464040).
+                self._expectations[(driver_name, device_type)].add_skipped_tests({test.test_path for test in tests if test.is_wpt_print_reftest})
 
             tests_to_run = self._tests_to_run(tests, device_type=device_type)
             tests_to_run_by_device[device_type] = [test for test in tests_to_run if test not in aggregate_tests_to_run]
@@ -315,6 +318,7 @@ class Manager(object):
         else:
             should_run_pixel_test = True
 
+        expectations = self._expectations[(self._current_driver_name, device_type)]
         return TestInput(
             test_file,
             timeout=timeout,
@@ -322,6 +326,7 @@ class Manager(object):
             needs_servers=test_file.needs_any_server,
             should_dump_jsconsolelog_in_stderr=should_dump_jsconsolelog_in_stderr,
             should_run_pixel_test=should_run_pixel_test,
+            expected_results=frozenset(expectations.filtered_expectations_for_test(test_file.test_path, self._options.pixel_tests or bool(test_file.reference_files), self._options.world_leaks)),
         )
 
     def _test_is_slow(self, test_file, device_type):
@@ -372,7 +377,7 @@ class Manager(object):
         return True
 
     def run(self, args):
-        num_failed_uploads = 0
+        failed_upload_urls = []
 
         if self._options.test_list:
             for list_path in self._options.test_list:
@@ -380,6 +385,8 @@ class Manager(object):
                     _log.critical('')
                     _log.critical('--test-list file "{}" not found'.format(list_path))
                     return test_run_results.RunDetails(exit_code=-1)
+
+        self._port.warn_about_ignored_sanitizer_options()
 
         overall_initial_results = None
         overall_retry_results = None
@@ -449,6 +456,7 @@ class Manager(object):
                 _log.error("Build check failed")
                 return test_run_results.RunDetails(exit_code=-1)
 
+            test_times = self._previous_test_times()
             if self._options.clobber_old_results:
                 self._clobber_old_results()
 
@@ -459,7 +467,8 @@ class Manager(object):
             needs_web_platform_test_server = any(test.needs_wpt_server for tests in itervalues(tests_to_run_by_device) for test in tests)
             needs_websockets = any(test.needs_websocket_server for tests in itervalues(tests_to_run_by_device) for test in tests)
             self._runner = LayoutTestRunner(self._options, self._port, self._printer, self._results_directory,
-                                            needs_http=needs_http, needs_web_platform_test_server=needs_web_platform_test_server, needs_websockets=needs_websockets)
+                                            needs_http=needs_http, needs_web_platform_test_server=needs_web_platform_test_server, needs_websockets=needs_websockets,
+                                            test_times=test_times)
 
             initial_results = None
             retry_results = None
@@ -563,7 +572,7 @@ class Manager(object):
                     for hostname in self._options.report_urls:
                         self._printer.write_update('Uploading to {} ...'.format(hostname))
                         if not upload.upload(hostname, log_line_func=self._printer.writeln):
-                            num_failed_uploads += 1
+                            failed_upload_urls.append(hostname)
                         else:
                             all_uploads.append(upload)
                     self._printer.writeln('Uploads completed!')
@@ -631,9 +640,12 @@ class Manager(object):
                     for hostname in self._options.report_urls:
                         self._printer.write_update('Uploading archive to {} ...'.format(hostname))
                         if not upload.upload_archive(hostname, self._filesystem.open_binary_file_for_reading(archive + '.zip'), log_line_func=self._printer.writeln):
-                            num_failed_uploads += 1
+                            failed_upload_urls.append(hostname)
 
-        if num_failed_uploads:
+        if failed_upload_urls:
+            _log.error('{} to {} failed, exiting with status -1'.format(
+                pluralize(len(failed_upload_urls), 'upload'), ', '.join(sorted(set(failed_upload_urls)))))
+            result.failed_uploads = failed_upload_urls
             result.exit_code = -1
         return result
 
@@ -901,6 +913,18 @@ class Manager(object):
         for name, value in iteritems(stats):
             json_results_generator.add_path_to_trie(name, value, stats_trie)
         return stats_trie
+
+    def _previous_test_times(self):
+        path = self._filesystem.join(self._results_directory, 'stats.json')
+        if not self._filesystem.exists(path):
+            return None
+        try:
+            stats = json_results_generator.convert_trie_to_flat_paths(json_results_generator.load_json(self._filesystem, path))
+            # Each value is _stats_trie's (worker, test number, pid, test time, total time), in milliseconds.
+            return {test_name: value['results'][4] / 1000.0 for test_name, value in stats.items()}
+        except (OSError, AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
+            _log.warning('Could not read test times from {}: {}'.format(path, error))
+            return None
 
     def _print_expectation_line_for_test(self, format_string, test, device_type):
         test_path = test.test_path

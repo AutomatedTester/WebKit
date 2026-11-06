@@ -1179,13 +1179,13 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/GlobalObjectMethodTable.h
     runtime/HashMapHelper.h
     runtime/HasOwnPropertyCache.h
+    runtime/HasOwnPropertyCacheInlines.h
     runtime/ISO8601.h
     runtime/Identifier.h
     runtime/IdentifierInlines.h
     runtime/ImplementationVisibility.h
     runtime/ImportMap.h
     runtime/IndexingHeader.h
-    runtime/IndexingHeaderInlines.h
     runtime/IndexingType.h
     runtime/IndexingTypeInlines.h
     runtime/IndirectEvalExecutable.h
@@ -1382,7 +1382,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/PrototypeKey.h
     runtime/ProxyConstructor.h
     runtime/ProxyObject.h
-    runtime/ProxyRevoke.h
     runtime/PureNaN.h
     runtime/PutDirectIndexMode.h
     runtime/PutPropertySlot.h
@@ -1596,6 +1595,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/js/JSWebAssemblyMemory.h
     wasm/js/JSWebAssemblyModule.h
     wasm/js/JSWebAssemblyStreamingContext.h
+    wasm/js/JSWebAssemblySuspendingWrapper.h
     wasm/js/WebAssemblyPromising.h
     wasm/js/WebAssemblySuspending.h
     wasm/js/JSWebAssemblyTable.h
@@ -1629,9 +1629,7 @@ if (USE_INSPECTOR_SOCKET_SERVER)
     )
 endif ()
 
-# The corpse memory-analysis support is built on Mach task and corpse APIs, so
-# its headers have no content off Darwin and there is nothing to build or export.
-if (APPLE)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
     list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
         "${JAVASCRIPTCORE_DIR}/corpse"
     )
@@ -1909,14 +1907,13 @@ add_custom_target(JavaScriptCoreSharedScripts DEPENDS ${JavaScriptCore_SCRIPTS})
 add_dependencies(JavaScriptCore JavaScriptCoreSharedScripts ${JavaScriptCore_EXTRA_DEPENDENCIES})
 add_dependencies(JavaScriptCoreSharedScripts JSCBuiltins)
 
-# The corpse code is part of JavaScriptCoreTools, which ships as a static library used
-# only by tools for assisting in the development of JavaScriptCore and WebKit. This code
-# is not needed for JavaScriptCore and WebKit functionality as a browser engine. The
-# corpse code rely on Mach APIs which are only available on Apple platforms.
-if (APPLE)
-  add_subdirectory(corpse)
+if (ENABLE_JAVASCRIPTCORE_TOOLS)
+    # The corpse code is part of JavaScriptCoreTools, which ships as a static library used
+    # only by tools for assisting in the development of JavaScriptCore and WebKit. This code
+    # is not needed for JavaScriptCore and WebKit functionality as a browser engine.
+    add_subdirectory(corpse)
 endif ()
 
 if (ENABLE_JAVASCRIPT_SHELL)
-  add_subdirectory(shell)
+    add_subdirectory(shell)
 endif ()

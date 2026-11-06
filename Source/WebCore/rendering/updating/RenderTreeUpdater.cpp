@@ -45,13 +45,11 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderFlexibleBox.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderListItem.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
 #include "RenderObjectInlines.h"
-#include "RenderSVGInline.h"
 #include "RenderStyleConstants.h"
 #include "RenderText.h"
 #include "RenderTreeUpdaterGeneratedContent.h"
@@ -101,7 +99,7 @@ RenderTreeUpdater::RenderTreeUpdater(Document& document, Style::PostResolutionCa
 
 RenderTreeUpdater::~RenderTreeUpdater() = default;
 
-static RefPtr<Element> LEGACY_NODELETE findRenderingAncestor(Node& node)
+NODELETE static RefPtr<Element> findRenderingAncestor(Node& node)
 {
     for (SUPPRESS_UNCOUNTED_LOCAL auto& ancestor : composedTreeAncestors(node)) {
         if (ancestor.renderer())
@@ -112,7 +110,7 @@ static RefPtr<Element> LEGACY_NODELETE findRenderingAncestor(Node& node)
     return nullptr;
 }
 
-static RefPtr<ContainerNode> findRenderingRoot(ContainerNode& node)
+NODELETE static RefPtr<ContainerNode> findRenderingRoot(ContainerNode& node)
 {
     if (node.renderer())
         return &node;
@@ -645,24 +643,10 @@ void RenderTreeUpdater::createTextRenderer(Text& textNode, const Style::TextUpda
 
     textNode.setRenderer(textRenderer.get());
 
-    if (textUpdate && textUpdate->inheritedDisplayContentsStyle && *textUpdate->inheritedDisplayContentsStyle) {
-        // Wrap text renderer into anonymous inline so we can give it a style.
-        // This is to support "<div style='display:contents;color:green'>text</div>" type cases
-        auto wrapperStyle = Style::ComputedStyle::clone(**textUpdate->inheritedDisplayContentsStyle);
-        auto& parent = renderTreePosition.parent();
-        RenderPtr<RenderInline> newDisplayContentsAnonymousWrapper;
-        if (parent.isRenderSVGText() || parent.isRenderSVGInline())
-            newDisplayContentsAnonymousWrapper = WebCore::createRenderer<RenderSVGInline>(RenderObject::Type::SVGInline, protect(textNode.document()), WTF::move(wrapperStyle));
-        else
-            newDisplayContentsAnonymousWrapper = WebCore::createRenderer<RenderInline>(RenderObject::Type::Inline, protect(textNode.document()), WTF::move(wrapperStyle));
-        newDisplayContentsAnonymousWrapper->initializeStyle();
-        auto& displayContentsAnonymousWrapper = *newDisplayContentsAnonymousWrapper;
-        m_builder.attach(parent, WTF::move(newDisplayContentsAnonymousWrapper), renderTreePosition.nextSibling());
-
-        textRenderer->setInlineWrapperForDisplayContents(&displayContentsAnonymousWrapper);
-        m_builder.attach(displayContentsAnonymousWrapper, WTF::move(textRenderer));
-        return;
-    }
+    // Text inherits from its DOM parent, so it gets the style of a display: contents parent from the resolver.
+    // This supports "<div style='display:contents;color:green'>text</div>" type cases.
+    if (textUpdate && textUpdate->inheritedDisplayContentsStyle && *textUpdate->inheritedDisplayContentsStyle)
+        textRenderer->setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle::clone(**textUpdate->inheritedDisplayContentsStyle));
 
     m_builder.attach(renderTreePosition.parent(), WTF::move(textRenderer), renderTreePosition.nextSibling());
 
@@ -680,15 +664,10 @@ void RenderTreeUpdater::updateTextRenderer(Text& text, const Style::TextUpdate* 
     bool needsRenderer = textRendererIsNeeded(text);
 
     if (existingRenderer && textUpdate && textUpdate->inheritedDisplayContentsStyle) {
-        auto* existingWrapper = existingRenderer->inlineWrapperForDisplayContents();
-        auto& newStylePtr = *textUpdate->inheritedDisplayContentsStyle;
-        if (existingWrapper && newStylePtr) {
-            // Update wrapper style in place instead of teardown+recreate.
-            existingWrapper->setStyle(Style::ComputedStyle::clone(*newStylePtr));
-        } else if (existingWrapper || newStylePtr) {
-            tearDownTextRenderer(text, root, m_builder);
-            existingRenderer = nullptr;
-        }
+        if (auto& newStyle = *textUpdate->inheritedDisplayContentsStyle)
+            existingRenderer->setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle::clone(*newStyle));
+        else
+            existingRenderer->clearStyleInheritedFromDisplayContentsParent();
     }
 
     if (existingRenderer) {

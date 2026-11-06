@@ -188,10 +188,6 @@ const ValueUndefined  = constexpr JSValue::ValueUndefined
 const ValueNull       = constexpr JSValue::ValueNull
 const TagNumber       = constexpr JSValue::NumberTag
 const NotCellMask     = constexpr JSValue::NotCellMask
-if BIGINT32
-    const TagBigInt32 = constexpr JSValue::BigInt32Tag
-    const MaskBigInt32 = constexpr JSValue::BigInt32Mask
-end
 const LowestOfHighBits = constexpr JSValue::LowestOfHighBits
 
 if LARGE_TYPED_ARRAYS
@@ -2567,6 +2563,10 @@ end
 
 llintOpWithMetadata(op_call_varargs, OpCallVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_call_varargs, size, get, OpCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_call_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
+end)
+
+llintOpWithMetadata(op_call_varargs_with_spread, OpCallVarargsWithSpread, macro (size, get, dispatch, metadata, return)
+    doCallVarargs(op_call_varargs_with_spread, size, get, OpCallVarargsWithSpread, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs_with_spread, _llint_slow_path_call_varargs_with_spread, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
 
 llintOpWithMetadata(op_tail_call_varargs, OpTailCallVarargs, macro (size, get, dispatch, metadata, return)

@@ -34,11 +34,13 @@ class HTMLLegendElement final : public HTMLElement {
 public:
     static Ref<HTMLLegendElement> create(const QualifiedName&, Document&);
 
-    WEBCORE_EXPORT HTMLFormElement* LEGACY_NODELETE form() const;
+    NODELETE WEBCORE_EXPORT HTMLFormElement* form() const;
     RefPtr<HTMLFormElement> formForBindings() const;
 
 private:
     HTMLLegendElement(const QualifiedName&, Document&);
+
+    void descendantsChanged() final;
 };
 
 } // namespace WebCore

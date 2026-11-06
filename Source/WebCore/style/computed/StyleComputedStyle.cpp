@@ -445,9 +445,11 @@ float ComputedStyle::usedStrokeWidth(const IntSize& viewportSize) const
     );
 }
 
-WebCore::Color ComputedStyle::usedStrokeColor() const
+WebCore::Color ComputedStyle::usedStrokeColor(StyleColorOptionsPurpose purpose) const
 {
-    return hasExplicitlySetStrokeColor() ? visitedDependentStrokeColor() : visitedDependentTextStrokeColor();
+    auto strokeColor = strokeColorResolver().visitedDependentResolveColor({ }, purpose);
+    auto textStrokeColor = textStrokeColorResolver().visitedDependentResolveColor({ }, purpose);
+    return hasExplicitlySetStrokeColor() ? strokeColor : textStrokeColor;
 }
 
 WebCore::Color ComputedStyle::usedStrokeColorApplyingColorFilter() const
@@ -526,24 +528,24 @@ WebCore::Color ComputedStyle::usedAccentColor(OptionSet<StyleColorOptions> style
     );
 }
 
-Style::LineWidth ComputedStyle::usedColumnRuleWidth() const
+Style::LineWidth effectiveColumnRuleWidth(const ComputedStyle& style)
 {
-    if (!isVisibleBorderStyle(columnRuleStyle()))
+    if (!isVisibleBorderStyle(style.columnRuleStyle()))
         return 0_css_px;
-    return columnRuleWidth();
+    return style.columnRuleWidth();
 }
 
-Style::UsedOutlineOffset ComputedStyle::usedOutlineOffset() const
+Style::UsedOutlineOffset effectiveOutlineOffset(const ComputedStyle& style)
 {
-    auto& outline = this->outline();
+    auto& outline = style.outline();
     if (outline.outlineOffset.isInset())
-        return Style::Length<> { -usedOutlineWidth().unresolvedValue() };
+        return Style::Length<> { -effectiveOutlineWidth(style).unresolvedValue() };
     return *outline.outlineOffset.tryLength();
 }
 
-Style::LineWidth ComputedStyle::usedOutlineWidth() const
+Style::LineWidth effectiveOutlineWidth(const ComputedStyle& style)
 {
-    auto& outline = this->outline();
+    auto& outline = style.outline();
     if (static_cast<OutlineStyle>(outline.outlineStyle) == OutlineStyle::None)
         return 0_css_px;
     if (static_cast<OutlineStyle>(outline.outlineStyle) == OutlineStyle::Auto)
@@ -551,9 +553,9 @@ Style::LineWidth ComputedStyle::usedOutlineWidth() const
     return outline.outlineWidth;
 }
 
-float ComputedStyle::usedOutlineSize(Style::ZoomFactor zoom, float deviceScaleFactor) const
+float effectiveOutlineSize(const ComputedStyle& style, Style::ZoomFactor zoom, float deviceScaleFactor)
 {
-    return std::max(0.0f, Style::evaluate<float>(usedOutlineWidth(), zoom, deviceScaleFactor) + Style::evaluate<float>(usedOutlineOffset(), zoom, deviceScaleFactor));
+    return std::max(0.0f, Style::evaluate<float>(effectiveOutlineWidth(style), zoom, deviceScaleFactor) + Style::evaluate<float>(effectiveOutlineOffset(style), zoom, deviceScaleFactor));
 }
 
 BlendMode ComputedStyle::usedBlendMode() const
@@ -574,9 +576,9 @@ Color ComputedStyle::usedBackgroundColor() const
     return backgroundColor();
 }
 
-WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColor() const
+WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColor(StyleColorOptionsPurpose purpose) const
 {
-    return ColorResolver { *this }.colorResolvingCurrentColor(usedBackgroundColor());
+    return ColorResolver { *this }.resolveColor(usedBackgroundColor(), purpose);
 }
 
 WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColorApplyingColorFilter() const
@@ -584,15 +586,15 @@ WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColorApplyingCo
     return ColorResolver { *this }.colorResolvingCurrentColorApplyingColorFilter(usedBackgroundColor());
 }
 
-WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColor(OptionSet<PaintBehavior> paintBehavior) const
+WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColor(OptionSet<PaintBehavior> paintBehavior, StyleColorOptionsPurpose purpose) const
 {
     auto colorResolver = backgroundColorResolver();
-    auto unvisitedLinkColor = usedBackgroundColorResolvingCurrentColor();
+    auto unvisitedLinkColor = usedBackgroundColorResolvingCurrentColor(purpose);
 
     if (colorResolver.visitedDependentShouldReturnUnvisitedLinkColor(paintBehavior))
         return unvisitedLinkColor;
 
-    auto visitedLinkColor = visitedLinkBackgroundColorResolvingCurrentColor();
+    auto visitedLinkColor = colorResolver.resolveVisitedLinkColor(purpose);
     if (ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::BackgroundColor>>::excludesVisitedLinkColor(visitedLinkColor))
         return unvisitedLinkColor;
 
@@ -602,9 +604,18 @@ WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColor(OptionSet<Pain
 
 WebCore::Color ComputedStyle::visitedDependentUsedBackgroundColorApplyingColorFilter(OptionSet<PaintBehavior> paintBehavior) const
 {
-    auto color = visitedDependentUsedBackgroundColor(paintBehavior);
-    appleColorFilter().transformColor(color);
-    return color;
+    auto colorResolver = backgroundColorResolver();
+    auto unvisitedLinkColor = usedBackgroundColorResolvingCurrentColorApplyingColorFilter();
+
+    if (colorResolver.visitedDependentShouldReturnUnvisitedLinkColor(paintBehavior))
+        return unvisitedLinkColor;
+
+    auto visitedLinkColor = visitedLinkBackgroundColorResolvingCurrentColorApplyingColorFilter();
+    if (ColorPropertyTraits<PropertyNameConstant<CSSPropertyID::BackgroundColor>>::excludesVisitedLinkColor(visitedLinkColor))
+        return unvisitedLinkColor;
+
+    // Take the alpha from the unvisited color, but get the RGB values from the visited color.
+    return visitedLinkColor.colorWithAlpha(unvisitedLinkColor.alphaAsFloat());
 }
 
 // MARK: - Derived Values

@@ -28,6 +28,7 @@
 
 #import "APIConversions.h"
 #import "BindGroup.h"
+#import "RenderBundleEncoder.h"
 #import "TextureOrTextureView.h"
 #import <wtf/TZoneMallocInlines.h>
 
@@ -51,7 +52,7 @@ namespace WebGPU::Metal {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderBundle);
 
-RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, Vector<WebGPU::Metal::BindableResources>&& bindableResources, RefPtr<RenderBundleEncoder> encoder, std::span<const WGPUTextureFormat> colorFormats, WGPUTextureFormat depthStencilFormat, uint32_t sampleCount, bool depthReadOnly, bool stencilReadOnly, uint64_t commandCount, bool makeSubmitInvalid, HashSet<RefPtr<const BindGroup>>&& bindGroups, Device& device)
+RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, Vector<WebGPU::Metal::BindableResources>&& bindableResources, RefPtr<RenderBundleEncoder> encoder, std::span<const std::optional<WebGPU::TextureFormat>> colorFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, uint32_t sampleCount, bool depthReadOnly, bool stencilReadOnly, uint64_t commandCount, bool makeSubmitInvalid, HashSet<RefPtr<const BindGroup>>&& bindGroups, Device& device)
     : m_device(device)
     , m_renderBundleEncoder(encoder)
     , m_renderBundlesResources(resources)
@@ -65,6 +66,11 @@ RenderBundle::RenderBundle(NSArray<RenderBundleICBWithResources*> *resources, Ve
     , m_commandCount(commandCount)
     , m_makeSubmitInvalid(makeSubmitInvalid)
 {
+    // This bundle's indirect command buffer references these bind groups' argument buffers, and its
+    // residency snapshot is frozen here. See BindGroup::updateExternalTextures().
+    for (RefPtr bindGroup : m_bindGroups)
+        bindGroup->addRenderBundleConsumer();
+
     ASSERT(m_renderBundleEncoder || m_renderBundlesResources);
 }
 
@@ -74,7 +80,11 @@ RenderBundle::RenderBundle(Device& device, NSString* errorString)
 {
 }
 
-RenderBundle::~RenderBundle() = default;
+RenderBundle::~RenderBundle()
+{
+    for (RefPtr bindGroup : m_bindGroups)
+        bindGroup->removeRenderBundleConsumer();
+}
 
 bool RenderBundle::isValid() const
 {
@@ -105,8 +115,11 @@ void RenderBundle::updateMinMaxDepths(float minDepth, float maxDepth)
     m_minDepth = minDepth;
     m_maxDepth = maxDepth;
     std::array<float, 2> twoFloats = { m_minDepth, m_maxDepth };
-    for (RenderBundleICBWithResources* icb in m_renderBundlesResources)
+    for (RenderBundleICBWithResources* icb in m_renderBundlesResources) {
         m_device->getQueue()->writeBuffer(icb.fragmentDynamicOffsetsBuffer, 0, asWritableBytes(std::span(twoFloats)));
+        for (auto headerOffset : icb.fragmentDynamicOffsetsHeaderOffsets)
+            m_device->getQueue()->writeBuffer(icb.fragmentDynamicOffsetsBuffer, headerOffset, asWritableBytes(std::span(twoFloats)));
+    }
 }
 
 uint64_t RenderBundle::drawCount() const
@@ -127,15 +140,15 @@ bool RenderBundle::validateRenderPass(bool depthReadOnly, bool stencilReadOnly, 
 
     uint32_t defaultRasterSampleCount = 0;
     for (size_t i = 0, colorFormatCount = std::max(colorAttachmentViews.size(), m_colorFormats.size()); i < colorFormatCount; ++i) {
-        auto descriptorColorFormat = i < m_colorFormats.size() ? m_colorFormats[i] : WGPUTextureFormat_Undefined;
+        auto descriptorColorFormat = i < m_colorFormats.size() ? m_colorFormats[i] : std::nullopt;
         if (i >= colorAttachmentViews.size()) {
-            if (descriptorColorFormat == WGPUTextureFormat_Undefined)
+            if (!descriptorColorFormat)
                 continue;
             return false;
         }
         auto& attachmentView = colorAttachmentViews[i];
         if (!attachmentView) {
-            if (descriptorColorFormat == WGPUTextureFormat_Undefined)
+            if (!descriptorColorFormat)
                 continue;
             return false;
         }
@@ -146,7 +159,7 @@ bool RenderBundle::validateRenderPass(bool depthReadOnly, bool stencilReadOnly, 
 
     if (depthStencilView) {
         if (!*depthStencilView) {
-            if (m_depthStencilFormat != WGPUTextureFormat_Undefined)
+            if (m_depthStencilFormat)
                 return false;
         } else {
             auto& texture = *depthStencilView;
@@ -154,7 +167,7 @@ bool RenderBundle::validateRenderPass(bool depthReadOnly, bool stencilReadOnly, 
                 return false;
             defaultRasterSampleCount = texture.sampleCount();
         }
-    } else if (m_depthStencilFormat != WGPUTextureFormat_Undefined)
+    } else if (m_depthStencilFormat)
         return false;
 
     if (m_sampleCount != defaultRasterSampleCount)
@@ -187,21 +200,36 @@ bool RenderBundle::rebindSamplersIfNeeded() const
     return result;
 }
 
+void RenderBundle::releaseDestroyedResources()
+{
+    if (!replaceDestroyedResourcesWithPlaceholders(m_resources))
+        return;
+
+    m_makeSubmitInvalid = true;
+
+    if (RefPtr renderBundleEncoder = m_renderBundleEncoder)
+        renderBundleEncoder->releaseDestroyedResources();
+}
+
 } // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuRenderBundleAddRef(WGPURenderBundle renderBundle)
+NODELETE void wgpuRenderBundleAddRef(WGPURenderBundle renderBundle)
 {
     WebGPU::Metal::fromAPI(renderBundle).ref();
 }
 
 void wgpuRenderBundleRelease(WGPURenderBundle renderBundle)
 {
-    WebGPU::Metal::fromAPI(renderBundle).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(renderBundle).deref();
+    }
 }
 
 void wgpuRenderBundleSetLabel(WGPURenderBundle renderBundle, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(renderBundle))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(renderBundle))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

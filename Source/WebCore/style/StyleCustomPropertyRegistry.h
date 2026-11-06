@@ -41,8 +41,8 @@ class CustomPropertyRegistry {
 public:
     CustomPropertyRegistry(Scope&);
 
-    const CSSRegisteredCustomProperty* get(const AtomString&) const;
-    bool isInherited(const AtomString&) const;
+    NODELETE const CSSRegisteredCustomProperty* get(const AtomString&) const;
+    NODELETE bool isInherited(const AtomString&) const;
 
     bool registerFromAPI(CSSRegisteredCustomProperty&&);
     void registerFromStylesheet(const StyleRuleProperty::Descriptor&);

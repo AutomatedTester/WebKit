@@ -247,7 +247,7 @@ bool StyledElement::setInlineStyleProperty(CSSPropertyID propertyID, Ref<CSSValu
 
 bool StyledElement::setInlineStyleProperty(CSSPropertyID propertyID, const String& value, IsImportant important, bool* didFailParsing)
 {
-    bool changes = ensureMutableInlineStyle()->setProperty(propertyID, value, CSSParserContext(document()), important, didFailParsing);
+    bool changes = ensureMutableInlineStyle()->setProperty(propertyID, value, CSSParserContext(protect(document())), important, didFailParsing);
     if (changes)
         inlineStyleChanged();
     return changes;
@@ -255,7 +255,7 @@ bool StyledElement::setInlineStyleProperty(CSSPropertyID propertyID, const Strin
 
 bool StyledElement::setInlineStyleCustomProperty(const AtomString& property, const String& value, IsImportant important)
 {
-    bool changes = ensureMutableInlineStyle()->setCustomProperty(property.string(), value, CSSParserContext(document()), important);
+    bool changes = ensureMutableInlineStyle()->setCustomProperty(property.string(), value, CSSParserContext(protect(document())), important);
     if (changes)
         inlineStyleChanged();
     return changes;
@@ -328,8 +328,7 @@ const ImmutableStyleProperties* StyledElement::presentationalHintStyle() const
     if (!elementData())
         return nullptr;
     if (elementData()->presentationalHintStyleIsDirty()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<StyledElement&>(*this).rebuildPresentationalHintStyle();
+        const_cast<StyledElement&>(*this).rebuildPresentationalHintStyle();
     }
     return elementData()->presentationalHintStyle();
 }

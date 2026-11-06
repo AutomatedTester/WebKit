@@ -46,6 +46,10 @@ namespace WebKit {
 
 class RemoteRenderingBackendProxy;
 class RemoteImageBufferProxyFlushFence;
+#if PLATFORM(COCOA)
+class DisplayBufferDisplayDelegate;
+class DisplayBufferFence;
+#endif
 
 class RemoteImageBufferProxy final : public WebCore::ImageBuffer {
     WTF_MAKE_TZONE_ALLOCATED(RemoteImageBufferProxy);
@@ -68,7 +72,7 @@ public:
     static Ref<RemoteImageBufferProxy> createForSerializedBuffer(const WebCore::ImageBuffer::Parameters&, std::unique_ptr<WebCore::ImageBufferBackend>&&, RemoteRenderingBackendProxy&);
 
     ~RemoteImageBufferProxy();
-    bool LEGACY_NODELETE isValid() const;
+    NODELETE bool isValid() const;
 
     void disconnect();
 
@@ -109,8 +113,6 @@ private:
 
     RefPtr<ImageBuffer> sinkIntoBufferForDifferentThread() final;
 
-    RefPtr<WebCore::NativeImage> filteredNativeImage(WebCore::Filter&) final;
-
     WebCore::GraphicsContext& context() const final;
 
     RefPtr<WebCore::PixelBuffer> getPixelBuffer(const WebCore::PixelBufferFormat& destinationFormat, const WebCore::IntRect& srcRect, const WebCore::ImageBufferAllocator&) const final;
@@ -127,7 +129,13 @@ private:
     void flushDrawingContextImpl() const;
     std::optional<WebCore::RenderingMode> getEffectiveRenderingModeForTesting() const final;
 
-    void LEGACY_NODELETE assertDispatcherIsCurrent() const;
+    NODELETE void assertDispatcherIsCurrent() const;
+    void prepareForDisplay() final;
+#if PLATFORM(COCOA)
+    RefPtr<WebCore::GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() final;
+    void releaseLayerContentsDisplayDelegate() final;
+#endif
+
     template<typename T> void send(T&& message) const;
     template<typename T> auto sendSync(T&& message) const;
     RefPtr<IPC::StreamClientConnection> connection() const;
@@ -138,6 +146,10 @@ private:
     void ensureBackendHandle() const;
 
     mutable RefPtr<RemoteImageBufferProxyFlushFence> m_pendingFlush;
+#if PLATFORM(COCOA)
+    RefPtr<DisplayBufferDisplayDelegate> m_displayDelegate;
+    RefPtr<DisplayBufferFence> m_displayBufferFence;
+#endif
     mutable RemoteGraphicsContextProxy m_context;
     WeakPtr<RemoteRenderingBackendProxy> m_renderingBackend;
 };

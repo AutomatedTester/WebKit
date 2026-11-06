@@ -45,11 +45,9 @@
 #import "WebProcess.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/DebugPageOverlays.h>
-#import <WebCore/DocumentView.h>
 #import <WebCore/FrameInlines.h>
 #import <WebCore/LocalFrame.h>
 #import <WebCore/LocalFrameView.h>
-#import <WebCore/Page.h>
 #import <WebCore/PageOverlayController.h>
 #import <WebCore/RenderLayerCompositor.h>
 #import <WebCore/RenderView.h>
@@ -168,13 +166,6 @@ void RemoteLayerTreeDrawingArea::removeRootFrame(WebCore::FrameIdentifier frameI
     ASSERT_UNUSED(count, count == 1);
 }
 
-bool RemoteLayerTreeDrawingArea::hasRootFrame(WebCore::FrameIdentifier frameID) const
-{
-    return m_rootLayers.containsIf([frameID](const auto& layer) {
-        return layer.frameID == frameID;
-    });
-}
-
 void RemoteLayerTreeDrawingArea::setRootCompositingLayer(WebCore::Frame& frame, GraphicsLayer* rootGraphicsLayer)
 {
     for (auto& rootLayer : borrow(m_rootLayers)) {
@@ -244,18 +235,6 @@ DelegatedScrollingMode RemoteLayerTreeDrawingArea::delegatedScrollingMode() cons
     return DelegatedScrollingMode::DelegatedToNativeScrollView;
 }
 
-static bool hasNeverPainted(WebPage& webPage)
-{
-    RefPtr page = webPage.corePage();
-    if (!page)
-        return false;
-    for (auto& rootFrame : page->rootFrames()) {
-        if (RefPtr view = rootFrame->view(); view && view->hasEverPainted())
-            return false;
-    }
-    return true;
-}
-
 void RemoteLayerTreeDrawingArea::setLayerTreeStateIsFrozen(bool isFrozen)
 {
     if (m_isRenderingSuspended == isFrozen)
@@ -265,19 +244,10 @@ void RemoteLayerTreeDrawingArea::setLayerTreeStateIsFrozen(bool isFrozen)
 
     m_isRenderingSuspended = isFrozen;
 
-    if (m_isRenderingSuspended) {
-        m_shouldStartRenderingUpdateBeforeDueTimers = false;
-        return;
-    }
-
-    m_shouldStartRenderingUpdateBeforeDueTimers = hasNeverPainted(protect(m_webPage)) && !m_waitingForBackingStoreSwap;
-
-    bool hasPendingRenderingUpdate = std::exchange(m_hasDeferredRenderingUpdate, false);
-    if (m_shouldStartRenderingUpdateBeforeDueTimers && m_isScheduled && !m_scheduleRenderingTimer.isActive())
-        hasPendingRenderingUpdate = true;
-
-    if (hasPendingRenderingUpdate)
+    if (!m_isRenderingSuspended && m_hasDeferredRenderingUpdate) {
+        m_hasDeferredRenderingUpdate = false;
         startRenderingUpdateTimer();
+    }
 }
 
 void RemoteLayerTreeDrawingArea::updateRenderingWithForcedRepaint()
@@ -319,7 +289,7 @@ WebCore::FloatRect RemoteLayerTreeDrawingArea::exposedContentRect() const
     if (!frameView)
         return FloatRect();
 
-    return frameView->exposedContentRect();
+    return frameView->exposedContentRect().raw();
 }
 
 void RemoteLayerTreeDrawingArea::setExposedContentRect(const FloatRect& exposedContentRect)
@@ -327,10 +297,10 @@ void RemoteLayerTreeDrawingArea::setExposedContentRect(const FloatRect& exposedC
     RefPtr frameView = protect(m_webPage)->localMainFrameView();
     if (!frameView)
         return;
-    if (frameView->exposedContentRect() == exposedContentRect)
+    if (frameView->exposedContentRect() == inContentsSpace(exposedContentRect))
         return;
 
-    frameView->setExposedContentRect(exposedContentRect);
+    frameView->setExposedViewRect(frameView->contentsToView(inContentsSpace(exposedContentRect)));
     triggerRenderingUpdate();
 }
 
@@ -340,10 +310,7 @@ void RemoteLayerTreeDrawingArea::startRenderingUpdateTimer()
         return;
     if (!m_updateStartTime)
         m_updateStartTime = MonotonicTime::now();
-    if (m_shouldStartRenderingUpdateBeforeDueTimers)
-        m_updateRenderingTimer.startOneShotBeforeDueTimers();
-    else
-        m_updateRenderingTimer.startOneShot(0_s);
+    m_updateRenderingTimer.startOneShot(0_s);
 }
 
 void RemoteLayerTreeDrawingArea::triggerRenderingUpdate()
@@ -367,8 +334,6 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap = true;
         return;
     }
-
-    m_shouldStartRenderingUpdateBeforeDueTimers = false;
 
     // This function is not reentrant, e.g. a rAF callback may force repaint.
     if (m_inUpdateRendering)
@@ -409,7 +374,10 @@ void RemoteLayerTreeDrawingArea::updateRendering()
 
     // FIXME: Minimize these transactions if nothing changed.
     auto transactionID = takeNextTransactionID();
-    send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(transactionID));
+    send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(transactionID, webPage->identifier()));
+
+    bool samplesFixedContainerEdges = webPage->samplesFixedContainerEdges();
+    Vector<WebCore::FrameIdentifier> rootsWithLayerChanges;
 
     auto transactions = WTF::map(m_rootLayers, [&](RootLayerInfo& rootLayer) -> RemoteLayerTreeCommitBundle::RootFrameData {
         backingStoreCollection->willBuildTransaction();
@@ -421,6 +389,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         m_remoteLayerTreeContext->buildTransaction(layerTransaction, *layer, rootLayer.frameID);
 
         webPage->willCommitLayerTree(layerTransaction, rootLayer.frameID);
+
+        if (samplesFixedContainerEdges && layerTransaction.hasAnyLayerChanges())
+            rootsWithLayerChanges.append(rootLayer.frameID);
 
         m_waitingForBackingStoreSwap = true;
 
@@ -434,10 +405,12 @@ void RemoteLayerTreeDrawingArea::updateRendering()
         return { WTF::move(layerTransaction), WTF::move(scrollingTransaction) };
     });
 
+    webPage->serviceCanvasPaintEvents();
+
     for (auto& transaction : borrow(transactions))
         backingStoreCollection->willCommitLayerTree(CheckedRef { transaction.first });
 
-    RemoteLayerTreeCommitBundle bundle { WTF::move(transactions), { WTF::move(m_pendingCallbackIDs), protect(webPage->corePage())->renderTreeSize() }, std::nullopt, std::nullopt, transactionID };
+    RemoteLayerTreeCommitBundle bundle { WTF::move(transactions), { WTF::move(m_pendingCallbackIDs), protect(webPage->corePage())->renderTreeSize() }, std::nullopt, std::nullopt, transactionID, webPage->identifier() };
 
     if (webPage->localMainFrame()) {
         bundle.mainFrameData = MainFrameData { };
@@ -450,6 +423,9 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     }
 
     bundle.editorState = webPage->editorStateIfUpdateNeeded();
+
+    if (samplesFixedContainerEdges)
+        bundle.fixedContainerEdges = webPage->sampleFixedContainerEdges(rootsWithLayerChanges);
 
     bundle.startTime = *std::exchange(m_updateStartTime, std::nullopt);
 
@@ -467,7 +443,7 @@ void RemoteLayerTreeDrawingArea::updateRendering()
 
     m_backingStoreFlusher->markHasPendingFlush();
 
-    send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyFlushingLayerTree(transactionID));
+    send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyFlushingLayerTree(transactionID, webPage->identifier()));
 
     auto pageID = webPage->identifier();
     m_commitQueue->dispatch([backingStoreFlusher = m_backingStoreFlusher, commitEncoder = WTF::move(commitEncoder), flushers = WTF::move(flushers), pageID] () mutable {
@@ -505,12 +481,6 @@ void RemoteLayerTreeDrawingArea::displayDidRefresh(MonotonicTime start)
 
     auto wasWaitingForBackingStoreSwap = std::exchange(m_waitingForBackingStoreSwap, false);
 
-    if (!WebProcess::singleton().shouldUseRemoteRenderingFor(WebCore::RenderingPurpose::DOM)) {
-        // This empty transaction serves to trigger CA's garbage collection of IOSurfaces. See <rdar://problem/16110687>
-        [CATransaction begin];
-        [CATransaction commit];
-    }
-
     if (m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap || (m_isScheduled && !m_scheduleRenderingTimer.isActive())) {
         m_updateStartTime = start;
         triggerRenderingUpdate();
@@ -519,7 +489,7 @@ void RemoteLayerTreeDrawingArea::displayDidRefresh(MonotonicTime start)
     } else if (wasWaitingForBackingStoreSwap && m_updateRenderingTimer.isActive())
         m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap = true;
     else
-        send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(std::nullopt));
+        send(Messages::RemoteLayerTreeDrawingAreaProxy::NotifyPendingCommitLayerTree(std::nullopt, protect(m_webPage)->identifier()));
 }
 
 auto RemoteLayerTreeDrawingArea::rootLayerInfoWithFrameIdentifier(WebCore::FrameIdentifier frameID) -> RootLayerInfo*

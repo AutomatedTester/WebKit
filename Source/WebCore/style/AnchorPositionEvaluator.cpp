@@ -40,7 +40,6 @@
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
 #include "RenderObjectInlines.h"
@@ -403,7 +402,7 @@ static const ScopedName& implicitAnchorElementName()
     return name;
 }
 
-static BoxAxis LEGACY_NODELETE mapInsetPropertyToPhysicalAxis(CSSPropertyID id, const WritingMode writingMode)
+NODELETE static BoxAxis mapInsetPropertyToPhysicalAxis(CSSPropertyID id, const WritingMode writingMode)
 {
     switch (id) {
     case CSSPropertyID::Left:
@@ -424,7 +423,7 @@ static BoxAxis LEGACY_NODELETE mapInsetPropertyToPhysicalAxis(CSSPropertyID id, 
     }
 }
 
-static LogicalBoxAxis LEGACY_NODELETE mapInsetPropertyToLogicalAxis(CSSPropertyID id, const WritingMode writingMode)
+NODELETE static LogicalBoxAxis mapInsetPropertyToLogicalAxis(CSSPropertyID id, const WritingMode writingMode)
 {
     switch (id) {
     case CSSPropertyID::Left:
@@ -448,7 +447,7 @@ static LogicalBoxAxis LEGACY_NODELETE mapInsetPropertyToLogicalAxis(CSSPropertyI
 // Physical sides (left/right/top/bottom) can only be used in certain inset properties. "For example,
 // left is usable in left, right, or the logical inset properties that refer to the horizontal axis."
 // See: https://drafts.csswg.org/css-anchor-position-1/#typedef-anchor-side
-static bool LEGACY_NODELETE anchorSideMatchesInsetProperty(CSSValueID anchorSideID, BoxAxis physicalAxis)
+NODELETE static bool anchorSideMatchesInsetProperty(CSSValueID anchorSideID, BoxAxis physicalAxis)
 {
     switch (anchorSideID) {
     case CSSValueID::Inside:
@@ -476,8 +475,8 @@ static LayoutRect boxBoundingBoxInContainer(const RenderBoxModelObject& box, con
 {
     bool wasFixed = false;
     auto localRect = [&]() -> LayoutRect {
-        if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(&box))
-            return inlineBox->borderBoxRectInContainer();
+        if (box.isInlineBox())
+            return box.borderBoxRectInContainer();
         return box.borderBoundingBox();
     }();
     // FIXME: figure out if OverscrollClamp is still needed.
@@ -599,7 +598,7 @@ LayoutRect AnchorPositionEvaluator::computeAnchorRectRelativeToContainingBlock(C
     return anchorBox;
 }
 
-static bool inline LEGACY_NODELETE isInsetPropertyContainerStartSide(CSSPropertyID insetPropertyID, PositionedLayoutConstraints& constraints)
+NODELETE static bool inline isInsetPropertyContainerStartSide(CSSPropertyID insetPropertyID, PositionedLayoutConstraints& constraints)
 {
     switch (insetPropertyID) {
     case CSSPropertyID::Left:
@@ -624,7 +623,7 @@ static bool inline LEGACY_NODELETE isInsetPropertyContainerStartSide(CSSProperty
     }
 }
 
-static CSSPropertyID LEGACY_NODELETE getOppositeInset(CSSPropertyID propertyID)
+NODELETE static CSSPropertyID getOppositeInset(CSSPropertyID propertyID)
 {
     switch (propertyID) {
     case CSSPropertyID::Left:
@@ -804,8 +803,7 @@ CheckedPtr<RenderBoxModelObject> AnchorPositionEvaluator::findAnchorForAnchorFun
     if (!isValid())
         return { };
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST Styleable styleable { *const_cast<Element*>(builderState.element()), style.pseudoElementIdentifier() };
+    Styleable styleable { *const_cast<Element*>(builderState.element()), style.pseudoElementIdentifier() };
 
     // PseudoElement nodes are created on-demand by render tree builder so don't work as keys here.
     auto& anchorPositionedStates = *builderState.anchorPositionedStates();
@@ -914,7 +912,7 @@ std::optional<double> AnchorPositionEvaluator::evaluate(BuilderState& builderSta
 
 // Returns the default anchor size dimension to use when it is not specified in
 // anchor-size(). This matches the axis of the property that anchor-size() is used in.
-static AnchorSizeDimension LEGACY_NODELETE defaultDimensionForPropertyID(CSSPropertyID propertyID)
+NODELETE static AnchorSizeDimension defaultDimensionForPropertyID(CSSPropertyID propertyID)
 {
     switch (propertyID) {
     case CSSPropertyID::Width:
@@ -960,7 +958,7 @@ static AnchorSizeDimension LEGACY_NODELETE defaultDimensionForPropertyID(CSSProp
 }
 
 // Convert anchor size dimension to the physical dimension (width or height).
-static BoxAxis LEGACY_NODELETE anchorSizeDimensionToPhysicalDimension(AnchorSizeDimension dimension, const Style::ComputedStyle& style, const Style::ComputedStyle& containerStyle)
+NODELETE static BoxAxis anchorSizeDimensionToPhysicalDimension(AnchorSizeDimension dimension, const Style::ComputedStyle& style, const Style::ComputedStyle& containerStyle)
 {
     switch (dimension) {
     case AnchorSizeDimension::Width:
@@ -1474,7 +1472,7 @@ bool AnchorPositionEvaluator::isLayoutTimeAnchorPositioned(const Style::Computed
     return style.justifySelf().isAnchorCenter() || style.alignSelf().isAnchorCenter();
 }
 
-static CSSPropertyID LEGACY_NODELETE flipHorizontal(CSSPropertyID propertyID)
+NODELETE static CSSPropertyID flipHorizontal(CSSPropertyID propertyID)
 {
     switch (propertyID) {
     case CSSPropertyID::Left:
@@ -1490,7 +1488,7 @@ static CSSPropertyID LEGACY_NODELETE flipHorizontal(CSSPropertyID propertyID)
     }
 }
 
-static CSSPropertyID LEGACY_NODELETE flipVertical(CSSPropertyID propertyID)
+NODELETE static CSSPropertyID flipVertical(CSSPropertyID propertyID)
 {
     switch (propertyID) {
     case CSSPropertyID::Top:

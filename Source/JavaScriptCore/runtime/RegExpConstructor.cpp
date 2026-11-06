@@ -177,7 +177,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpConstructorEscape, (JSGlobalObject* globalObject,
         throwOutOfMemoryError(globalObject, scope);
         return { };
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, builder.toString())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(builder).toString())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(regExpConstructorDollar, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName))
@@ -275,7 +275,7 @@ JSC_DEFINE_CUSTOM_SETTER(setRegExpConstructorMultiline, (JSGlobalObject* globalO
     return true;
 }
 
-static inline bool LEGACY_NODELETE areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
+NODELETE static inline bool areLegacyFeaturesEnabled(JSGlobalObject* globalObject, JSValue newTarget)
 {
     if (!newTarget)
         return true;
@@ -298,8 +298,11 @@ inline OptionSet<Yarr::Flags> toFlags(JSGlobalObject* globalObject, JSValue flag
     if (flags.isUndefined())
         return { };
     
-    auto result = Yarr::parseFlags(flags.toWTFString(globalObject));
+    auto* string = flags.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto result = Yarr::parseFlags(view);
     if (!result) {
         throwSyntaxError(globalObject, scope, "Invalid flags supplied to RegExp constructor."_s);
         return { };

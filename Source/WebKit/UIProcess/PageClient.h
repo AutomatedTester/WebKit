@@ -115,6 +115,7 @@ class SecurityOrigin;
 namespace WebCore {
 class Color;
 class ColorSpace;
+class CornerRadii;
 class Cursor;
 class FloatQuad;
 class FloatRect;
@@ -524,10 +525,11 @@ public:
     virtual bool effectiveAppearanceIsDark() const { return false; }
     virtual bool effectiveUserInterfaceLevelIsElevated() const { return false; }
 
+#if !PLATFORM(COCOA)
     virtual void enterAcceleratedCompositingMode(const LayerTreeContext&) = 0;
     virtual void exitAcceleratedCompositingMode() = 0;
     virtual void updateAcceleratedCompositingMode(const LayerTreeContext&) = 0;
-    virtual void didFirstLayerFlush(const LayerTreeContext&) { }
+#endif
 
     virtual void takeFocus(WebCore::FocusDirection) { }
 
@@ -576,7 +578,7 @@ public:
 
 #if PLATFORM(COCOA)
     virtual void didCommitLayerTree(const RemoteLayerTreeTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&) = 0;
-    virtual void didCommitMainFrameData(const MainFrameData&) = 0;
+    virtual void didUpdateFixedContainerEdges(const WebCore::FixedContainerEdges&) = 0;
     virtual void layerTreeCommitComplete() { }
 
 #if HAVE(NSREFRESHCONTROLLER)
@@ -601,7 +603,7 @@ public:
 
 #if ENABLE(TWO_PHASE_CLICKS)
     virtual void commitPotentialTapFailed() = 0;
-    virtual void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling) = 0;
+    virtual void didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color&, const Vector<WebCore::FloatQuad>& highlightedQuads, WebCore::CornerRadii&&, bool nodeHasBuiltInClickHandling) = 0;
     virtual bool isPotentialTapInProgress() const = 0;
     virtual void disableDoubleTapGesturesDuringTapIfNecessary(WebKit::TapIdentifier) = 0;
     virtual void handleSmartMagnificationInformationForPotentialTap(WebKit::TapIdentifier, const WebCore::FloatRect& renderRect, bool fitEntireRect, double viewportMinimumScale, double viewportMaximumScale, bool nodeIsRootLevel, bool nodeIsPluginElement) = 0;
@@ -707,6 +709,8 @@ public:
     virtual void underPageBackgroundColorDidChange() { }
     virtual void sampledPageTopColorWillChange() { }
     virtual void sampledPageTopColorDidChange() { }
+    virtual void effectivePageAppearanceWillChange() { }
+    virtual void effectivePageAppearanceDidChange() { }
     virtual void didChangeBackgroundColor() = 0;
     virtual void isPlayingAudioWillChange() = 0;
     virtual void isPlayingAudioDidChange() = 0;
@@ -763,8 +767,6 @@ public:
     virtual void derefView() = 0;
 
     virtual void pageDidScroll(const WebCore::IntPoint& scrollOffset) { }
-
-    virtual void didEndSyntheticMomentumScrolling() { }
 
     virtual void didRestoreScrollPosition() = 0;
     virtual void pageScaleFactorDidChange() { }

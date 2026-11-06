@@ -29,6 +29,7 @@
 
 #if ENABLE(MODEL_PROCESS)
 
+#include "Logging.h"
 #include "ModelProcessModelPlayerManager.h"
 #include "ModelProcessModelPlayerProxy.h"
 #include "ModelProcessModelPlayerProxyMessages.h"
@@ -639,6 +640,7 @@ void ModelProcessModelPlayer::enterVolumetricPresentation(CompletionHandler<void
 
 void ModelProcessModelPlayer::exitVolumetricPresentation()
 {
+    m_entityTransform = std::nullopt;
     send(Messages::ModelProcessModelPlayerProxy::ExitVolumetricPresentation());
 }
 

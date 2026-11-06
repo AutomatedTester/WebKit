@@ -32,6 +32,7 @@
 #import "Device.h"
 #import "ExternalTexture.h"
 #import "MetalSPI.h"
+#import "RenderBundle.h"
 #import "Sampler.h"
 #import "TextureView.h"
 #import <ranges>
@@ -65,7 +66,7 @@ constexpr size_t stageCount = std::size(stages);
 constexpr size_t stagesPlusUndefinedCount = std::size(stagesPlusUndefined);
 }
 
-static MTLRenderStages LEGACY_NODELETE metalRenderStage(ShaderStage shaderStage)
+NODELETE static MTLRenderStages metalRenderStage(ShaderStage shaderStage)
 {
     switch (shaderStage) {
     case ShaderStage::Vertex:
@@ -93,7 +94,7 @@ enum class PixelRange {
     Full
 };
 
-static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
+NODELETE static PixelRange pixelRangeFromPixelFormat(OSType pixelFormat)
 {
     switch (pixelFormat) {
     case kCVPixelFormatType_4444AYpCbCr8:
@@ -114,6 +115,7 @@ static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
     case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
     case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange:
     case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange:
 #if HAVE(COREVIDEO_COMPRESSED_PIXEL_FORMAT_TYPES)
     case kCVPixelFormatType_AGX_420YpCbCr8BiPlanarFullRange:
 #endif
@@ -125,26 +127,58 @@ static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
 
 static TransferFunctionCV transferFunctionFromString(RetainPtr<CFStringRef> string)
 {
-    CFStringRef cfString = string.get();
-    if (!string || CFEqual(cfString, kCVImageBufferYCbCrMatrix_ITU_R_709_2))
+    if (!string || CFEqual(string, kCVImageBufferYCbCrMatrix_ITU_R_709_2))
         return TransferFunctionCV::kITU_R_709_2;
-    if (CFEqual(cfString, kCVImageBufferYCbCrMatrix_ITU_R_601_4))
+    if (CFEqual(string, kCVImageBufferYCbCrMatrix_ITU_R_601_4))
         return TransferFunctionCV::kITU_R_601_4;
-    if (CFEqual(cfString, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
+    if (CFEqual(string, kCVImageBufferYCbCrMatrix_SMPTE_240M_1995))
         return TransferFunctionCV::kSMPTE_240M_1995;
-    if (CFEqual(cfString, kCVImageBufferYCbCrMatrix_ITU_R_2020))
+    if (CFEqual(string, kCVImageBufferYCbCrMatrix_ITU_R_2020))
         return TransferFunctionCV::kITU_R_2020;
 
     ASSERT_NOT_REACHED("Unexpected transfer function format");
     return TransferFunctionCV::kITU_R_709_2;
 }
 
+// How a Metal texture normalizes the samples of the format it reads, which is what the YCbCr columns
+// of the matrix below are scaled by. The constants are derived for an 8-bit sample c normalized to
+// c/255, so a 10-bit code c, which is c/4 as 8 bits, needs the ratio of what its texture gives to that.
+enum class SampleNormalization {
+    // c/255.
+    EightBit,
+    // The non-packed 10-bit formats keep a code c in the top 10 bits of 16, which a 16-bit texture
+    // normalizes to 64c/65535.
+    TenBitInSixteen,
+    // The packed 10-bit formats are read through 10-bit textures, which normalize c to c/1023.
+    TenBitPacked,
+};
+
+static constexpr float yCbCrScale(SampleNormalization normalization)
+{
+    switch (normalization) {
+    case SampleNormalization::EightBit:
+        return 1.f;
+    case SampleNormalization::TenBitInSixteen:
+        return 65535.f / (64.f * 4.f * 255.f);
+    case SampleNormalization::TenBitPacked:
+        return 1023.f / (4.f * 255.f);
+    }
+}
+
 // Columns are the Y, Cb, Cr and constant terms of the YCbCr-to-RGB conversion, over inputs normalized
 // by 255 rather than 256, which is what sampling an 8-bit Metal texture gives. Each is derived from the
 // standard's luma coefficients: R = Y' + 2(1-Kr)Cr', B = Y' + 2(1-Kb)Cb', and G from the remainder,
-// where a video-range Y' is (255Y - 16)/219 and a video-range chroma is (255C - 128)/224.
+// where a video-range Y' is (255Y - 16)/219 and a video-range chroma is (255C - 128)/224. The Y, Cb
+// and Cr columns are scaled for the way the format's texture normalizes its samples; the constant
+// column, which is added to the result, is not.
+template<SampleNormalization normalization>
 static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer)
 {
+    constexpr float scale = yCbCrScale(normalization);
+    auto scaledColumn = [](float y, float cb, float cr) {
+        return simd::make_float3(y * scale, cb * scale, cr * scale);
+    };
+
     auto format = CVPixelBufferGetPixelFormatType(pixelBuffer);
     auto range = pixelRangeFromPixelFormat(format);
     auto transferFunction = transferFunctionFromString(adoptCF((CFStringRef)CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nil)));
@@ -153,14 +187,14 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_709_2: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.18732430f, +1.85560000f),
-                simd::make_float3(+1.57480000f, -0.46813550f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.18732430f, +1.85560000f),
+                scaledColumn(+1.57480000f, -0.46813550f, +0.00000000f),
                 simd::make_float3(-0.79048784f, +0.32901511f, -0.93143764f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.21324866f, +2.11240177f),
-                simd::make_float3(+1.79274106f, -0.53292211f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.21324866f, +2.11240177f),
+                scaledColumn(+1.79274106f, -0.53292211f, +0.00000000f),
                 simd::make_float3(-0.97294507f, +0.30148910f, -1.13340221f));
         }
     }
@@ -168,15 +202,15 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_601_4: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.34413628f, +1.77200000f),
-                simd::make_float3(+1.40200000f, -0.71413629f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.34413628f, +1.77200000f),
+                scaledColumn(+1.40200000f, -0.71413629f, +0.00000000f),
                 simd::make_float3(-0.70374902f, +0.53121133f, -0.88947451f));
 
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.39176200f, +2.01723214f),
-                simd::make_float3(+1.59602678f, -0.81296769f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.39176200f, +2.01723214f),
+                scaledColumn(+1.59602678f, -0.81296769f, +0.00000000f),
                 simd::make_float3(-0.87420221f, +0.53166750f, -1.08563078f));
         }
     }
@@ -184,14 +218,14 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kSMPTE_240M_1995: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.22662197f, +1.82600000f),
-                simd::make_float3(+1.57600000f, -0.47662197f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.22662197f, +1.82600000f),
+                scaledColumn(+1.57600000f, -0.47662197f, +0.00000000f),
                 simd::make_float3(-0.79109020f, +0.35300088f, -0.91658039f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.25798483f, +2.07870536f),
-                simd::make_float3(+1.79410714f, -0.54258304f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.25798483f, +2.07870536f),
+                scaledColumn(+1.79410714f, -0.54258304f, +0.00000000f),
                 simd::make_float3(-0.97363079f, +0.32879432f, -1.11648793f));
         }
     }
@@ -199,17 +233,41 @@ static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef 
     case TransferFunctionCV::kITU_R_2020: {
         switch (range) {
         case PixelRange::Full:
-            return simd::float4x3(simd::make_float3(+1.00000000f, +1.00000000f, +1.00000000f),
-                simd::make_float3(+0.00000000f, -0.16455310f, +1.88140000f),
-                simd::make_float3(+1.47460000f, -0.57135310f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.00000000f, +1.00000000f, +1.00000000f),
+                scaledColumn(+0.00000000f, -0.16455310f, +1.88140000f),
+                scaledColumn(+1.47460000f, -0.57135310f, +0.00000000f),
                 simd::make_float3(-0.74019137f, +0.36939605f, -0.94438902f));
         case PixelRange::Video:
-            return simd::float4x3(simd::make_float3(+1.16438356f, +1.16438356f, +1.16438356f),
-                simd::make_float3(+0.00000000f, -0.18732607f, +2.14177231f),
-                simd::make_float3(+1.67867410f, -0.65042428f, +0.00000000f),
+            return simd::float4x3(scaledColumn(+1.16438356f, +1.16438356f, +1.16438356f),
+                scaledColumn(+0.00000000f, -0.18732607f, +2.14177231f),
+                scaledColumn(+1.67867410f, -0.65042428f, +0.00000000f),
                 simd::make_float3(-0.91568793f, +0.34745847f, -1.14814507f));
         }
     } }
+}
+
+static simd::float4x3 colorSpaceConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer)
+{
+    switch (CVPixelBufferGetPixelFormatType(pixelBuffer)) {
+    case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange:
+    case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange:
+    case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::TenBitInSixteen>(pixelBuffer);
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange:
+    case kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_Lossy_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_420YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_422YpCbCr10PackedBiPlanarVideoRange:
+    case kCVPixelFormatType_444YpCbCr10PackedBiPlanarVideoRange:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::TenBitPacked>(pixelBuffer);
+    default:
+        return colorSpaceConversionMatrixForPixelBuffer<SampleNormalization::EightBit>(pixelBuffer);
+    }
 }
 
 static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plane, std::optional<MTLTextureSwizzleChannels>& swizzle, bool supportsExtendedFormats)
@@ -217,6 +275,19 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
     auto pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
     auto biplanarFormat = [](int plane) {
         return plane ? MTLPixelFormatRG8Unorm : MTLPixelFormatR8Unorm;
+    };
+    // Non-packed 10-bit formats keep each sample in the 10 MSBs of 16 bits, so both planes have to be
+    // read as 16-bit; reading the chroma plane as 8-bit pairs scrambles Cb and Cr.
+    auto biplanar16BitFormat = [](int plane) {
+        return plane ? MTLPixelFormatRG16Unorm : MTLPixelFormatR16Unorm;
+    };
+    // Packed 10-bit formats keep three samples to 32 bits with no padding, which only these formats
+    // read. The YCbCr formats which describe both planes at once sample as RGB, already converted with
+    // a matrix of Metal's choosing, which is no good to a shader applying the frame's own.
+    auto packed10BitFormat = [supportsExtendedFormats, biplanarFormat](int plane) -> MTLPixelFormat {
+        if (!supportsExtendedFormats)
+            return biplanarFormat(plane);
+        return plane ? static_cast<MTLPixelFormat>(MTLPixelFormatRG10Unorm_PACKED) : static_cast<MTLPixelFormat>(MTLPixelFormatR10Unorm_PACKED);
     };
 
     switch (pixelFormat) {
@@ -378,17 +449,17 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return MTLPixelFormatDepth32Float;
 
     case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:2:0, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:2:2, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange: /* 2 plane YCbCr10 4:4:4, each 10 bits in the MSBs of 16bits, video-range (luma=[64,940] chroma=[64,960]) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:2:0, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:2:2, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange: /* 2 plane YCbCr10 4:4:4, each 10 bits in the MSBs of 16bits, full-range (Y range 0-1023) */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P) : biplanarFormat(plane);
+        return biplanar16BitFormat(plane);
     case kCVPixelFormatType_420YpCbCr8VideoRange_8A_TriPlanar: /* first and second planes as per 420YpCbCr8BiPlanarVideoRange (420v), alpha 8 bits in third plane full-range.  No CVPlanarPixelBufferInfo struct. */
         return biplanarFormat(plane);
 
@@ -415,10 +486,13 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return biplanarFormat(plane);
 
     case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarVideoRange: /* Lossless-compressed-packed form of case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossless_422YpCbCr10PackedBiPlanarVideoRange: /* Lossless-compressed form of case kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
+
+    case kCVPixelFormatType_Lossless_420YpCbCr10PackedBiPlanarFullRange: /* Lossless-compressed form of case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossy_32BGRA: /* Lossy-compressed form of case kCVPixelFormatType_32BGRA. No CVPlanarPixelBufferInfo struct.  */
         return MTLPixelFormatBGRA8Unorm;
@@ -428,17 +502,17 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
         return biplanarFormat(plane);
 
     case kCVPixelFormatType_Lossy_420YpCbCr10PackedBiPlanarVideoRange: /* Lossy-compressed form of case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED_PQ) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_Lossy_422YpCbCr10PackedBiPlanarVideoRange: /* Lossy-compressed form of kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange.  No CVPlanarPixelBufferInfo struct. Format is compressed-packed with no padding bits between pixels. */
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
 
     case kCVPixelFormatType_420YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_420_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     case kCVPixelFormatType_422YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_422_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     case kCVPixelFormatType_444YpCbCr10PackedBiPlanarVideoRange:
-        return !plane && supportsExtendedFormats ? static_cast<MTLPixelFormat>(MTLPixelFormatYCBCR10_444_2P_PACKED) : biplanarFormat(plane);
+        return packed10BitFormat(plane);
     }
 
     return MTLPixelFormatInvalid;
@@ -575,15 +649,16 @@ static id<MTLTexture> gbTextureFromRGB(id<MTLTexture> texture, bool alphaFirst, 
     return [texture newTextureViewWithPixelFormat:texture.pixelFormat textureType:texture.textureType levels:NSMakeRange(0, texture.mipmapLevelCount) slices:NSMakeRange(0, texture.arrayLength) swizzle:swizzle];
 }
 
-Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace, PremultiplyAlpha premultiplyAlpha) const
+Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixelBufferRef pixelBuffer, WebGPU::PredefinedColorSpace colorSpace, PremultiplyAlpha premultiplyAlpha) const
 {
 #if HAVE(COREVIDEO_METAL_SUPPORT)
     // colorMatrixBetweenPrimaries() is row-major, and Metal indexes a float3x3 by column.
-    simd::float3x3 primariesConversionMatrix = simd::float3x3(0.f);
+    simd::float3x4 primariesConversionMatrix = simd::float3x4(0.f);
     if (auto matrix = primariesConversionMatrixForPixelBuffer(pixelBuffer, colorSpace)) {
         auto& m = *matrix;
-        primariesConversionMatrix = simd::float3x3(simd::make_float3(m[0], m[3], m[6]), simd::make_float3(m[1], m[4], m[7]), simd::make_float3(m[2], m[5], m[8]));
+        primariesConversionMatrix = simd::float3x4(simd::make_float4(m[0], m[3], m[6], 0.f), simd::make_float4(m[1], m[4], m[7], 0.f), simd::make_float4(m[2], m[5], m[8], 0.f));
     }
+    primariesConversionMatrix.columns[0].w = static_cast<float>(hdrTransferFunctionForPixelBuffer(pixelBuffer));
 
     auto premultiplyParameters = premultiplyAlpha == PremultiplyAlpha::Yes ? premultiplyAlphaParameters(pixelBuffer) : PremultiplyAlphaParameters { };
 
@@ -704,7 +779,7 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
             mtlTexture1 = [mtlTexture1 newTextureViewWithPixelFormat:mtlTexture1.pixelFormat textureType:mtlTexture1.textureType levels:NSMakeRange(0, mtlTexture1.mipmapLevelCount) slices:NSMakeRange(0, mtlTexture1.arrayLength) swizzle:*secondPlaneSwizzle];
     }
 
-    protect(m_defaultQueue)->onSubmittedWorkDone([plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)](WGPUQueueWorkDoneStatus) { });
+    protect(m_defaultQueue)->onSubmittedWorkDone(CompletionHandler<void()> { [plane0 = adoptCF(plane0), plane1 = adoptCF(plane1)] { } });
 
     float Ax = 1.f / (upperRight[0] - lowerLeft[0]);
     float Bx = -Ax * lowerLeft[0];
@@ -729,22 +804,25 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
 #endif
 }
 
-static bool LEGACY_NODELETE hasProperUsageFlags(WGPUBufferBindingType bufferType, OptionSet<WebGPU::BufferUsage> usage)
+NODELETE static bool hasProperUsageFlags(BindGroupLayout::BufferBindingType bufferType, OptionSet<WebGPU::BufferUsage> usage)
 {
     switch (bufferType) {
-    case WGPUBufferBindingType_Uniform:
+    case BindGroupLayout::BufferBindingType::Uniform:
         return usage.contains(WebGPU::BufferUsage::Uniform);
-    case WGPUBufferBindingType_Storage:
-    case WGPUBufferBindingType_ReadOnlyStorage:
+    case BindGroupLayout::BufferBindingType::Storage:
+    case BindGroupLayout::BufferBindingType::ReadOnlyStorage:
         return usage.contains(WebGPU::BufferUsage::Storage);
-    case WGPUBufferBindingType_Undefined:
-    case WGPUBufferBindingType_Force32:
+    case BindGroupLayout::BufferBindingType::Float3x2:
+    case BindGroupLayout::BufferBindingType::Float4x3:
+    case BindGroupLayout::BufferBindingType::Float3x4:
+    case BindGroupLayout::BufferBindingType::UInt2:
+    case BindGroupLayout::BufferBindingType::ArrayLength:
         ASSERT_NOT_REACHED();
         return false;
     }
 }
 
-static MTLResourceUsage LEGACY_NODELETE resourceUsageForBindingAcccess(BindGroupLayout::BindingAccess bindingAccess)
+NODELETE static MTLResourceUsage resourceUsageForBindingAcccess(BindGroupLayout::BindingAccess bindingAccess)
 {
     switch (bindingAccess) {
     case BindGroupLayout::BindingAccessReadOnly:
@@ -769,9 +847,9 @@ static bool is32bppFloatFormat(id<MTLTexture> t)
     return t.pixelFormat == MTLPixelFormatR32Float || t.pixelFormat == MTLPixelFormatRG32Float || t.pixelFormat == MTLPixelFormatRGBA32Float;
 }
 
-static bool LEGACY_NODELETE valid32bppFloatSampleType(WGPUTextureSampleType sampleType)
+NODELETE static bool valid32bppFloatSampleType(WebGPU::TextureSampleType sampleType)
 {
-    return sampleType == WGPUTextureSampleType_Float || sampleType == WGPUTextureSampleType_UnfilterableFloat;
+    return sampleType == WebGPU::TextureSampleType::Float || sampleType == WebGPU::TextureSampleType::UnfilterableFloat;
 }
 
 enum FormatType {
@@ -783,177 +861,172 @@ enum FormatType {
     FormatType_UnsignedInt = 1 << 4
 };
 
-static std::underlying_type<FormatType>::type formatType(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static std::underlying_type<FormatType>::type formatType(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     switch (format) {
-    case WGPUTextureFormat_R8Unorm:
-    case WGPUTextureFormat_R8Snorm:
+    case WebGPU::TextureFormat::R8unorm:
+    case WebGPU::TextureFormat::R8snorm:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_R8Uint:
+    case WebGPU::TextureFormat::R8uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_R8Sint:
+    case WebGPU::TextureFormat::R8sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_R16Uint:
+    case WebGPU::TextureFormat::R16uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_R16Sint:
+    case WebGPU::TextureFormat::R16sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_R16Unorm:
-    case WGPUTextureFormat_R16Snorm:
-    case WGPUTextureFormat_RG16Unorm:
-    case WGPUTextureFormat_RG16Snorm:
-    case WGPUTextureFormat_RGBA16Unorm:
-    case WGPUTextureFormat_RGBA16Snorm:
+    case WebGPU::TextureFormat::R16unorm:
+    case WebGPU::TextureFormat::R16snorm:
+    case WebGPU::TextureFormat::Rg16unorm:
+    case WebGPU::TextureFormat::Rg16snorm:
+    case WebGPU::TextureFormat::Rgba16unorm:
+    case WebGPU::TextureFormat::Rgba16snorm:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_R16Float:
-    case WGPUTextureFormat_RG8Unorm:
-    case WGPUTextureFormat_RG8Snorm:
+    case WebGPU::TextureFormat::R16float:
+    case WebGPU::TextureFormat::Rg8unorm:
+    case WebGPU::TextureFormat::Rg8snorm:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_RG8Uint:
+    case WebGPU::TextureFormat::Rg8uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RG8Sint:
+    case WebGPU::TextureFormat::Rg8sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_R32Float:
-        return FormatType_UnfilterableFloat | (device.hasFeature(WGPUFeatureName_Float32Filterable) ? FormatType_Float : 0);
-    case WGPUTextureFormat_R32Uint:
+    case WebGPU::TextureFormat::R32float:
+        return FormatType_UnfilterableFloat | (device.hasFeature(WebGPU::FeatureName::Float32Filterable) ? FormatType_Float : 0);
+    case WebGPU::TextureFormat::R32uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_R32Sint:
+    case WebGPU::TextureFormat::R32sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_RG16Uint:
+    case WebGPU::TextureFormat::Rg16uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RG16Sint:
+    case WebGPU::TextureFormat::Rg16sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_RG16Float:
-    case WGPUTextureFormat_RGBA8Unorm:
-    case WGPUTextureFormat_RGBA8UnormSrgb:
-    case WGPUTextureFormat_RGBA8Snorm:
+    case WebGPU::TextureFormat::Rg16float:
+    case WebGPU::TextureFormat::Rgba8unorm:
+    case WebGPU::TextureFormat::Rgba8unormSRGB:
+    case WebGPU::TextureFormat::Rgba8snorm:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_RGBA8Uint:
+    case WebGPU::TextureFormat::Rgba8uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RGBA8Sint:
+    case WebGPU::TextureFormat::Rgba8sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_BGRA8Unorm:
-    case WGPUTextureFormat_BGRA8UnormSrgb:
+    case WebGPU::TextureFormat::Bgra8unorm:
+    case WebGPU::TextureFormat::Bgra8unormSRGB:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_RGB10A2Uint:
+    case WebGPU::TextureFormat::Rgb10a2uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RGB10A2Unorm:
-    case WGPUTextureFormat_RG11B10Ufloat:
-    case WGPUTextureFormat_RGB9E5Ufloat:
+    case WebGPU::TextureFormat::Rgb10a2unorm:
+    case WebGPU::TextureFormat::Rg11b10ufloat:
+    case WebGPU::TextureFormat::Rgb9e5ufloat:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_RG32Float:
-        return FormatType_UnfilterableFloat | (device.hasFeature(WGPUFeatureName_Float32Filterable) ? FormatType_Float : 0);
-    case WGPUTextureFormat_RG32Uint:
+    case WebGPU::TextureFormat::Rg32float:
+        return FormatType_UnfilterableFloat | (device.hasFeature(WebGPU::FeatureName::Float32Filterable) ? FormatType_Float : 0);
+    case WebGPU::TextureFormat::Rg32uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RG32Sint:
+    case WebGPU::TextureFormat::Rg32sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_RGBA16Uint:
+    case WebGPU::TextureFormat::Rgba16uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RGBA16Sint:
+    case WebGPU::TextureFormat::Rgba16sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_RGBA16Float:
+    case WebGPU::TextureFormat::Rgba16float:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_RGBA32Float:
-        return FormatType_UnfilterableFloat | (device.hasFeature(WGPUFeatureName_Float32Filterable) ? FormatType_Float : 0);
-    case WGPUTextureFormat_RGBA32Uint:
+    case WebGPU::TextureFormat::Rgba32float:
+        return FormatType_UnfilterableFloat | (device.hasFeature(WebGPU::FeatureName::Float32Filterable) ? FormatType_Float : 0);
+    case WebGPU::TextureFormat::Rgba32uint:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_RGBA32Sint:
+    case WebGPU::TextureFormat::Rgba32sint:
         return FormatType_SignedInt;
-    case WGPUTextureFormat_Stencil8:
+    case WebGPU::TextureFormat::Stencil8:
         return FormatType_UnsignedInt;
-    case WGPUTextureFormat_Depth16Unorm:
-    case WGPUTextureFormat_Depth24Plus:
+    case WebGPU::TextureFormat::Depth16unorm:
+    case WebGPU::TextureFormat::Depth24plus:
         return FormatType_Depth | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_Depth24PlusStencil8:
-    case WGPUTextureFormat_Depth32FloatStencil8: {
+    case WebGPU::TextureFormat::Depth24plusStencil8:
+    case WebGPU::TextureFormat::Depth32floatStencil8: {
         switch (aspect) {
-        case WGPUTextureAspect_All:
+        case WebGPU::TextureAspect::All:
             return FormatType_Depth | FormatType_UnfilterableFloat | FormatType_UnsignedInt;
-        case WGPUTextureAspect_StencilOnly:
+        case WebGPU::TextureAspect::StencilOnly:
             return FormatType_UnsignedInt;
-        case WGPUTextureAspect_DepthOnly:
+        case WebGPU::TextureAspect::DepthOnly:
             return FormatType_Depth | FormatType_UnfilterableFloat;
-        case WGPUTextureAspect_Force32:
-            RELEASE_ASSERT_NOT_REACHED();
         }
     }
-    case WGPUTextureFormat_Depth32Float:
+    case WebGPU::TextureFormat::Depth32float:
         return FormatType_Depth | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_BC1RGBAUnorm:
-    case WGPUTextureFormat_BC1RGBAUnormSrgb:
-    case WGPUTextureFormat_BC2RGBAUnorm:
-    case WGPUTextureFormat_BC2RGBAUnormSrgb:
-    case WGPUTextureFormat_BC3RGBAUnorm:
-    case WGPUTextureFormat_BC3RGBAUnormSrgb:
-    case WGPUTextureFormat_BC4RUnorm:
-    case WGPUTextureFormat_BC4RSnorm:
-    case WGPUTextureFormat_BC5RGUnorm:
-    case WGPUTextureFormat_BC5RGSnorm:
-    case WGPUTextureFormat_BC6HRGBUfloat:
-    case WGPUTextureFormat_BC6HRGBFloat:
-    case WGPUTextureFormat_BC7RGBAUnorm:
-    case WGPUTextureFormat_BC7RGBAUnormSrgb:
-    case WGPUTextureFormat_ETC2RGB8Unorm:
-    case WGPUTextureFormat_ETC2RGB8UnormSrgb:
-    case WGPUTextureFormat_ETC2RGB8A1Unorm:
-    case WGPUTextureFormat_ETC2RGB8A1UnormSrgb:
-    case WGPUTextureFormat_ETC2RGBA8Unorm:
-    case WGPUTextureFormat_ETC2RGBA8UnormSrgb:
-    case WGPUTextureFormat_EACR11Unorm:
-    case WGPUTextureFormat_EACR11Snorm:
-    case WGPUTextureFormat_EACRG11Unorm:
-    case WGPUTextureFormat_EACRG11Snorm:
-    case WGPUTextureFormat_ASTC4x4Unorm:
-    case WGPUTextureFormat_ASTC4x4UnormSrgb:
-    case WGPUTextureFormat_ASTC5x4Unorm:
-    case WGPUTextureFormat_ASTC5x4UnormSrgb:
-    case WGPUTextureFormat_ASTC5x5Unorm:
-    case WGPUTextureFormat_ASTC5x5UnormSrgb:
-    case WGPUTextureFormat_ASTC6x5Unorm:
-    case WGPUTextureFormat_ASTC6x5UnormSrgb:
-    case WGPUTextureFormat_ASTC6x6Unorm:
-    case WGPUTextureFormat_ASTC6x6UnormSrgb:
-    case WGPUTextureFormat_ASTC8x5Unorm:
-    case WGPUTextureFormat_ASTC8x5UnormSrgb:
-    case WGPUTextureFormat_ASTC8x6Unorm:
-    case WGPUTextureFormat_ASTC8x6UnormSrgb:
-    case WGPUTextureFormat_ASTC8x8Unorm:
-    case WGPUTextureFormat_ASTC8x8UnormSrgb:
-    case WGPUTextureFormat_ASTC10x5Unorm:
-    case WGPUTextureFormat_ASTC10x5UnormSrgb:
-    case WGPUTextureFormat_ASTC10x6Unorm:
-    case WGPUTextureFormat_ASTC10x6UnormSrgb:
-    case WGPUTextureFormat_ASTC10x8Unorm:
-    case WGPUTextureFormat_ASTC10x8UnormSrgb:
-    case WGPUTextureFormat_ASTC10x10Unorm:
-    case WGPUTextureFormat_ASTC10x10UnormSrgb:
-    case WGPUTextureFormat_ASTC12x10Unorm:
-    case WGPUTextureFormat_ASTC12x10UnormSrgb:
-    case WGPUTextureFormat_ASTC12x12Unorm:
-    case WGPUTextureFormat_ASTC12x12UnormSrgb:
+    case WebGPU::TextureFormat::Bc1RgbaUnorm:
+    case WebGPU::TextureFormat::Bc1RgbaUnormSRGB:
+    case WebGPU::TextureFormat::Bc2RgbaUnorm:
+    case WebGPU::TextureFormat::Bc2RgbaUnormSRGB:
+    case WebGPU::TextureFormat::Bc3RgbaUnorm:
+    case WebGPU::TextureFormat::Bc3RgbaUnormSRGB:
+    case WebGPU::TextureFormat::Bc4RUnorm:
+    case WebGPU::TextureFormat::Bc4RSnorm:
+    case WebGPU::TextureFormat::Bc5RgUnorm:
+    case WebGPU::TextureFormat::Bc5RgSnorm:
+    case WebGPU::TextureFormat::Bc6hRgbUfloat:
+    case WebGPU::TextureFormat::Bc6hRgbFloat:
+    case WebGPU::TextureFormat::Bc7RgbaUnorm:
+    case WebGPU::TextureFormat::Bc7RgbaUnormSRGB:
+    case WebGPU::TextureFormat::Etc2Rgb8unorm:
+    case WebGPU::TextureFormat::Etc2Rgb8unormSRGB:
+    case WebGPU::TextureFormat::Etc2Rgb8a1unorm:
+    case WebGPU::TextureFormat::Etc2Rgb8a1unormSRGB:
+    case WebGPU::TextureFormat::Etc2Rgba8unorm:
+    case WebGPU::TextureFormat::Etc2Rgba8unormSRGB:
+    case WebGPU::TextureFormat::EacR11unorm:
+    case WebGPU::TextureFormat::EacR11snorm:
+    case WebGPU::TextureFormat::EacRg11unorm:
+    case WebGPU::TextureFormat::EacRg11snorm:
+    case WebGPU::TextureFormat::Astc4x4Unorm:
+    case WebGPU::TextureFormat::Astc4x4UnormSRGB:
+    case WebGPU::TextureFormat::Astc5x4Unorm:
+    case WebGPU::TextureFormat::Astc5x4UnormSRGB:
+    case WebGPU::TextureFormat::Astc5x5Unorm:
+    case WebGPU::TextureFormat::Astc5x5UnormSRGB:
+    case WebGPU::TextureFormat::Astc6x5Unorm:
+    case WebGPU::TextureFormat::Astc6x5UnormSRGB:
+    case WebGPU::TextureFormat::Astc6x6Unorm:
+    case WebGPU::TextureFormat::Astc6x6UnormSRGB:
+    case WebGPU::TextureFormat::Astc8x5Unorm:
+    case WebGPU::TextureFormat::Astc8x5UnormSRGB:
+    case WebGPU::TextureFormat::Astc8x6Unorm:
+    case WebGPU::TextureFormat::Astc8x6UnormSRGB:
+    case WebGPU::TextureFormat::Astc8x8Unorm:
+    case WebGPU::TextureFormat::Astc8x8UnormSRGB:
+    case WebGPU::TextureFormat::Astc10x5Unorm:
+    case WebGPU::TextureFormat::Astc10x5UnormSRGB:
+    case WebGPU::TextureFormat::Astc10x6Unorm:
+    case WebGPU::TextureFormat::Astc10x6UnormSRGB:
+    case WebGPU::TextureFormat::Astc10x8Unorm:
+    case WebGPU::TextureFormat::Astc10x8UnormSRGB:
+    case WebGPU::TextureFormat::Astc10x10Unorm:
+    case WebGPU::TextureFormat::Astc10x10UnormSRGB:
+    case WebGPU::TextureFormat::Astc12x10Unorm:
+    case WebGPU::TextureFormat::Astc12x10UnormSRGB:
+    case WebGPU::TextureFormat::Astc12x12Unorm:
+    case WebGPU::TextureFormat::Astc12x12UnormSRGB:
         return FormatType_Float | FormatType_UnfilterableFloat;
-    case WGPUTextureFormat_Undefined:
-    case WGPUTextureFormat_Force32:
-        return FormatType_Undefined;
     }
 }
 
-static bool formatIsFloat(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static bool formatIsFloat(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     return formatType(format, aspect, device) & FormatType_Float;
 }
-static bool formatIsUnfilterableFloat(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static bool formatIsUnfilterableFloat(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     return formatType(format, aspect, device) & FormatType_UnfilterableFloat;
 }
-static bool formatIsDepth(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static bool formatIsDepth(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     return formatType(format, aspect, device) & FormatType_Depth;
 }
-static bool formatIsSignedInt(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static bool formatIsSignedInt(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     return formatType(format, aspect, device) & FormatType_SignedInt;
 }
-static bool formatIsUnsignedInt(WGPUTextureFormat format, WGPUTextureAspect aspect, const Device& device)
+static bool formatIsUnsignedInt(WebGPU::TextureFormat format, WebGPU::TextureAspect aspect, const Device& device)
 {
     return formatType(format, aspect, device) & FormatType_UnsignedInt;
 }
@@ -966,38 +1039,32 @@ static bool validateTextureSampleType(const BindGroupLayout::TextureBindingLayou
     auto format = apiTextureView->format();
     auto aspect = apiTextureView->aspect();
     switch (textureEntry->sampleType) {
-    case WGPUTextureSampleType_Float:
+    case WebGPU::TextureSampleType::Float:
         return formatIsFloat(format, aspect, device);
-    case WGPUTextureSampleType_UnfilterableFloat:
+    case WebGPU::TextureSampleType::UnfilterableFloat:
         return formatIsUnfilterableFloat(format, aspect, device);
-    case WGPUTextureSampleType_Depth:
+    case WebGPU::TextureSampleType::Depth:
         return formatIsDepth(format, aspect, device);
-    case WGPUTextureSampleType_Sint:
+    case WebGPU::TextureSampleType::Sint:
         return formatIsSignedInt(format, aspect, device);
-    case WGPUTextureSampleType_Uint:
+    case WebGPU::TextureSampleType::Uint:
         return formatIsUnsignedInt(format, aspect, device);
-    case WGPUTextureSampleType_Force32:
-    case WGPUTextureSampleType_Undefined:
-        return false;
     }
 }
 
 static const NSString* sampleType(const BindGroupLayout::TextureBindingLayout* textureEntry)
 {
     switch (textureEntry->sampleType) {
-    case WGPUTextureSampleType_Float:
+    case WebGPU::TextureSampleType::Float:
         return @"float";
-    case WGPUTextureSampleType_UnfilterableFloat:
+    case WebGPU::TextureSampleType::UnfilterableFloat:
         return @"unfilterable-float";
-    case WGPUTextureSampleType_Depth:
+    case WebGPU::TextureSampleType::Depth:
         return @"depth";
-    case WGPUTextureSampleType_Sint:
+    case WebGPU::TextureSampleType::Sint:
         return @"sint";
-    case WGPUTextureSampleType_Uint:
+    case WebGPU::TextureSampleType::Uint:
         return @"uint";
-    case WGPUTextureSampleType_Force32:
-    case WGPUTextureSampleType_Undefined:
-        return @"unknown";
     }
 }
 
@@ -1029,88 +1096,77 @@ static bool validateTextureViewDimension(const auto* textureEntry, const auto& a
     if (!textureEntry)
         return true;
 
-    WGPUTextureViewDimension viewDimension = textureEntry->viewDimension;
+    WebGPU::TextureViewDimension viewDimension = textureEntry->viewDimension;
     auto textureType = apiTextureView->texture().textureType;
     switch (viewDimension) {
-    case WGPUTextureViewDimension_1D:
+    case WebGPU::TextureViewDimension::_1d:
         return textureType == MTLTextureType1D;
-    case WGPUTextureViewDimension_2D:
+    case WebGPU::TextureViewDimension::_2d:
         return textureType == MTLTextureType2D || textureType == MTLTextureType2DMultisample;
-    case WGPUTextureViewDimension_2DArray:
+    case WebGPU::TextureViewDimension::_2dArray:
         return textureType == MTLTextureType2DArray || textureType == MTLTextureType2DMultisampleArray;
-    case WGPUTextureViewDimension_Cube:
+    case WebGPU::TextureViewDimension::Cube:
         return textureType == MTLTextureTypeCube;
-    case WGPUTextureViewDimension_CubeArray:
+    case WebGPU::TextureViewDimension::CubeArray:
         return textureType == MTLTextureTypeCubeArray;
-    case WGPUTextureViewDimension_3D:
+    case WebGPU::TextureViewDimension::_3d:
         return textureType == MTLTextureType3D;
-    case WGPUTextureViewDimension_Undefined:
-    case WGPUTextureViewDimension_Force32:
-        return false;
     }
 }
 
-static bool LEGACY_NODELETE validateStorageTextureViewFormat(const BindGroupLayout::StorageTextureBindingLayout* storageTexture, const auto& apiTextureView)
+NODELETE static bool validateStorageTextureViewFormat(const BindGroupLayout::StorageTextureBindingLayout* storageTexture, const auto& apiTextureView)
 {
     return !storageTexture || storageTexture->format == apiTextureView->format();
 }
 
-static bool LEGACY_NODELETE validateSamplerType(WGPUSamplerBindingType type, const Sampler& sampler)
+NODELETE static bool validateSamplerType(WebGPU::SamplerBindingType type, const Sampler& sampler)
 {
     switch (type) {
-    case WGPUSamplerBindingType_Filtering:
+    case WebGPU::SamplerBindingType::Filtering:
         return !sampler.isComparison();
-    case WGPUSamplerBindingType_NonFiltering:
+    case WebGPU::SamplerBindingType::NonFiltering:
         return !sampler.isComparison() && !sampler.isFiltering();
-    case WGPUSamplerBindingType_Comparison:
+    case WebGPU::SamplerBindingType::Comparison:
         return sampler.isComparison();
-    case WGPUSamplerBindingType_Undefined:
-    case WGPUSamplerBindingType_Force32:
-        ASSERT_NOT_REACHED();
-        return false;
     }
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForTexture(const BindGroupLayout::TextureBindingLayout&)
+NODELETE static BindGroupEntryUsage usageForTexture(const BindGroupLayout::TextureBindingLayout&)
 {
     return BindGroupEntryUsage::ConstantTexture;
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForStorageTexture(const BindGroupLayout::StorageTextureBindingLayout& textureLayout)
+NODELETE static BindGroupEntryUsage usageForStorageTexture(const BindGroupLayout::StorageTextureBindingLayout& textureLayout)
 {
     switch (textureLayout.access) {
-    case WGPUStorageTextureAccess_Undefined:
-        return BindGroupEntryUsage::Undefined;
-    case WGPUStorageTextureAccess_ReadOnly:
+    case WebGPU::StorageTextureAccess::ReadOnly:
         return BindGroupEntryUsage::StorageTextureRead;
-    case WGPUStorageTextureAccess_ReadWrite:
+    case WebGPU::StorageTextureAccess::ReadWrite:
         return BindGroupEntryUsage::StorageTextureReadWrite;
-    case WGPUStorageTextureAccess_WriteOnly:
+    case WebGPU::StorageTextureAccess::WriteOnly:
         return BindGroupEntryUsage::StorageTextureWriteOnly;
-    case WGPUStorageTextureAccess_Force32:
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
     RELEASE_ASSERT_NOT_REACHED();
     return BindGroupEntryUsage::Undefined;
 }
 
-static BindGroupEntryUsage LEGACY_NODELETE usageForBuffer(WGPUBufferBindingType bufferBindingType)
+NODELETE static BindGroupEntryUsage usageForBuffer(BindGroupLayout::BufferBindingType bufferBindingType)
 {
     switch (bufferBindingType) {
-    case WGPUBufferBindingType_Undefined:
-        return BindGroupEntryUsage::Undefined;
-    case WGPUBufferBindingType_Uniform:
+    case BindGroupLayout::BufferBindingType::Uniform:
         return BindGroupEntryUsage::Constant;
-    case WGPUBufferBindingType_Storage:
+    case BindGroupLayout::BufferBindingType::Storage:
         return BindGroupEntryUsage::Storage;
-    case WGPUBufferBindingType_ReadOnlyStorage:
+    case BindGroupLayout::BufferBindingType::ReadOnlyStorage:
         return BindGroupEntryUsage::StorageRead;
-    case WGPUBufferBindingType_Force32:
-        RELEASE_ASSERT_NOT_REACHED();
+    case BindGroupLayout::BufferBindingType::Float3x2:
+    case BindGroupLayout::BufferBindingType::Float4x3:
+    case BindGroupLayout::BufferBindingType::Float3x4:
+    case BindGroupLayout::BufferBindingType::UInt2:
+    case BindGroupLayout::BufferBindingType::ArrayLength:
+        return BindGroupEntryUsage::Undefined;
     }
-
-    return BindGroupEntryUsage::Undefined;
 }
 
 template <typename T>
@@ -1119,12 +1175,12 @@ static BindGroupEntryUsageData makeBindGroupEntryUsageData(BindGroupEntryUsage u
     return BindGroupEntryUsageData { .usage = usage, .binding = bindingIndex, .resource = resource.ptr(), .entryOffset = entryOffset, .entrySize = entrySize };
 }
 
-static bool LEGACY_NODELETE allowedExternalTextureFormat(WGPUTextureFormat format)
+NODELETE static bool allowedExternalTextureFormat(WebGPU::TextureFormat format)
 {
     switch (format) {
-    case WGPUTextureFormat_RGBA8Unorm:
-    case WGPUTextureFormat_BGRA8Unorm:
-    case WGPUTextureFormat_RGBA16Float:
+    case WebGPU::TextureFormat::Rgba8unorm:
+    case WebGPU::TextureFormat::Bgra8unorm:
+    case WebGPU::TextureFormat::Rgba16float:
         return true;
     default:
         return false;
@@ -1139,7 +1195,7 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
 
     object.getQueue()->clearTextureViewIfNeeded(apiTextureView);
 
-    id<MTLTexture> texture = apiTextureView->texture();
+    id<MTLTexture> texture = (textureEntry && !externalTextureEntry) ? apiTextureView->sampledTexture() : apiTextureView->texture();
     if (!apiTextureView->isDestroyed()) {
         if (!apiTextureView->isValid()) {
             VALIDATION_ERROR(@"Underlying texture is not valid");
@@ -1170,12 +1226,16 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
             VALIDATION_ERROR(@"Bind group storage texture entry format does not match TextureView format");
             return BindGroup::createInvalid(object);
         }
+        if (storageTextureEntry && apiTextureView->hasSwizzle()) {
+            VALIDATION_ERROR(@"Storage textures must be bound through a view whose swizzle is \"rgba\"");
+            return BindGroup::createInvalid(object);
+        }
         if (storageTextureEntry && apiTextureView->texture().mipmapLevelCount != 1) {
             VALIDATION_ERROR([NSString stringWithFormat:@"Storage textures must have a single mip level(%lu)", static_cast<unsigned long>(apiTextureView->texture().mipmapLevelCount)]);
             return BindGroup::createInvalid(object);
         }
 
-        if (textureEntry && is32bppFloatFormat(texture) && (!valid32bppFloatSampleType(textureEntry->sampleType) || (textureEntry->sampleType == WGPUTextureSampleType_Float && !object.hasFeature(WGPUFeatureName_Float32Filterable)))) {
+        if (textureEntry && is32bppFloatFormat(texture) && (!valid32bppFloatSampleType(textureEntry->sampleType) || (textureEntry->sampleType == WebGPU::TextureSampleType::Float && !object.hasFeature(WebGPU::FeatureName::Float32Filterable)))) {
             VALIDATION_ERROR(@"Can not create bind group with filterable 32bpp floating point texture as float32-filterable feature is not enabled");
             return BindGroup::createInvalid(object);
         }
@@ -1232,8 +1292,8 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
                 *cscMatrixAddress = simd::float4x3(1.f);
 
             argumentIndices[stage].remove(externalIndex);
-            if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
-                *primariesMatrixAddress = simd::float3x3(0.f);
+            if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *primariesMatrixAddress = simd::float3x4(0.f);
 
             argumentIndices[stage].remove(externalIndex);
             if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
@@ -1265,7 +1325,75 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Metal::D
     return std::nullopt;
 }
 
-Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descriptor)
+template<typename Holder>
+static void addResourceHolder(const BindGroupEntryUsageData::Resource& resource, const Holder& holder)
+{
+    WTF::switchOn(resource, [&](const RefPtr<Buffer>& buffer) {
+        if (buffer)
+            buffer->addResourceHolder(holder);
+    }, [&](const RefPtr<const Texture>& texture) {
+        if (texture)
+            texture->addResourceHolder(holder);
+    }, [&](const RefPtr<const TextureView>& textureView) {
+        if (textureView)
+            textureView->apiParentTexture().addResourceHolder(holder);
+    }, [&](const RefPtr<const ExternalTexture>&) {
+    });
+}
+
+template<typename Holder>
+static void registerResourceHolderImpl(const Vector<BindableResources>& resources, const Holder& holder)
+{
+    for (const auto& bindableResources : resources) {
+        for (const auto& resourceUsage : bindableResources.resourceUsages)
+            addResourceHolder(resourceUsage.resource, holder);
+    }
+}
+
+void registerResourceHolder(const Vector<BindableResources>& resources, const BindGroup& bindGroup)
+{
+    registerResourceHolderImpl(resources, bindGroup);
+}
+
+void registerResourceHolder(const Vector<BindableResources>& resources, const RenderBundle& renderBundle)
+{
+    registerResourceHolderImpl(resources, renderBundle);
+}
+
+id<MTLResource> placeholderForDestroyedResource(const BindGroupEntryUsageData::Resource& resource)
+{
+    id<MTLResource> placeholder = nil;
+    WTF::switchOn(resource, [&](const RefPtr<Buffer>& buffer) {
+        if (buffer && buffer->isDestroyed())
+            placeholder = buffer->buffer();
+    }, [&](const RefPtr<const Texture>& texture) {
+        if (texture && texture->isDestroyed() && !texture->isCanvasBacking())
+            placeholder = texture->texture();
+    }, [&](const RefPtr<const TextureView>& textureView) {
+        if (textureView && textureView->isDestroyed() && !textureView->apiParentTexture().isCanvasBacking())
+            placeholder = textureView->texture();
+    }, [&](const RefPtr<const ExternalTexture>&) {
+    });
+    return placeholder;
+}
+
+bool replaceDestroyedResourcesWithPlaceholders(Vector<BindableResources>& resources)
+{
+    bool replacedAnything = false;
+    for (auto& bindableResources : resources) {
+        auto resourceCount = std::min(bindableResources.mtlResources.size(), bindableResources.resourceUsages.size());
+        for (size_t i = 0; i < resourceCount; ++i) {
+            id<MTLResource> placeholder = placeholderForDestroyedResource(bindableResources.resourceUsages[i].resource);
+            if (!placeholder || placeholder == bindableResources.mtlResources[i])
+                continue;
+            bindableResources.mtlResources[i] = placeholder;
+            replacedAnything = true;
+        }
+    }
+    return replacedAnything;
+}
+
+RefPtr<WebGPU::BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descriptor)
 {
 #define INTERNAL_ERROR_STRING(x) [NSString stringWithFormat:@"GPUDevice.createBindGroup: %@", x]
 #define VALIDATION_ERROR(...) generateAValidationError(INTERNAL_ERROR_STRING((__VA_ARGS__)))
@@ -1353,8 +1481,8 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
                 }
 
                 auto& deviceLimits = limits();
-                const bool isUniformBuffer = layoutBinding->type == WGPUBufferBindingType_Uniform;
-                const bool isStorageBuffer = layoutBinding->type == WGPUBufferBindingType_Storage || layoutBinding->type == WGPUBufferBindingType_ReadOnlyStorage;
+                const bool isUniformBuffer = layoutBinding->type == BindGroupLayout::BufferBindingType::Uniform;
+                const bool isStorageBuffer = layoutBinding->type == BindGroupLayout::BufferBindingType::Storage || layoutBinding->type == BindGroupLayout::BufferBindingType::ReadOnlyStorage;
                 if (!apiBuffer->isDestroyed()) {
                     if (bufferBinding->offset >= buffer.length) {
                         VALIDATION_ERROR([NSString stringWithFormat:@"Unexpected entry.offset(%llu) >= buffer length(%lu)", bufferBinding->offset, (unsigned long)buffer.length]);
@@ -1437,11 +1565,11 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
                 if (textureViewResource) {
                     Ref apiTextureView = metal(textureViewResource->get());
                     if (auto result = validateTextureOrBindGroup(*this, apiTextureView, argumentBuffer, argumentEncoder, argumentIndices, bindGroupLayout, entry, externalTextureEntry, index, resourceUsage, stage, stageResourceUsages, stageResources, storageTextureEntry, textureEntry))
-                        return *result;
+                        return WTF::move(*result);
                 } else {
                     Ref apiTexture = metal(textureResource->get());
                     if (auto result = validateTextureOrBindGroup(*this, apiTexture, argumentBuffer, argumentEncoder, argumentIndices, bindGroupLayout, entry, externalTextureEntry, index, resourceUsage, stage, stageResourceUsages, stageResources, storageTextureEntry, textureEntry))
-                        return *result;
+                        return WTF::move(*result);
                 }
 
             } else if (externalTextureResource) {
@@ -1450,8 +1578,12 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
                     return BindGroup::createInvalid(*this);
                 }
                 Ref externalTexture = metal(externalTextureResource->get());
+                if (&externalTexture->device() != this) {
+                    VALIDATION_ERROR(@"External texture was created from a different device");
+                    return BindGroup::createInvalid(*this);
+                }
                 auto textureData = createExternalTextureFromPixelBuffer(protect(externalTexture->pixelBuffer()), externalTexture->colorSpace(), PremultiplyAlpha::Yes);
-                id<MTLTexture> texture0 = textureData.texture0 ?: placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
+                id<MTLTexture> texture0 = textureData.texture0 ?: placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
                 auto metalStage = metalRenderStage(stage);
                 if (stage != ShaderStage::Undefined) {
                     externalTextureIndices[stage].argumentBufferIndex = index;
@@ -1461,7 +1593,7 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
                     stageResources[metalStage][resourceUsage - 1].append(texture0);
                     stageResourceUsages[metalStage][resourceUsage - 1].append(makeBindGroupEntryUsageData(BindGroupEntryUsage::ConstantTexture, entry.binding, externalTexture));
                 }
-                id<MTLTexture> texture1 = textureData.texture1 ?: placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
+                id<MTLTexture> texture1 = textureData.texture1 ?: placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
                 if (texture1) {
                     stageResources[metalStage][resourceUsage - 1].append(texture1);
                     stageResourceUsages[metalStage][resourceUsage - 1].append(makeBindGroupEntryUsageData(BindGroupEntryUsage::ConstantTexture, entry.binding, externalTexture));
@@ -1484,7 +1616,7 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
                         *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
 
                     argumentIndices[stage].remove(index);
-                    if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:index++]))
+                    if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder[stage] constantDataAtIndex:index++]))
                         *primariesMatrixAddress = textureData.primariesConversionMatrix;
 
                     argumentIndices[stage].remove(index);
@@ -1532,11 +1664,13 @@ Ref<BindGroup> Device::createBindGroup(const WebGPU::BindGroupDescriptor& descri
     std::ranges::sort(dynamicBuffers, { }, &BindGroup::BufferAndType::bindingIndex);
 
     if (m_bindGroupId == std::numeric_limits<decltype(m_bindGroupId)>::max()) {
-        loseTheDevice(WGPUDeviceLostReason_Undefined);
+        loseTheDevice(WebGPU::DeviceLostReason::Unknown);
         return BindGroup::createInvalid(*this);
     }
 
-    return BindGroup::create(argumentBuffer[ShaderStage::Vertex], argumentBuffer[ShaderStage::Fragment], argumentBuffer[ShaderStage::Compute], WTF::move(resources), bindGroupLayout, WTF::move(dynamicBuffers), WTF::move(samplersSet), WTF::move(externalTextureIndices), ++m_bindGroupId, *this);
+    Ref bindGroup = BindGroup::create(argumentBuffer[ShaderStage::Vertex], argumentBuffer[ShaderStage::Fragment], argumentBuffer[ShaderStage::Compute], WTF::move(resources), bindGroupLayout, WTF::move(dynamicBuffers), WTF::move(samplersSet), WTF::move(externalTextureIndices), ++m_bindGroupId, *this);
+    registerResourceHolder(bindGroup->resources(), bindGroup);
+    return bindGroup;
 #undef VALIDATION_ERROR
 #undef INTERNAL_ERROR_STRING
 }
@@ -1637,10 +1771,11 @@ NSString* BindGroup::usageName(const OptionSet<BindGroupEntryUsage>& allowedUsag
     return result;
 }
 
-uint64_t BindGroup::makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect aspect)
+uint64_t BindGroup::makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WebGPU::TextureAspect aspect)
 {
-    RELEASE_ASSERT(aspect);
-    return (static_cast<uint64_t>(aspect) - 1) | (static_cast<uint64_t>(baseMipLevel) << 1) | (static_cast<uint64_t>(baseArrayLayer) << 32);
+    RELEASE_ASSERT(aspect != WebGPU::TextureAspect::All);
+    uint64_t aspectBit = aspect == WebGPU::TextureAspect::DepthOnly ? 1 : 0;
+    return aspectBit | (static_cast<uint64_t>(baseMipLevel) << 1) | (static_cast<uint64_t>(baseArrayLayer) << 32);
 }
 
 [[nodiscard]] static bool setArgumentBuffer(id<MTLArgumentEncoder> encoder, id<MTLBuffer> buffer)
@@ -1678,15 +1813,37 @@ bool BindGroup::rebindSamplersIfNeeded() const
     return true;
 }
 
-bool BindGroup::updateExternalTextures(ExternalTexture& externalTexture)
+bool BindGroup::updateExternalTextures(WebGPU::ExternalTexture& apiExternalTexture)
 {
-    if (!m_bindGroupLayout || externalTexture.openCommandEncoderCount())
+    // Every WebGPU::ExternalTexture that reaches a WebGPU::Metal::BindGroup is a WebGPU::Metal::ExternalTexture.
+    auto& externalTexture = downcast<ExternalTexture>(apiExternalTexture);
+    if (m_renderBundleConsumerCount)
+        return false;
+
+    if (!m_bindGroupLayout || &externalTexture.device() != m_device.ptr())
+        return false;
+
+    bool foundBoundExternalTexture = false;
+    for (auto& resource : m_resources) {
+        for (auto& resourceUsage : resource.resourceUsages) {
+            auto* boundExternalTexture = std::get_if<RefPtr<const ExternalTexture>>(&resourceUsage.resource);
+            if (!boundExternalTexture || !*boundExternalTexture)
+                continue;
+
+            if (boundExternalTexture->get() != &externalTexture || (*boundExternalTexture)->openCommandEncoderCount())
+                return false;
+
+            foundBoundExternalTexture = true;
+        }
+    }
+
+    if (!foundBoundExternalTexture)
         return false;
 
     Ref device = m_device;
     auto textureData = device->createExternalTextureFromPixelBuffer(protect(externalTexture.pixelBuffer()), externalTexture.colorSpace(), Device::PremultiplyAlpha::Yes);
-    id<MTLTexture> texture0 = textureData.texture0 ?: device->placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
-    id<MTLTexture> texture1 = textureData.texture1 ?: device->placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
+    id<MTLTexture> texture0 = textureData.texture0 ?: device->placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
+    id<MTLTexture> texture1 = textureData.texture1 ?: device->placeholderTexture(WebGPU::TextureFormat::Bgra8unorm);
     externalTexture.updateExternalTextures(texture0, texture1);
     if (!texture0 || !texture1)
         return false;
@@ -1717,7 +1874,7 @@ bool BindGroup::updateExternalTextures(ExternalTexture& externalTexture)
         if (auto* cscMatrixAddress = static_cast<simd::float4x3*>([argumentEncoder constantDataAtIndex:index++]))
             *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
 
-        if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder constantDataAtIndex:index++]))
+        if (auto* primariesMatrixAddress = static_cast<simd::float3x4*>([argumentEncoder constantDataAtIndex:index++]))
             *primariesMatrixAddress = textureData.primariesConversionMatrix;
 
         if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder constantDataAtIndex:index++]))
@@ -1725,6 +1882,11 @@ bool BindGroup::updateExternalTextures(ExternalTexture& externalTexture)
     }
 
     return true;
+}
+
+void BindGroup::releaseDestroyedResources()
+{
+    replaceDestroyedResourcesWithPlaceholders(m_resources);
 }
 
 bool BindGroup::makeSubmitInvalid(ShaderStage stage, const BindGroupLayout* pipelineLayout) const
@@ -1750,7 +1912,7 @@ bool BindGroup::makeSubmitInvalid(ShaderStage stage, const BindGroupLayout* pipe
     return true;
 }
 
-static uint64_t LEGACY_NODELETE makePipelineBindGroupKey(uint32_t groupIndex, uint64_t pipelineIndex)
+NODELETE static uint64_t makePipelineBindGroupKey(uint32_t groupIndex, uint64_t pipelineIndex)
 {
     return static_cast<uint64_t>(groupIndex) | (pipelineIndex << Device::maxBindGroups);
 }
@@ -1771,22 +1933,21 @@ bool BindGroup::previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipel
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuBindGroupAddRef(WGPUBindGroup bindGroup)
+NODELETE void wgpuBindGroupAddRef(WGPUBindGroup bindGroup)
 {
     WebGPU::Metal::fromAPI(bindGroup).ref();
 }
 
 void wgpuBindGroupRelease(WGPUBindGroup bindGroup)
 {
-    WebGPU::Metal::fromAPI(bindGroup).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(bindGroup).deref();
+    }
 }
 
 void wgpuBindGroupSetLabel(WGPUBindGroup bindGroup, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
-}
-
-bool wgpuBindGroupUpdateExternalTextures(WGPUBindGroup bindGroup, WGPUExternalTexture externalTexture)
-{
-    return protect(WebGPU::Metal::fromAPI(bindGroup))->updateExternalTextures(protect(WebGPU::Metal::fromAPI(externalTexture)));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(bindGroup))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

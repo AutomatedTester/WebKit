@@ -44,10 +44,10 @@ public:
     LegacyRenderSVGRoot(SVGSVGElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGRoot();
 
-    SVGSVGElement& LEGACY_NODELETE svgSVGElement() const;
+    NODELETE SVGSVGElement& svgSVGElement() const;
 
     bool isEmbeddedThroughSVGImage() const;
-    bool isEmbeddedThroughFrameContainingSVGDocument() const;
+    NODELETE bool isEmbeddedThroughFrameContainingSVGDocument() const;
 
     FloatSize computeIntrinsicSize() const;
     FloatSize preferredAspectRatioAsSize() const final;
@@ -88,6 +88,8 @@ private:
     // Intentionally left 'RenderSVGRoot' instead of 'LegacyRenderSVGRoot', to avoid breaking layout tests.
     ASCIILiteral renderName() const override { return "RenderSVGRoot"_s; }
 
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     LayoutUnit computeReplacedLogicalWidth(IsComputingIntrinsicSize  = IsComputingIntrinsicSize::No) const override;
     LayoutUnit computeReplacedLogicalHeight(std::optional<LayoutUnit> estimatedUsedWidth = std::nullopt) const override;
     void layout() override;
@@ -124,7 +126,7 @@ private:
     bool canBeSelectionLeaf() const override { return false; }
     bool canHaveChildren() const override { return true; }
 
-    bool LEGACY_NODELETE shouldApplyViewportClip() const;
+    NODELETE bool shouldApplyViewportClip() const;
     void updateCachedBoundaries();
     void buildLocalToBorderBoxTransform();
 

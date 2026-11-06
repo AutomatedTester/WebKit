@@ -69,7 +69,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Builder);
 
 static const CSSPropertyID firstLowPriorityProperty = static_cast<CSSPropertyID>(std::to_underlying(lastHighPriorityProperty) + 1);
 
-inline bool LEGACY_NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
+NODELETE inline bool isValidVisitedLinkProperty(CSSPropertyID id)
 {
     switch (id) {
     case CSSPropertyID::BackgroundColor:
@@ -96,18 +96,18 @@ inline bool LEGACY_NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
     return false;
 }
 
-static const StyleProperties* LEGACY_NODELETE positionTryFallbackProperties(const BuilderContext& context)
+NODELETE static const StyleProperties* positionTryFallbackProperties(const BuilderContext& context)
 {
     return context.positionTryFallback ? context.positionTryFallback->properties.get() : nullptr;
 }
 
-static bool isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
+NODELETE static bool isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
 {
     return !registered || registered->inherits;
 }
 
 Builder::Builder(Style::ComputedStyle& style, BuilderContext&& context, const MatchResult& matchResult, PropertyCascade::IncludedProperties&& includedProperties, const HashMap<AnimatableCSSProperty, EnumSet<PropertyCascade::AnimationSource>>* animatedProperties)
-    : m_cascade(matchResult, WTF::move(includedProperties), animatedProperties, positionTryFallbackProperties(context))
+    : m_cascade(matchResult, WTF::move(includedProperties), animatedProperties, protect(positionTryFallbackProperties(context)))
     , m_state(BuilderState::create(style, WTF::move(context)))
 {
 }
@@ -133,6 +133,9 @@ void Builder::applyHighlightInheritance()
     ASSERT(m_state->isBuildingHighlightStyle());
 
     BuilderGenerated::applyHighlightInheritAllProperties(m_state);
+
+    if (CheckedPtr parentHighlightStyle = m_state->parentHighlightStyle(); parentHighlightStyle && parentHighlightStyle->hasAuthorHighlightColors())
+        m_state->style().setHasAuthorHighlightColors();
 }
 
 // Top priority properties affect resolution of high priority properties.
@@ -460,10 +463,9 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
 
     if (RefPtr paintImageValue = dynamicDowncast<CSSPaintImageValue>(valueToApply.get())) {
         auto& name = paintImageValue->name().value;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST if (RefPtr paintWorklet = const_cast<Document&>(m_state->document()).paintWorkletGlobalScopeForName(name)) {
+        if (RefPtr paintWorklet = const_cast<Document&>(m_state->document()).paintWorkletGlobalScopeForName(name)) {
             Locker locker { paintWorklet->paintDefinitionLock() };
-            if (auto* registration = paintWorklet->paintDefinitionMap().get(name)) {
+            if (SUPPRESS_UNCHECKED_LOCAL auto* registration = paintWorklet->paintDefinitionMap().get(name)) {
                 for (auto& property : registration->inputProperties)
                     style.addCustomPaintWatchProperty(property);
             }
@@ -485,8 +487,8 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
 
     apply(valueType);
 
-    if (!isAnyRevert)
-        m_state->disableNativeAppearanceIfNeeded(id, cascadeOrigin);
+    if (!isAnyRevert && cascadeOrigin == PropertyCascade::Origin::Author)
+        m_state->didApplyAuthorProperty(id);
 
     if (!isUnset && !isAnyRevert && m_state->isCurrentPropertyInvalidAtComputedValueTime()) {
         // https://drafts.csswg.org/css-variables-2/#invalid-variables

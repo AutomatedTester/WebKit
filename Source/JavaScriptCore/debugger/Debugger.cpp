@@ -374,6 +374,11 @@ void Debugger::setProfilingClient(ProfilingClient* client)
     m_profilingClient = client;
 }
 
+bool Debugger::isWebKitInjectedScript(const String& sourceURL)
+{
+    return sourceURL.startsWith("__InjectedScript_"_s) && sourceURL.endsWith(".js"_s);
+}
+
 void Debugger::sourceParsed(JSGlobalObject* globalObject, SourceProvider* sourceProvider, int errorLine, const String& errorMessage)
 {
     // Preemptively check whether we can dispatch so that we don't do any unnecessary allocations.
@@ -403,6 +408,7 @@ void Debugger::sourceParsed(JSGlobalObject* globalObject, SourceProvider* source
     script.startColumn = sourceProvider->startPosition().m_column.zeroBasedInt();
     script.isContentScript = isContentScript(globalObject);
     script.sourceURL = sourceProvider->sourceURLDirective();
+    script.isInternalScript = isInternalScript(globalObject) || isWebKitInjectedScript(script.sourceURL);
     script.sourceMappingURL = sourceProvider->sourceMappingURLDirective();
 
     int sourceLength = script.source.length();
@@ -736,7 +742,7 @@ public:
     {
     }
 
-    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
+    NODELETE void operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_debugger == codeBlock->globalObject()->debugger())
             codeBlock->clearDebuggerRequests();
@@ -852,7 +858,7 @@ public:
     {
     }
 
-    void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
+    NODELETE void operator()(CodeBlock* codeBlock) const
     {
         if (codeBlock->hasDebuggerRequests() && m_globalObject == codeBlock->globalObject())
             codeBlock->clearDebuggerRequests();
@@ -1021,6 +1027,30 @@ void Debugger::updateCallFrameInternal(CallFrame* callFrame)
     }
 }
 
+Debugger::BlackboxFlags Debugger::blackboxFlagsAtPosition(SourceID sourceID, const TextPosition& position) const
+{
+    // The end of a program is positioned at the end of its source, which a range reaching the end of the source must cover.
+    bool isAtEndOfProgram = m_reasonForPause == PausedAtEndOfProgram;
+
+    BlackboxFlags relevantBlackboxFlags;
+    if (const auto it = m_blackboxConfigurations.find(sourceID); it != m_blackboxConfigurations.end()) {
+        for (const auto& [blackboxRange, blackboxFlags] : it->value) {
+            if (position < blackboxRange.first || (isAtEndOfProgram ? position > blackboxRange.second : position >= blackboxRange.second))
+                continue;
+            relevantBlackboxFlags.add(blackboxFlags);
+            if (relevantBlackboxFlags.contains(BlackboxFlag::Ignore))
+                break;
+        }
+    }
+    return relevantBlackboxFlags;
+}
+
+static bool isExecutingBuiltinDefaultClassConstructor(CallFrame* callFrame)
+{
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    return codeBlock && codeBlock->unlinkedCodeBlock()->isBuiltinDefaultClassConstructor();
+}
+
 void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
 {
     VM& vm = m_vm;
@@ -1039,16 +1069,12 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
     SourceID sourceID = DebuggerCallFrame::sourceIDForCallFrame(m_currentCallFrame);
     TextPosition position = DebuggerCallFrame::positionForCallFrame(vm, m_currentCallFrame);
 
-    BlackboxFlags relevantBlackboxFlags;
-    if (const auto it = m_blackboxConfigurations.find(sourceID); it != m_blackboxConfigurations.end()) {
-        for (const auto& [blackboxRange, blackboxFlags] : it->value) {
-            if (position < blackboxRange.first || position >= blackboxRange.second)
-                continue;
-            relevantBlackboxFlags.add(blackboxFlags);
-            if (relevantBlackboxFlags.contains(BlackboxFlag::Ignore))
-                return;
-        }
-    }
+    BlackboxFlags relevantBlackboxFlags = blackboxFlagsAtPosition(sourceID, position);
+    if (relevantBlackboxFlags.contains(BlackboxFlag::Ignore))
+        return;
+
+    if (isExecutingBuiltinDefaultClassConstructor(m_currentCallFrame))
+        return;
 
     bool afterBlackboxedScript = m_afterBlackboxedScript;
     bool pauseNow = false;
@@ -1230,7 +1256,7 @@ public:
         ASSERT(callFrame->isEmptyTopLevelCallFrameForDebugger());
     }
 
-    CallFrame* LEGACY_NODELETE asCallFrame() { return CallFrame::create(m_values); }
+    NODELETE CallFrame* asCallFrame() { return CallFrame::create(m_values); }
 
 private:
     Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };
@@ -1436,6 +1462,12 @@ void Debugger::didExecuteProgram(CallFrame* callFrame)
     if (!m_currentCallFrame)
         return;
 
+    // A blackboxed program does not take a pending pause, so the next program still wants it.
+    SourceID sourceID = DebuggerCallFrame::sourceIDForCallFrame(m_currentCallFrame);
+    TextPosition position = DebuggerCallFrame::positionForCallFrame(m_vm, m_currentCallFrame);
+    bool shouldKeepPause = m_pauseAtNextOpportunity && !blackboxFlagsAtPosition(sourceID, position).isEmpty();
+    bool wasAfterBlackboxedScript = m_afterBlackboxedScript;
+
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
     CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
 
@@ -1455,6 +1487,11 @@ void Debugger::didExecuteProgram(CallFrame* callFrame)
         resetImmediatePauseState();
         resetEventualPauseState();
         m_deferredBreakpoints.clear();
+
+        if (shouldKeepPause) {
+            schedulePauseAtNextOpportunity();
+            m_afterBlackboxedScript = wasAfterBlackboxedScript;
+        }
     }
 }
 

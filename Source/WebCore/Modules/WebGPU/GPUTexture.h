@@ -29,8 +29,8 @@
 #include "GPUTextureAspect.h"
 #include "GPUTextureDimension.h"
 #include "GPUTextureFormat.h"
-#include "WebGPUTexture.h"
 #include <JavaScriptCore/JSCJSValue.h>
+#include <WebCore/WebGPUCppAPI.h>
 #include <atomic>
 #include <optional>
 #include <wtf/Ref.h>
@@ -50,12 +50,12 @@ template<typename> class ExceptionOr;
 
 class GPUTexture : public RefCountedAndCanMakeWeakPtr<GPUTexture> {
 public:
-    static Ref<GPUTexture> create(Ref<WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, GPUDevice& device, bool isCanvasBacking = false)
+    static Ref<GPUTexture> create(Ref<::WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, GPUDevice& device, bool isCanvasBacking = false)
     {
         return adoptRef(*new GPUTexture(WTF::move(backing), descriptor, device, isCanvasBacking));
     }
 
-    String LEGACY_NODELETE label() const;
+    NODELETE String label() const;
     void setLabel(String&&);
 
     ExceptionOr<Ref<GPUTextureView>> createView(const std::optional<GPUTextureViewDescriptor>&) const;
@@ -63,46 +63,47 @@ public:
     void destroy();
     bool isDestroyed() const { return m_isDestroyed; }
 
-    WebGPU::Texture& backing() { return m_backing; }
-    const WebGPU::Texture& backing() const { return m_backing; }
+    ::WebGPU::Texture& backing() { return m_backing; }
+    const ::WebGPU::Texture& backing() const { return m_backing; }
     GPUTextureFormat format() const { return m_format; }
     bool isCanvasBacking() const { return m_isCanvasBacking; }
 
-    GPUDevice* device() const;
+    NODELETE GPUDevice* device() const;
 
-    GPUIntegerCoordinateOut LEGACY_NODELETE width() const;
-    GPUIntegerCoordinateOut LEGACY_NODELETE height() const;
-    GPUIntegerCoordinateOut LEGACY_NODELETE depthOrArrayLayers() const;
-    GPUIntegerCoordinateOut LEGACY_NODELETE mipLevelCount() const;
-    GPUSize32Out LEGACY_NODELETE sampleCount() const;
-    GPUTextureDimension LEGACY_NODELETE dimension() const;
-    GPUFlagsConstant LEGACY_NODELETE usage() const;
-    JSC::JSValue LEGACY_NODELETE textureBindingViewDimension() const;
-    size_t LEGACY_NODELETE estimatedMemoryCost() const;
+    NODELETE GPUIntegerCoordinateOut width() const;
+    NODELETE GPUIntegerCoordinateOut height() const;
+    NODELETE GPUIntegerCoordinateOut depthOrArrayLayers() const;
+    NODELETE GPUIntegerCoordinateOut mipLevelCount() const;
+    NODELETE GPUSize32Out sampleCount() const;
+    NODELETE GPUTextureDimension dimension() const;
+    NODELETE GPUFlagsConstant usage() const;
+    NODELETE JSC::JSValue textureBindingViewDimension() const;
+    NODELETE size_t estimatedMemoryCost() const;
 
     // The GPU memory to tell the GC about, since it can't otherwise see it. Only a texture the device creates for the page has
     // one; a canvas or XR context owns its textures and makes new ones every frame. May be called from GC threads.
     size_t memoryCost() const { return m_memoryCost.load(std::memory_order_relaxed); }
     void setMemoryCost(size_t memoryCost) { m_memoryCost.store(memoryCost, std::memory_order_relaxed); }
 
-    static GPUTextureFormat LEGACY_NODELETE aspectSpecificFormat(GPUTextureFormat, GPUTextureAspect);
-    static uint32_t LEGACY_NODELETE texelBlockSize(GPUTextureFormat);
-    static uint32_t LEGACY_NODELETE texelBlockWidth(GPUTextureFormat);
-    static uint32_t LEGACY_NODELETE texelBlockHeight(GPUTextureFormat);
+    NODELETE static GPUTextureFormat aspectSpecificFormat(GPUTextureFormat, GPUTextureAspect);
+    NODELETE static uint32_t texelBlockSize(GPUTextureFormat);
+    NODELETE static uint32_t texelBlockWidth(GPUTextureFormat);
+    NODELETE static uint32_t texelBlockHeight(GPUTextureFormat);
 
     virtual ~GPUTexture();
 
-    bool hasActiveInspectorCanvasCallTracer() const;
+    NODELETE bool hasActiveInspectorCanvasCallTracer() const;
 
 private:
-    GPUTexture(Ref<WebGPU::Texture>&&, const GPUTextureDescriptor&, GPUDevice&, bool isCanvasBacking);
+    GPUTexture(Ref<::WebGPU::Texture>&&, const GPUTextureDescriptor&, GPUDevice&, bool isCanvasBacking);
 
     GPUTexture(const GPUTexture&) = delete;
     GPUTexture(GPUTexture&&) = delete;
     GPUTexture& operator=(const GPUTexture&) = delete;
     GPUTexture& operator=(GPUTexture&&) = delete;
 
-    const Ref<WebGPU::Texture> m_backing;
+    const Ref<::WebGPU::Texture> m_backing;
+    String m_label;
     const GPUTextureFormat m_format;
     const GPUIntegerCoordinateOut m_width;
     const GPUIntegerCoordinateOut m_height;

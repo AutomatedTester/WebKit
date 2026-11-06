@@ -33,6 +33,7 @@
 #include "LegacyRenderSVGResourceClipper.h"
 #include "LegacyRenderSVGResourceContainerInlines.h"
 #include "PathOperation.h"
+#include "RenderElementInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerModelObject.h"
 #include "RenderObjectInlines.h"
@@ -66,7 +67,7 @@ public:
 
     void resourceChanged(SVGElement&) final;
 
-    const RenderElement& LEGACY_NODELETE renderer() const final { return m_clientRenderer.get(); }
+    NODELETE const RenderElement& renderer() const final { return m_clientRenderer.get(); }
 
 private:
     const CheckedRef<RenderElement> m_clientRenderer;
@@ -79,8 +80,11 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     if (m_clientRenderer->renderTreeBeingDestroyed())
         return;
 
+    // Resolving pending clients may notify this renderer, so it must have a parent.
+    ASSERT(m_clientRenderer->parent());
+
     if (is<SVGFilterElement>(element)) {
-        if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get())) {
+        if (auto* layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer)) {
             if (CheckedPtr layer = layerModelObject->layer())
                 layer->clearFilters();
         }
@@ -97,14 +101,14 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     // it before the needsLayout() return below, because layout never touches the cache. Other
     // resource types are not paint servers, so they leave it alone.
     if (resourceIsPaintServer) {
-        if (CheckedPtr layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get()))
+        if (CheckedPtr layerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer))
             layerModelObject->invalidateSVGPaintServerCache();
     }
 
     if (m_clientRenderer->needsLayout())
         return;
 
-    CheckedPtr clientLayerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer.get());
+    CheckedPtr clientLayerModelObject = dynamicDowncast<RenderLayerModelObject>(m_clientRenderer);
 
     // A non-layer SVG client applies clip-path/mask at paint time, so the area the resource used to cover
     // lives only in its cached visual overflow rect (kept current at the end of the client's own layout).
@@ -112,11 +116,21 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     // repainted along with the new one. Layered clients keep their old bounds in the layer's stored
     // repaint rect and go through the position update instead.
     bool isNonLayerSVGClient = clientLayerModelObject && clientLayerModelObject->isSVGLayerAwareRenderer() && !clientLayerModelObject->hasLayer();
+
+    // A resource that is being destroyed still applies until its renderer is gone. Repaint the area it
+    // covered now, and leave the area without it to the next layout.
+    if (isNonLayerSVGClient && element.renderer() && !element.renderer()->parent()) {
+        clientLayerModelObject->repaint();
+        clientLayerModelObject->invalidateCachedVisualOverflowRect();
+        m_clientRenderer->setNeedsLayout();
+        return;
+    }
+
     std::optional<RenderObject::RepaintRects> oldRepaintRects;
     SingleThreadWeakPtr<const RenderLayerModelObject> repaintContainer;
     if (isNonLayerSVGClient) {
         repaintContainer = clientLayerModelObject->containerForRepaint().renderer.get();
-        CheckedPtr checkedRepaintContainer = repaintContainer.get();
+        CheckedPtr checkedRepaintContainer = repaintContainer;
         oldRepaintRects = clientLayerModelObject->rectsForRepaintingAfterLayout(checkedRepaintContainer.get(), RepaintOutlineBounds::Yes);
     }
 
@@ -135,7 +149,7 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     // once during layout, or if the shape itself changes. Here we manually update the marker positions without
     // requiring a relayout. Instead we can simply repaint the path - via the updateLayerPosition() logic, properly
     // repainting the old repaint boundaries and the new ones (after the marker change).
-    if (auto* pathClientRenderer = dynamicDowncast<RenderSVGPath>(m_clientRenderer.get()); pathClientRenderer && is<SVGMarkerElement>(element))
+    if (auto* pathClientRenderer = dynamicDowncast<RenderSVGPath>(m_clientRenderer); pathClientRenderer && is<SVGMarkerElement>(element))
         pathClientRenderer->updateMarkerPositions();
 
     // During layout, clients with layers are handled by the post-layout
@@ -146,7 +160,7 @@ void CSSSVGResourceElementClient::resourceChanged(SVGElement& element)
     }
 
     if (oldRepaintRects) {
-        CheckedPtr checkedRepaintContainer = repaintContainer.get();
+        CheckedPtr checkedRepaintContainer = repaintContainer;
         auto newRepaintRects = clientLayerModelObject->rectsForRepaintingAfterLayout(checkedRepaintContainer.get(), RepaintOutlineBounds::Yes);
         clientLayerModelObject->repaintAfterLayoutIfNeeded(WTF::move(repaintContainer), RequiresFullRepaint::Yes, *oldRepaintRects, newRepaintRects);
         return;
@@ -205,9 +219,6 @@ ReferencedSVGResources::SVGElementIdentifierAndTagPairs ReferencedSVGResources::
         );
     }
 
-    if (!document.settings().layerBasedSVGEngineEnabled())
-        return referencedResources;
-
     if (style.hasPositionedMask()) {
         // FIXME: We should support all the values in the CSS mask property, but for now just use the first mask-image if it's a reference.
         if (RefPtr maskImage = style.maskLayers().usedFirst().image().tryStyleImage()) {
@@ -216,6 +227,9 @@ ReferencedSVGResources::SVGElementIdentifierAndTagPairs ReferencedSVGResources::
                 referencedResources.append({ resourceID, { SVGNames::maskTag } });
         }
     }
+
+    if (!document.settings().layerBasedSVGEngineEnabled())
+        return referencedResources;
 
     if (style.hasMarkers()) {
         if (auto markerStartResource = style.markerStart(); !markerStartResource.isNone()) {
@@ -260,8 +274,14 @@ void ReferencedSVGResources::updateReferencedResources(TreeScope& treeScope, con
 
     for (auto& [targetID, tagNames] : referencedResources) {
         RefPtr element = elementForResourceIDs(treeScope, targetID, tagNames);
-        if (!element)
+        if (!element) {
+            // The resource may be parsed or inserted later. Mark the reference as pending, so this renderer becomes its client.
+            if (m_renderer->document().settings().layerBasedSVGEngineEnabled()) {
+                if (RefPtr clientElement = dynamicDowncast<SVGElement>(m_renderer->element()))
+                    treeScope.addPendingSVGResource(targetID, *clientElement);
+            }
             continue;
+        }
 
         addClientForTarget(*element, targetID);
         oldKeys.remove(targetID);

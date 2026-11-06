@@ -85,6 +85,18 @@ def add_path_to_trie(path, value, trie):
     add_path_to_trie(rest, value, trie[directory])
 
 
+def convert_trie_to_flat_paths(trie, prefix=None):
+    result = {}
+    for name, value in trie.items():
+        path = prefix + "/" + name if prefix else name
+        # A test's results always hold a plain value; a directory holds only other nodes.
+        if isinstance(value, dict) and all(isinstance(child, dict) for child in value.values()):
+            result.update(convert_trie_to_flat_paths(value, path))
+        else:
+            result[path] = value
+    return result
+
+
 def _add_perf_metric_for_test(path, time, tests, depth, depth_limit):
     """
     Aggregate test time to result for a given test at a specified depth_limit.

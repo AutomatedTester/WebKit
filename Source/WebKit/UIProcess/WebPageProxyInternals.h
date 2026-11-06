@@ -29,6 +29,7 @@
 #include "BidiDigitalCredentialsAgent.h"
 #endif
 #include "Connection.h"
+#include "ContentInversion.h"
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -55,6 +56,7 @@
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DevicePostureType.h>
+#include <WebCore/FixedContainerEdges.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntPointHash.h>
@@ -65,6 +67,7 @@
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/ViewportSegments.h>
 #include <pal/HysteresisActivity.h>
+#include <wtf/CallbackAggregator.h>
 #include <wtf/UUID.h>
 
 #if ENABLE(APPLE_PAY)
@@ -133,6 +136,15 @@ struct PrivateClickMeasurementAndMetadata {
     WebCore::PrivateClickMeasurement pcm;
     String sourceDescription;
     String purchaser;
+};
+
+struct PendingBackForwardIframeRestore {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(PendingBackForwardIframeRestore);
+
+    WebCore::ProcessIdentifier mainFrameProcessIdentifier;
+    WebCore::BackForwardFrameItemIdentifier mainFrameItemID;
+    Vector<Ref<WebProcessProxy>> iframeProcesses;
+    Ref<MainRunLoopSuccessCallbackAggregator> aggregator;
 };
 
 #if ENABLE(SPEECH_SYNTHESIS)
@@ -245,6 +257,7 @@ public:
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingWheelEvents;
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingTouchEvents;
 #endif
+    ContentInversion contentInversion { ContentInversion::System };
     WebCore::FloatSize defaultUnobscuredSize;
     EditorState editorState;
     WebCore::IntSize fixedLayoutSize;
@@ -268,9 +281,13 @@ public:
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
     WebCore::Color pageExtendedBackgroundColor;
+    EffectivePageAppearance effectivePageAppearance { EffectivePageAppearance::Unknown };
     UserObservablePageCounter::Token pageIsUserObservableCount;
     std::optional<MonotonicTime> pageLoadStart;
     PageLoadState pageLoadState;
+#if PLATFORM(MAC)
+    PrintProcessUseCounter::Token printProcessUseToken;
+#endif
 
     TextExtractionCache textExtractionCache;
     OptionSet<WebCore::ActivityState> potentiallyChangedActivityStateFlags;
@@ -315,6 +332,7 @@ public:
     HashMap<WebCore::SleepDisablerIdentifier, std::unique_ptr<WebCore::SleepDisabler>> sleepDisablers;
 
     HashMap<WebCore::BackForwardItemIdentifier, Vector<Ref<WebFrameProxy>>> pendingBackForwardCachedChildren;
+    HashMap<WebCore::NavigationIdentifier, std::unique_ptr<PendingBackForwardIframeRestore>> pendingBackForwardIframeRestores;
 
     // Each cross-origin remote frame's origin within its immediate parent frame, keyed by frame ID.
     // Used to compute each frame's cumulative offset in main-frame coordinates (see
@@ -345,6 +363,7 @@ public:
 
 #if ENABLE(CONTEXT_MENUS)
     ContextMenuContextData activeContextMenuContextData;
+    WeakPtr<WebProcessProxy> activeContextMenuProcess;
 #endif
 
 #if ENABLE(GAMEPAD)
@@ -361,6 +380,8 @@ public:
     WebCore::IntRect currentDragCaretEditableElementRect;
     WebCore::IntRect currentDragCaretRect;
     WebCore::DragHandlingMethod currentDragHandlingMethod { WebCore::DragHandlingMethod::None };
+    // The frame that handled the most recent drag controller action, after it was forwarded to any remote frame.
+    std::optional<WebCore::FrameIdentifier> currentDragTargetFrameID;
 #endif
 
     RefPtr<WebColorPicker> colorPicker;
@@ -419,6 +440,11 @@ public:
 
     bool needsFixedContainerEdgesUpdateAfterNextCommit { false };
 
+    WebCore::FixedContainerEdges mainFrameFixedContainerEdges;
+    bool topFixedContainerEdgeIsLocked { false };
+    WebCore::FixedContainerEdges resolvedFixedContainerEdges;
+    HashMap<WebCore::FrameIdentifier, std::optional<WebCore::FixedContainerEdges>> fixedContainerEdgeSamplingFrames;
+
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     std::optional<PlaybackSessionContextIdentifier> currentFullscreenVideoSessionIdentifier;
 #endif
@@ -476,6 +502,7 @@ public:
 #endif
 
     std::optional<WebCore::DevicePostureType> currentDevicePostureType;
+    bool forceNeedsSecureInputReevaluation { false };
 
     explicit Internals(WebPageProxy&, bool processInheritedFromOpener);
 

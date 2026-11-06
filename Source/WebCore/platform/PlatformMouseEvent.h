@@ -86,6 +86,7 @@ public:
 #if PLATFORM(MAC)
     int eventNumber() const { return m_eventNumber; }
     int menuTypeForEvent() const { return m_menuTypeForEvent; }
+    NODELETE WEBCORE_EXPORT bool isContextMenuEvent() const;
 #endif
 
 #if PLATFORM(WIN)

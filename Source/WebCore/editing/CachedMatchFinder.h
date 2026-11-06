@@ -51,10 +51,10 @@ public:
     WEBCORE_EXPORT std::expected<unsigned, CacheUnusable> countMatches(const std::optional<SimpleRange>&, const String& target, FindOptions, std::optional<unsigned> limit = std::nullopt);
 
     WEBCORE_EXPORT bool matchesAreMarked(const String& target, FindOptions, std::optional<unsigned> limit) const;
-    WEBCORE_EXPORT void setMatchesMarked();
-    WEBCORE_EXPORT void clearMatchesMarked();
+    NODELETE WEBCORE_EXPORT void setMatchesMarked();
+    NODELETE WEBCORE_EXPORT void clearMatchesMarked();
 
-    WEBCORE_EXPORT static void setMaximumRunCountForTesting(std::optional<unsigned>);
+    NODELETE WEBCORE_EXPORT static void setMaximumRunCountForTesting(std::optional<unsigned>);
 
 private:
     struct TextRun {
@@ -74,7 +74,7 @@ private:
     };
 
     bool isTextBufferCacheValid() const;
-    bool clearTextBufferCache();
+    void clearTextBufferCache();
     TextRunCache& bufferForOptions(FindOptions);
     bool isSearchResultCacheValid(const String&, FindOptions, std::optional<unsigned> limit) const;
     static std::optional<std::pair<String, Vector<TextRun>>> textForScope(ContainerNode&, FindOptions);

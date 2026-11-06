@@ -25,9 +25,12 @@
 
 #pragma once
 
+#include <WebCore/AXTextStateChangeIntent.h>
+#include <WebCore/AccessibilityRemoteToken.h>
 #include <WebCore/AffineTransform.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/Node.h>
+#include <WebCore/TextAffinity.h>
 #include <optional>
 #include <wtf/ProcessID.h>
 #include <wtf/RefPtr.h>
@@ -61,7 +64,7 @@ inline unsigned accessibilityModeRank(AccessibilityMode mode)
     return mode == AccessibilityMode::AXThread ? 2 : 1;
 }
 
-std::optional<AccessibilityMode> resolveAccessibilityModeTransition(AccessibilityMode current, AccessibilityMode requested);
+NODELETE std::optional<AccessibilityMode> resolveAccessibilityModeTransition(AccessibilityMode current, AccessibilityMode requested);
 
 enum class TextMarkerOrigin : uint16_t;
 
@@ -95,10 +98,16 @@ struct VisiblePositionIndexRange {
     bool isNull() const { return startIndex.value == -1 || endIndex.value == -1; }
 };
 
+// State a frame inherits from the element hosting it (e.g. its <iframe>), which may be in another process.
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
 struct InheritedFrameState {
     bool isAXHidden { false };
     bool isInert { false };
     bool isRenderHidden { false };
+    // The accessible name of the hosting element, which takes precedence over the frame's document title.
+    String hostingFrameName;
+
+    bool operator==(const InheritedFrameState&) const = default;
 };
 
 // When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
@@ -130,5 +139,37 @@ struct AXFrameGeometry {
     AffineTransform screenTransform;
 };
 #endif
+
+#if PLATFORM(MAC)
+// The fields of a TextMarkerData, so a text marker can be sent between processes as plain values.
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AXRemoteFrameTextMarker {
+    unsigned treeID { 0 };
+    unsigned objectID { 0 };
+    unsigned offset { 0 };
+    // A Position::AnchorType, which isn't serializable.
+    uint8_t anchorType { 0 };
+    unsigned characterStart { 0 };
+    unsigned characterOffset { 0 };
+    bool isRedacted { false };
+    Affinity affinity { Affinity::Downstream };
+    TextMarkerOrigin origin { };
+};
+
+// A selection change in a cross-site frame, sent by its process to the main frame's process, which posts
+// AXSelectedTextChanged on its root web area because VoiceOver only handles the notification there.
+// It carries what the frame's own notification does, so the main frame can post exactly the same userInfo.
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AXRemoteFrameSelectedTextChange {
+    AXTextStateChangeType type { AXTextStateChangeType::Unknown };
+    AXTextSelectionDirection direction { AXTextSelectionDirection::Unknown };
+    AXTextSelectionGranularity granularity { AXTextSelectionGranularity::Unknown };
+    bool focusChange { false };
+    bool isSynchronizing { false };
+    std::optional<AXRemoteFrameTextMarker> selectionStart;
+    std::optional<AXRemoteFrameTextMarker> selectionEnd;
+    std::optional<AccessibilityRemoteToken> textChangeElement;
+};
+#endif // PLATFORM(MAC)
 
 } // namespace WebCore

@@ -40,8 +40,8 @@ public:
         Ref<RTCDataChannel> channel;
     };
 
-    static Ref<RTCDataChannelEvent> create(const AtomString& type, CanBubble, IsCancelable, Ref<RTCDataChannel>&&);
-    static Ref<RTCDataChannelEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
+    NODELETE static Ref<RTCDataChannelEvent> create(const AtomString& type, CanBubble, IsCancelable, Ref<RTCDataChannel>&&);
+    NODELETE static Ref<RTCDataChannelEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
 
     RTCDataChannel& channel() { return m_channel; }
 

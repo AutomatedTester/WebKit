@@ -28,7 +28,9 @@
 
 #include "ImageOverlayController.h"
 #include "ImageQualityController.h"
+#include "NaturalDimensions.h"
 #include "PaintInfo.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
@@ -64,6 +66,27 @@ RefPtr<ImageBuffer> RenderViewTransitionCapture::image()
 void RenderViewTransitionCapture::setImage(RefPtr<ImageBuffer> oldImage)
 {
     m_oldImage = oldImage;
+    if (hasLayer())
+        layer()->contentChanged(ContentChangeType::Image);
+    if (parent())
+        repaint();
+}
+
+RefPtr<NativeImage> RenderViewTransitionCapture::displayOnlyImage() const
+{
+    // FIXME: An object-view-box needs a source sub-rect, which GraphicsLayer cannot express, so such
+    // a capture is painted, and shows nothing.
+    if (!style().objectViewBox().isNone())
+        return nullptr;
+    return m_oldDisplayOnlyImage;
+}
+
+void RenderViewTransitionCapture::setDisplayOnlyImage(RefPtr<NativeImage>&& oldImage)
+{
+    if (m_oldDisplayOnlyImage == oldImage)
+        return;
+
+    m_oldDisplayOnlyImage = WTF::move(oldImage);
     if (hasLayer())
         layer()->contentChanged(ContentChangeType::Image);
     if (parent())
@@ -206,6 +229,11 @@ String RenderViewTransitionCapture::debugDescription() const
     builder.append(" ::view-transition-"_s, style().pseudoElementType() == PseudoElementType::ViewTransitionNew ? "new("_s : "old("_s);
     builder.append(style().pseudoElementNameArgument(), ')');
     return builder.toString();
+}
+
+NaturalDimensions RenderViewTransitionCapture::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

@@ -63,7 +63,7 @@
 #include "RemotePageProxy.h"
 #include "RemoteWorkerType.h"
 #include "SandboxExtension.h"
-#include "SecurityFlagsController.h"
+#include "SecurityFlags.h"
 #include "ShouldGrandfatherStatistics.h"
 #include "StorageAccessStatus.h"
 #include "ViewSnapshotStore.h"
@@ -136,7 +136,7 @@ using namespace WebCore;
 
 static constexpr Seconds networkProcessResponsivenessTimeout = 6_s;
 
-static WeakHashSet<NetworkProcessProxy>& LEGACY_NODELETE networkProcessesSet()
+NODELETE static WeakHashSet<NetworkProcessProxy>& networkProcessesSet()
 {
     ASSERT(RunLoop::isMain());
     static NeverDestroyed<WeakHashSet<NetworkProcessProxy>> set;
@@ -207,7 +207,7 @@ void NetworkProcessProxy::sendCreationParametersToNewProcess()
 
     NetworkProcessCreationParameters parameters;
     parameters.auxiliaryProcessParameters = auxiliaryProcessParameters();
-    parameters.securityFlags.replaceWith(SecurityFlagsController::singleton().securityFlags());
+    parameters.securityFlags.replaceWith(securityFlags());
     parameters.urlSchemesRegisteredAsSecure = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsSecure());
     parameters.urlSchemesRegisteredAsBypassingContentSecurityPolicy = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsBypassingContentSecurityPolicy());
     parameters.urlSchemesRegisteredAsLocal = copyToVector(LegacyGlobalSettings::singleton().schemesToRegisterAsLocal());
@@ -351,24 +351,32 @@ void NetworkProcessProxy::getNetworkProcessConnection(WebProcessProxy& webProces
 {
     RELEASE_LOG(ProcessSuspension, "%p - NetworkProcessProxy::getNetworkProcessConnection: Taking a background assertion because web process pid %i (core identifier %" PRIu64 ") is requesting a connection", this, webProcessProxy.processID(), webProcessProxy.coreProcessIdentifier().toUInt64());
     startResponsivenessTimer(UseLazyStop::No);
-    NetworkProcessConnectionParameters parameters;
-#if ENABLE(IPC_TESTING_API)
-    parameters.ignoreInvalidMessageForTesting = webProcessProxy.ignoreInvalidMessageForTesting();
-#endif
-    parameters.sharedPreferencesForWebProcess = *webProcessProxy.sharedPreferencesForWebProcess();
+    Vector<WebPageProxyIdentifier> allowedWebPageProxyIdentifiers;
+    Vector<WebPageProxyIdentifier> pagesWithRelaxedThirdPartyCookieBlocking;
     for (Ref page : webProcessProxy.pages()) {
-        parameters.allowedWebPageProxyIdentifiers.append(page->identifier());
+        allowedWebPageProxyIdentifiers.append(page->identifier());
         if (page->configuration().shouldRelaxThirdPartyCookieBlocking() == ShouldRelaxThirdPartyCookieBlocking::Yes)
-            parameters.pagesWithRelaxedThirdPartyCookieBlocking.append(page->identifier());
+            pagesWithRelaxedThirdPartyCookieBlocking.append(page->identifier());
     }
+    HashMap<WebCore::PageIdentifier, Vector<String>> corsDisablingPatternsPerPage;
     for (Ref page : webProcessProxy.mainPages()) {
         if (!page->corsDisablingPatterns().isEmpty())
-            parameters.corsDisablingPatternsPerPage.add(page->webPageIDInMainFrameProcess(), page->corsDisablingPatterns());
+            corsDisablingPatternsPerPage.add(page->webPageIDInMainFrameProcess(), page->corsDisablingPatterns());
     }
     auto& cookiesData = webProcessProxy.allowedFirstPartiesForCookiesData();
-    parameters.loadedWebArchive = cookiesData.first;
-    parameters.allowedFirstPartiesForCookies = cookiesData.second;
-    parameters.hostedDomains = webProcessProxy.hostedDomains();
+    NetworkProcessConnectionParameters parameters {
+        .sharedPreferencesForWebProcess = *webProcessProxy.sharedPreferencesForWebProcess(),
+#if ENABLE(IPC_TESTING_API)
+        .ignoreInvalidMessageForTesting = webProcessProxy.ignoreInvalidMessageForTesting(),
+#endif
+        .pagesWithRelaxedThirdPartyCookieBlocking = WTF::move(pagesWithRelaxedThirdPartyCookieBlocking),
+        .loadedWebArchive = cookiesData.first,
+        .allowedFirstPartiesForCookies = cookiesData.second,
+        .allowedWebPageProxyIdentifiers = WTF::move(allowedWebPageProxyIdentifiers),
+        .hostedDomains = webProcessProxy.hostedDomains(),
+        .corsDisablingPatternsPerPage = WTF::move(corsDisablingPatternsPerPage),
+        .crossOriginIsolation = webProcessProxy.crossOriginIsolation(),
+    };
     sendWithAsyncReply(Messages::NetworkProcess::CreateNetworkConnectionToWebProcess { webProcessProxy.coreProcessIdentifier(), webProcessProxy.sessionID(), parameters }, [weakThis = WeakPtr { *this }, reply = WTF::move(reply)](auto&& identifier, auto cookieAcceptPolicy) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
@@ -399,7 +407,7 @@ void NetworkProcessProxy::sharedPreferencesForWebProcessDidChange(WebProcessProx
     sendWithAsyncReply(Messages::NetworkProcess::SharedPreferencesForWebProcessDidChange { webProcessProxy.coreProcessIdentifier(), WTF::move(sharedPreferencesForWebProcess) }, WTF::move(completionHandler));
 }
 
-void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags& securityFlags)
+void NetworkProcessProxy::securityFlagsDidChange(const SecurityFlags::Storage& securityFlags)
 {
     send(Messages::NetworkProcess::SecurityFlagsDidChange { securityFlags }, 0);
 }
@@ -656,20 +664,23 @@ void NetworkProcessProxy::didBlockLoadToKnownTracker(WebPageProxyIdentifier page
         page->didBlockLoadToKnownTracker(url);
 }
 
-void NetworkProcessProxy::considerProcessSwapForNavigationResponse(WebPageProxyIdentifier pageID, WebCore::NavigationIdentifier navigationID, BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, NavigationResponseProcessSwapReason reason, const WebCore::Site& responseSite, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(std::optional<WebCore::ProcessIdentifier> destinationWebProcess)>&& completionHandler)
+void NetworkProcessProxy::considerProcessSwapForNavigationResponse(WebPageProxyIdentifier pageID, WebCore::NavigationIdentifier navigationID, BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, NavigationResponseProcessSwapReason reason, const NavigationResponseForProcessSwap& response, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&& completionHandler)
 {
     RELEASE_LOG(ProcessSwapping, "%p - NetworkProcessProxy::considerProcessSwapForNavigationResponse: pageID=%" PRIu64 ", navigationID=%" PRIu64 ", reason=%u, browsingContextGroupSwitchDecision=%u, existingNetworkResourceLoadIdentifierToResume=%" PRIu64, this, pageID.toUInt64(), navigationID.object().toUInt64(), (unsigned)reason, (unsigned)browsingContextGroupSwitchDecision, existingNetworkResourceLoadIdentifierToResume.toUInt64());
 
     RefPtr page = WebProcessProxy::webPage(pageID);
     if (!page)
-        return completionHandler(std::nullopt);
+        return completionHandler(NavigationResponseWithoutProcessSwap::CancelLoad);
 
     switch (reason) {
     case NavigationResponseProcessSwapReason::EnhancedSecurity:
-        page->triggerProcessSwapForEnhancedSecurity(navigationID, responseSite, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
+        page->triggerProcessSwapForEnhancedSecurity(navigationID, WebCore::Site { response.url }, loadingWebProcess, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
         break;
     case NavigationResponseProcessSwapReason::COOP:
-        page->triggerBrowsingContextGroupSwitchForNavigation(navigationID, browsingContextGroupSwitchDecision, responseSite, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
+        page->triggerBrowsingContextGroupSwitchForNavigation(navigationID, browsingContextGroupSwitchDecision, response, loadingWebProcess, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
+        break;
+    case NavigationResponseProcessSwapReason::DocumentIsolationPolicy:
+        page->triggerProcessSwapForDocumentIsolationPolicy(navigationID, response, loadingWebProcess, existingNetworkResourceLoadIdentifierToResume, originalNavigationStartTime, WTF::move(completionHandler));
         break;
     }
 }
@@ -1426,6 +1437,16 @@ void NetworkProcessProxy::setFirstPartyWebsiteDataRemovalModeForTesting(PAL::Ses
     sendWithAsyncReply(Messages::NetworkProcess::SetFirstPartyWebsiteDataRemovalModeForTesting(sessionID, mode), WTF::move(completionHandler));
 }
 
+void NetworkProcessProxy::setExemptAllowlistedCookiesFromITP(PAL::SessionID sessionID, bool exempt, CompletionHandler<void()>&& completionHandler)
+{
+    if (!canSendMessage()) {
+        completionHandler();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::NetworkProcess::SetExemptAllowlistedCookiesFromITP(sessionID, exempt), WTF::move(completionHandler));
+}
+
 void NetworkProcessProxy::setToSameSiteStrictCookiesForTesting(PAL::SessionID sessionID, const RegistrableDomain& domain, CompletionHandler<void()>&& completionHandler)
 {
     if (!canSendMessage()) {
@@ -1468,6 +1489,14 @@ void NetworkProcessProxy::setPrivateClickMeasurementDebugMode(PAL::SessionID ses
     send(Messages::NetworkProcess::SetPrivateClickMeasurementDebugMode(sessionID, debugMode), 0);
 }
 
+void NetworkProcessProxy::setPrivateClickMeasurementPrivateRelayEnforcement(PAL::SessionID sessionID, bool enforce)
+{
+    if (!canSendMessage())
+        return;
+
+    send(Messages::NetworkProcess::SetPrivateClickMeasurementPrivateRelayEnforcement(sessionID, enforce), 0);
+}
+
 void NetworkProcessProxy::sendProcessWillSuspendImminentlyForTesting()
 {
     if (canSendMessage())
@@ -1477,6 +1506,16 @@ void NetworkProcessProxy::sendProcessWillSuspendImminentlyForTesting()
 void NetworkProcessProxy::isStorageSuspendedForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
 {
     sendWithAsyncReply(Messages::NetworkProcess::IsStorageSuspendedForTesting(sessionID), WTF::move(completionHandler), 0, { }, ShouldStartProcessThrottlerActivity::No);
+}
+
+void NetworkProcessProxy::canPrefetchDNSForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::CanPrefetchDNSForTesting(sessionID), WTF::move(completionHandler), 0);
+}
+
+void NetworkProcessProxy::prefetchedDNSHostnameCountForTesting(CompletionHandler<void(uint64_t)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::PrefetchedDNSHostnameCountForTesting(), WTF::move(completionHandler), 0);
 }
 
 static bool s_suspensionAllowedForTesting { true };
@@ -1812,7 +1851,7 @@ void NetworkProcessProxy::testProcessIncomingSyncMessagesWhenWaitingForSyncReply
     reply(handled);
 }
 
-void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain)
+void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections)
 {
 #if PLATFORM(COCOA)
     if (!isUIThread()) {
@@ -1828,7 +1867,7 @@ void NetworkProcessProxy::preconnectTo(PAL::SessionID sessionID, WebPageProxyIde
     uint64_t cookiesVersion = 0;
     if (auto* store = websiteDataStoreFromSessionID(sessionID))
         cookiesVersion = store->cookiesVersion();
-    send(Messages::NetworkProcess::PreconnectTo(sessionID, webPageProxyID, webPageID, WTF::move(request), storedCredentialsPolicy, isNavigatingToAppBoundDomain, cookiesVersion), 0);
+    send(Messages::NetworkProcess::PreconnectTo(sessionID, webPageProxyID, webPageID, WTF::move(request), storedCredentialsPolicy, isNavigatingToAppBoundDomain, advancedPrivacyProtections, cookiesVersion), 0);
 }
 
 static bool anyProcessPoolHasForegroundWebProcesses()
@@ -2151,10 +2190,15 @@ void NetworkProcessProxy::addAllowedFirstPartyForCookies(WebProcessProxy& webPro
         madeChange = true;
         pair.first = LoadedWebArchive::Yes;
     }
-    if (madeChange)
-        sendWithAsyncReply(Messages::NetworkProcess::AddAllowedFirstPartyForCookies(webProcessProxy.coreProcessIdentifier(), firstPartyForCookies, loadedWebArchive), WTF::move(completionHandler));
-    else
+    if (!madeChange && !m_pendingAddAllowedFirstPartyForCookiesReplies)
+        return completionHandler();
+
+    ++m_pendingAddAllowedFirstPartyForCookiesReplies;
+    sendWithAsyncReply(Messages::NetworkProcess::AddAllowedFirstPartyForCookies(webProcessProxy.coreProcessIdentifier(), firstPartyForCookies, loadedWebArchive), [weakThis = WeakPtr { *this }, completionHandler = WTF::move(completionHandler)] mutable {
+        if (RefPtr protectedThis = weakThis)
+            --protectedThis->m_pendingAddAllowedFirstPartyForCookiesReplies;
         completionHandler();
+    });
 }
 
 void NetworkProcessProxy::addAllowedWebPageProxyIdentifier(WebProcessProxy& webProcessProxy, WebPageProxyIdentifier pageID)
@@ -2166,13 +2210,18 @@ void NetworkProcessProxy::addAllowedWebPageProxyIdentifier(WebProcessProxy& webP
         send(Messages::NetworkProcess::AddAllowedWebPageProxyIdentifier(webProcessProxy.coreProcessIdentifier(), pageID), 0);
 }
 
+void NetworkProcessProxy::authorizeDownloadForWebProcess(WebProcessProxy& webProcessProxy, DownloadID downloadID, CompletionHandler<void()>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::AuthorizeDownloadForWebProcess(webProcessProxy.coreProcessIdentifier(), downloadID), WTF::move(completionHandler));
+}
+
 void NetworkProcessProxy::addAllowedFilePaths(WebProcessProxy& webProcessProxy, const Vector<String>& paths)
 {
     auto& pathSet = m_allowedFilePathsByProcess.ensure(webProcessProxy, [] {
         return HashSet<String> { };
     }).iterator->value;
 
-    for (auto& path : paths)
+    for (auto& path : borrow(paths))
         pathSet.add(path);
 }
 

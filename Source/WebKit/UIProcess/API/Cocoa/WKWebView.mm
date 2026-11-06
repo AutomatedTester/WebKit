@@ -147,6 +147,7 @@
 #import "_WKHitTestResultInternal.h"
 #import "_WKInputDelegate.h"
 #import "_WKInspectorInternal.h"
+#import "_WKMediaCapturePermissionPromptConfigurationInternal.h"
 #import "_WKPageLoadTimingInternal.h"
 #import "_WKRemoteObjectRegistryInternal.h"
 #import "_WKSessionStateInternal.h"
@@ -158,6 +159,7 @@
 #import "_WKTextManipulationDelegate.h"
 #import "_WKTextManipulationExclusionRule.h"
 #import "_WKTextManipulationItem.h"
+#import "_WKTextManipulationItemInternal.h"
 #import "_WKTextManipulationToken.h"
 #import "_WKTextPreview.h"
 #import "_WKTextRunInternal.h"
@@ -202,6 +204,7 @@
 #import <WebCore/WebViewVisualIdentificationOverlay.h>
 #import <WebCore/WritingMode.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/Box.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/HashMap.h>
@@ -399,7 +402,7 @@ static bool shouldAllowPictureInPictureMediaPlayback()
 
 #endif // PLATFORM(IOS_FAMILY)
 
-SUPPRESS_NODELETE static bool LEGACY_NODELETE shouldRequireUserGestureToLoadVideo()
+NODELETE SUPPRESS_NODELETE static bool shouldRequireUserGestureToLoadVideo()
 {
 #if PLATFORM(IOS_FAMILY)
     static bool shouldRequireUserGestureToLoadVideo = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::RequiresUserGestureToLoadVideo);
@@ -415,7 +418,7 @@ static bool shouldRestrictBaseURLSchemes()
     return shouldRestrictBaseURLSchemes;
 }
 
-static WebCore::RectEdges<bool> LEGACY_NODELETE toRectEdges(_WKRectEdge edges)
+NODELETE static WebCore::RectEdges<bool> toRectEdges(_WKRectEdge edges)
 {
     return {
         static_cast<bool>(edges & _WKRectEdgeTop),
@@ -426,7 +429,7 @@ static WebCore::RectEdges<bool> LEGACY_NODELETE toRectEdges(_WKRectEdge edges)
 }
 
 #if PLATFORM(MAC)
-static uint32_t LEGACY_NODELETE convertUserInterfaceDirectionPolicy(WKUserInterfaceDirectionPolicy policy)
+NODELETE static uint32_t convertUserInterfaceDirectionPolicy(WKUserInterfaceDirectionPolicy policy)
 {
     switch (policy) {
     case WKUserInterfaceDirectionPolicyContent:
@@ -437,7 +440,7 @@ static uint32_t LEGACY_NODELETE convertUserInterfaceDirectionPolicy(WKUserInterf
     return static_cast<uint32_t>(WebCore::UserInterfaceDirectionPolicy::Content);
 }
 
-static uint32_t LEGACY_NODELETE convertSystemLayoutDirection(NSUserInterfaceLayoutDirection direction)
+NODELETE static uint32_t convertSystemLayoutDirection(NSUserInterfaceLayoutDirection direction)
 {
     switch (direction) {
     case NSUserInterfaceLayoutDirectionLeftToRight:
@@ -662,6 +665,7 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
     [self _setupPageConfiguration:pageConfiguration withPool:processPool.get()];
 
     _usePlatformFindUI = YES;
+    _enabledSystemBackgroundColorExtensionEdges = _WKRectEdgeLeft | _WKRectEdgeRight;
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     _adjustedColorExtensionsForBannerViewOverlaysEnablement = WebKit::AdjustedColorExtensionsForBannerViewOverlaysEnablement::EnabledIfHorizontalBannerViewPresent;
@@ -1438,7 +1442,7 @@ static bool validateArgument(id argument)
     _page->resumeAllMediaPlayback(makeBlockPtr(completionHandler));
 }
 
-static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::MediaPlaybackState mediaPlaybackState)
+NODELETE static WKMediaPlaybackState toWKMediaPlaybackState(WebKit::MediaPlaybackState mediaPlaybackState)
 {
     switch (mediaPlaybackState) {
     case WebKit::MediaPlaybackState::NoMediaPlayback:
@@ -1511,7 +1515,7 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
         mutedState.add(WebCore::MediaProducerMutedState::AudioCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::AudioCaptureIsMuted);
 }
 
 - (void)setCameraCaptureState:(WKMediaCaptureState)state completionHandler:(void (^)(void))completionHandler
@@ -1533,7 +1537,7 @@ static WKMediaPlaybackState LEGACY_NODELETE toWKMediaPlaybackState(WebKit::Media
         mutedState.add(WebCore::MediaProducerMutedState::VideoCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::VideoCaptureIsMuted);
 }
 
 - (void)_evaluateJavaScript:(NSString *)javaScriptString asAsyncFunction:(BOOL)asAsyncFunction withSourceURL:(NSURL *)sourceURL withArguments:(NSDictionary<NSString *, id> *)arguments forceUserGesture:(BOOL)forceUserGesture inFrame:(WKFrameInfo *)frame inWorld:(WKContentWorld *)world completionHandler:(void (^)(id, NSError *))completionHandler
@@ -2442,7 +2446,7 @@ static RetainPtr<NSDictionary> dictionaryRepresentationForEditorState(const WebK
     };
 }
 
-static NSTextAlignment LEGACY_NODELETE nsTextAlignment(WebKit::TextAlignment alignment)
+NODELETE static NSTextAlignment nsTextAlignment(WebKit::TextAlignment alignment)
 {
     switch (alignment) {
     case WebKit::TextAlignment::Natural:
@@ -2460,7 +2464,7 @@ static NSTextAlignment LEGACY_NODELETE nsTextAlignment(WebKit::TextAlignment ali
     return NSTextAlignmentNatural;
 }
 
-static _WKSelectionAttributes LEGACY_NODELETE selectionAttributes(const WebKit::EditorState& editorState, _WKSelectionAttributes previousAttributes)
+NODELETE static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& editorState, _WKSelectionAttributes previousAttributes)
 {
     switch (editorState.selectionType) {
     case WebCore::SelectionType::None:
@@ -2763,7 +2767,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
 
     _page->willBeginWritingToolsSession(webSession, WTF::move(preservedNodeIdentifiers), [completion = makeBlockPtr(completion)](const auto& contextData) {
         auto contexts = [NSMutableArray arrayWithCapacity:contextData.size()];
-        for (auto& context : contextData) {
+        for (auto& context : borrow(contextData)) {
             auto platformContext = WebKit::convertToPlatformContext(context);
             [contexts addObject:platformContext.get()];
         }
@@ -3100,14 +3104,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completion(@[ ]);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completion(@[ ]);
@@ -3147,14 +3144,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completion(nil);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completion(nil);
@@ -3658,7 +3648,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     auto createSystemBackgroundExtensionViewIfNeeded = [&](WebCore::BoxSide side) {
-        if (_systemBackgroundColorExtensionViews.at(side))
+        if (_systemBackgroundColorExtensionViews.at(side) || ![self _isSystemBackgroundColorExtensionEnabledForSide:side])
             return;
 
         RetainPtr view = adoptNS([[WKColorExtensionView alloc] initWithFrame:CGRectZero delegate:self]);
@@ -3717,7 +3707,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
     auto leftExtensionFrame = [&] {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays]) {
+        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays] && [self _isSystemBackgroundColorExtensionEnabledForSide:WebCore::BoxSide::Left]) {
             auto distanceFromLeftEdge = [self _webContentDistanceFromLeftEdge];
             auto colorExtensionWidth = std::clamp<CGFloat>(insets.left() - distanceFromLeftEdge, 0, insets.left());
             auto xPosition = insets.left() - colorExtensionWidth;
@@ -3729,7 +3719,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
     auto rightExtensionFrame = [&] {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays]) {
+        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays] && [self _isSystemBackgroundColorExtensionEnabledForSide:WebCore::BoxSide::Right]) {
             auto distanceFromRightEdge = [self _webContentDistanceFromRightEdge];
             auto colorExtensionWidth = std::clamp<CGFloat>(insets.right() - distanceFromRightEdge, 0, insets.right());
             auto xPosition = bounds.width() - insets.right();
@@ -3889,6 +3879,21 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 #endif
 }
 
+- (BOOL)_isSystemBackgroundColorExtensionEnabledForSide:(WebCore::BoxSide)side
+{
+    switch (side) {
+    case WebCore::BoxSide::Left:
+        return !!(_enabledSystemBackgroundColorExtensionEdges & _WKRectEdgeLeft);
+    case WebCore::BoxSide::Right:
+        return !!(_enabledSystemBackgroundColorExtensionEdges & _WKRectEdgeRight);
+    case WebCore::BoxSide::Top:
+    case WebCore::BoxSide::Bottom:
+        return NO;
+    }
+    ASSERT_NOT_REACHED();
+    return NO;
+}
+
 - (void)_updateAppearanceForSystemBackgroundColorExtensionViews
 {
     if (![self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays])
@@ -3900,7 +3905,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
         if (!view)
             return;
 
-        if (inset <= 0) {
+        if (inset <= 0 || ![self _isSystemBackgroundColorExtensionEnabledForSide:side]) {
             [view fadeOut];
             return;
         }
@@ -4101,7 +4106,7 @@ struct WKWebViewData {
         encoder << currentWKWebViewDataSerializationVersion;
         encoder << dataTypesToEncode;
 
-        for (auto& dataTypeToEncode : dataTypesToEncode) {
+        for (auto& dataTypeToEncode : borrow(dataTypesToEncode)) {
             switch (dataTypeToEncode) {
             case WebKit::WebViewDataType::SessionStorage:
                 if (!data->sessionStorage) {
@@ -4162,7 +4167,7 @@ struct WKWebViewData {
             completionHandler(nullptr);
     });
 
-    for (auto& encodedDataType : *encodedDataTypes) {
+    for (auto& encodedDataType : borrow(*encodedDataTypes)) {
         switch (encodedDataType) {
         case WebKit::WebViewDataType::SessionStorage: {
             std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> sessionStorage;
@@ -4506,7 +4511,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
 {
     _page->getAllFrameTreesForSiteIsolationTesting([completionHandler = makeBlockPtr(completionHandler), page = protect(*_page)] (Vector<WebKit::FrameTreeNodeData>&& vector) {
         auto set = adoptNS([[NSMutableSet alloc] initWithCapacity:vector.size()]);
-        for (auto& data : vector)
+        for (auto& data : borrow(vector))
             [set addObject:wrapper(API::FrameTreeNode::create(WTF::move(data), page.get())).get()];
         completionHandler(set.get());
     });
@@ -4639,6 +4644,24 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
     return adoptNS([[_WKTextManipulationViewportProximityInfo alloc] initWithRelation:createViewportRelation(info->relation) viewportSizedDistance:info->viewportSizedDistance viewportCoverage:info->viewportCoverage]);
 }
 
+static CGRect webViewRectForMainFrameRect(WebKit::WebPageProxy& page, const std::optional<WebCore::FloatRect>& mainFrameBoundingRect)
+{
+    if (!mainFrameBoundingRect)
+        return CGRectNull;
+
+    RefPtr pageClient = page.pageClient();
+    if (!pageClient)
+        return CGRectNull;
+
+    auto rectInRootView = *mainFrameBoundingRect;
+#if PLATFORM(MAC)
+    rectInRootView.moveBy(-page.mainFrameScrollPosition());
+    auto& obscuredContentInsets = page.obscuredContentInsets();
+    rectInRootView.move(obscuredContentInsets.left(), obscuredContentInsets.top());
+#endif
+    return pageClient->rootViewToWebView(rectInRootView);
+}
+
 - (void)_startTextManipulationsWithConfiguration:(_WKTextManipulationConfiguration *)configuration completion:(void(^)())completionHandler
 {
     THROW_IF_SUSPENDED;
@@ -4679,7 +4702,7 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
         if (!delegate)
             return;
 
-        auto createWKItem = [] (const WebCore::TextManipulationItem& item) {
+        auto createWKItem = [retainedSelf](const WebCore::TextManipulationItem& item) {
             auto tokens = createNSArray(item.tokens, [] (auto& token) {
                 auto wkToken = adoptNS([[_WKTextManipulationToken alloc] init]);
                 [wkToken setIdentifier:String::number(token.identifier.toUInt64()).createNSString().get()];
@@ -4689,13 +4712,16 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
                 return wkToken;
             });
             auto identifier = makeString(item.frameID ? item.frameID->toUInt64() : 0, '-', item.identifier ? item.identifier->toUInt64() : 0);
-            return adoptNS([[_WKTextManipulationItem alloc] initWithIdentifier:identifier.createNSString().get() tokens:tokens.get() isSubframe:item.isSubframe isCrossSiteSubframe:item.isCrossSiteSubframe viewportProximityInfo:createViewportProximityInfo(item.viewportProximityInfo).get()]);
+            RetainPtr wkItem = adoptNS([[_WKTextManipulationItem alloc] initWithIdentifier:identifier.createNSString() tokens:tokens isSubframe:item.isSubframe isCrossSiteSubframe:item.isCrossSiteSubframe viewportProximityInfo:createViewportProximityInfo(item.viewportProximityInfo)]);
+            [wkItem _setWebView:retainedSelf];
+            [wkItem _setMainFrameBoundingRect:item.mainFrameBoundingRect ? static_cast<CGRect>(*item.mainFrameBoundingRect) : CGRectNull];
+            return wkItem;
         };
 
         if ([delegate respondsToSelector:@selector(_webView:didFindTextManipulationItems:)])
             [delegate _webView:retainedSelf.get() didFindTextManipulationItems:createNSArray(itemReferences, createWKItem).get()];
         else {
-            for (auto& item : itemReferences)
+            for (auto& item : borrow(itemReferences))
                 [delegate _webView:retainedSelf.get() didFindTextManipulationItem:createWKItem(item).get()];
         }
     }, [capturedCompletionBlock = makeBlockPtr(completionHandler)] () {
@@ -4822,8 +4848,7 @@ static RetainPtr<NSArray> wkTextManipulationErrors(NSArray<_WKTextManipulationIt
         return;
     }
 
-    Vector<WebCore::TextManipulationItem> coreItems;
-    coreItems.reserveInitialCapacity(items.count);
+    Vector<WebCore::TextManipulationItem> coreItems(ReserveCapacityTag { }, items.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL _WKTextManipulationItem *wkItem in items) {
         Vector<WebCore::TextManipulationToken> coreTokens(wkItem.tokens.count, [&](size_t i) {
@@ -5384,7 +5409,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
             return completionHandler(nil, error.get());
         }
 
-        auto metadata = result.value();
+        const Vector metadata = result.value();
         RetainPtr valueMap = adoptNS([[NSMutableDictionary alloc] initWithCapacity:metadata.size()]);
 
         for (const auto& pair : metadata)
@@ -5396,8 +5421,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 
 - (void)_createIconDataFromImageData:(NSData *)imageData withLengths:(NSArray<NSNumber *> *)lengths completionHandler:(void (^)(NSData *, NSError *))completionHandler
 {
-    Vector<unsigned> targetLengths;
-    targetLengths.reserveInitialCapacity(lengths.count);
+    Vector<unsigned> targetLengths(ReserveCapacityTag { }, lengths.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSNumber *length in lengths) {
         if (unsigned lengthValue = length.unsignedIntValue)
@@ -5870,6 +5894,25 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
     [self _showWarningViewWithURL:url title:title warning:warning detailsWithLinks:details completionHandler:completionHandler];
 }
 
+- (void)_showMediaCapturePermissionPromptWithConfiguration:(_WKMediaCapturePermissionPromptConfiguration *)configuration completionHandler:(void (^)(_WKMediaCapturePermissionPromptResult *))completionHandler
+{
+    THROW_IF_SUSPENDED;
+#if ENABLE(MEDIA_STREAM)
+    protect(*_page)->showMediaCapturePermissionPrompt(WebKit::customizationFromConfiguration(configuration), [completionHandler = makeBlockPtr(completionHandler)](WebKit::MediaPermissionPromptResult&& promptResult) {
+        auto outcome = !promptResult.wasAnswered ? _WKMediaCapturePermissionPromptOutcomeDismissed : promptResult.granted ? _WKMediaCapturePermissionPromptOutcomeAllowed : _WKMediaCapturePermissionPromptOutcomeDenied;
+        RetainPtr chosenAction = WTF::move(promptResult.chosenAction);
+        RetainPtr result = adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:outcome
+            chosenAction:chosenAction
+            cameraDeviceID:nsStringNilIfEmpty(promptResult.selectedVideoDeviceUID)
+            microphoneDeviceID:nsStringNilIfEmpty(promptResult.selectedAudioDeviceUID)]);
+        completionHandler(result.get());
+    });
+#else
+    UNUSED_PARAM(configuration);
+    completionHandler(adoptNS([[_WKMediaCapturePermissionPromptResult alloc] _initWithOutcome:_WKMediaCapturePermissionPromptOutcomeDismissed chosenAction:nil cameraDeviceID:nil microphoneDeviceID:nil]).get());
+#endif
+}
+
 + (NSURL *)_confirmMalwareSentinel
 {
     return WebKit::BrowsingWarning::confirmMalwareSentinel().autorelease();
@@ -6031,7 +6074,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
     return _page->shouldUseBackForwardCache();
 }
 
-static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMilestones(_WKRenderingProgressEvents events)
+NODELETE static inline OptionSet<WebCore::LayoutMilestone> layoutMilestones(_WKRenderingProgressEvents events)
 {
     OptionSet<WebCore::LayoutMilestone> milestones;
 
@@ -6071,7 +6114,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
 - (void)_saveResources:(NSURL *)directory suggestedFileName:(NSString *)name completionHandler:(void (^)(NSError *error))completionHandler
 {
     THROW_IF_SUSPENDED;
-    _page->saveResources(protect(_page->mainFrame()), { }, directory.path, name, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
+    _page->saveResources(protect(_page->mainFrame()), { }, directory.path, name, { }, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
         if (!result)
             return completionHandler(adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{ NSLocalizedDescriptionKey: WebCore::errorDescription(result.error()).createNSString().get() }]).get());
 
@@ -6101,7 +6144,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
         markupExclusionRules.append(WebCore::MarkupExclusionRule { AtomString { rule.elementLocalName }, WTF::move(attibutes) });
     }
 
-    _page->saveResources(protect(_page->mainFrame()), WTF::move(markupExclusionRules), configuration.directory.path, configuration.suggestedFileName, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
+    _page->saveResources(protect(_page->mainFrame()), WTF::move(markupExclusionRules), configuration.directory.path, configuration.suggestedFileName, configuration.originalURLsFileName, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
         if (!result)
             return completionHandler(adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{ NSLocalizedDescriptionKey: WebCore::errorDescription(result.error()).createNSString().get() }]).get());
 
@@ -6403,7 +6446,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
     downcast<WebKit::FindClient>(_page->findClient()).setDelegate(findDelegate);
 }
 
-static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFindOptions wkFindOptions)
+NODELETE static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFindOptions)
 {
     OptionSet<WebKit::FindOptions> findOptions;
 
@@ -6501,7 +6544,11 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
     auto request = WebCore::ResourceRequest { url };
     if (auto userAgent = _page->userAgent(); !userAgent.isEmpty())
         request.setHTTPUserAgent(WTF::move(userAgent));
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    _page->preconnectTo(WTF::move(request), _page->advancedPrivacyProtectionsPolicies());
+#else
     _page->preconnectTo(WTF::move(request));
+#endif
 }
 
 - (BOOL)_canUseCredentialStorage
@@ -6564,7 +6611,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
             }
 
             auto valueMap = adoptNS([[NSMutableDictionary alloc] initWithCapacity:textFieldValues.size()]);
-            for (const auto& pair : textFieldValues)
+            for (const auto& pair : borrow(textFieldValues))
                 [valueMap setObject:pair.second.createNSString().get() forKey:pair.first.createNSString().get()];
 
             auto checker = [&] {
@@ -6976,7 +7023,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
         mutedState.add(displayMutedFlags);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, displayMutedFlags);
 }
 
 - (void)_setSystemAudioCaptureState:(WKSystemAudioCaptureState)state completionHandler:(void (^)(void))completionHandler
@@ -6998,7 +7045,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
         mutedState.add(WebCore::MediaProducerMutedState::WindowCaptureIsMuted);
     _page->setMuted(mutedState, WebKit::WebPageProxy::FromApplication::Yes, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
-    });
+    }, WebCore::MediaProducerMutedState::WindowCaptureIsMuted);
 }
 
 - (void)_setOverrideDeviceScaleFactor:(CGFloat)deviceScaleFactor
@@ -7027,8 +7074,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
 
 static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKTargetedElementInfo *> *wkElements)
 {
-    Vector<Ref<API::TargetedElementInfo>> elements;
-    elements.reserveInitialCapacity(wkElements.count);
+    Vector<Ref<API::TargetedElementInfo>> elements(ReserveCapacityTag { }, wkElements.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL _WKTargetedElementInfo *element in wkElements)
         elements.append(protect(*element->_info));
@@ -7114,14 +7160,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
             return;
         }
 
-        RefPtr contentImage = textIndicator->contentImage();
-        if (!contentImage) {
-            ASSERT_NOT_REACHED();
-            completionHandler(@[ ]);
-            return;
-        }
-
-        RefPtr nativeImage = contentImage->nativeImage();
+        RefPtr nativeImage = textIndicator->contentImage();
         if (!nativeImage) {
             ASSERT_NOT_REACHED();
             completionHandler(@[ ]);
@@ -7218,6 +7257,27 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 #endif
 }
 
+- (_WKRectEdge)_systemBackgroundColorExtensionEnabledEdges
+{
+    return _enabledSystemBackgroundColorExtensionEdges;
+}
+
+- (void)_setSystemBackgroundColorExtensionEnabledEdges:(_WKRectEdge)edges
+{
+    // System background color extensions are only supported on the left and right edges.
+    edges &= _WKRectEdgeLeft | _WKRectEdgeRight;
+    if (_enabledSystemBackgroundColorExtensionEdges == edges)
+        return;
+
+    _enabledSystemBackgroundColorExtensionEdges = edges;
+
+#if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
+    [self _doAfterAdjustingColorForTopContentInsetFromUIDelegate:[strongSelf = RetainPtr { self }] {
+        [strongSelf _updateFixedColorExtensionViews];
+    }];
+#endif
+}
+
 - (BOOL)_shouldSuppressFormValidationBubble
 {
     return _shouldSuppressFormValidationBubble;
@@ -7272,8 +7332,7 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 {
 #if PLATFORM(MAC)
     RetainPtr allItems = [[self _activePopupButtonCell] itemArray];
-    Vector<String> itemTitles;
-    itemTitles.reserveInitialCapacity([allItems count]);
+    Vector<String> itemTitles(ReserveCapacityTag { }, [allItems count]);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *item in allItems.get()) {
         if (!item.enabled)
@@ -7422,6 +7481,18 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 #else
     completionHandler(string);
 #endif // ENABLE(TEXT_EXTRACTION_FILTER)
+}
+
+@end
+
+@implementation WKWebView (WKTextManipulationInternal)
+
+- (CGRect)_webViewRectForTextManipulationMainFrameRect:(CGRect)mainFrameBoundingRect
+{
+    if (!_page || CGRectIsNull(mainFrameBoundingRect))
+        return CGRectNull;
+
+    return webViewRectForMainFrameRect(*_page, mainFrameBoundingRect);
 }
 
 @end

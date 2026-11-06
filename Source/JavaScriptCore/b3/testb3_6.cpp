@@ -51,6 +51,19 @@ void testBitAndSExt32(int32_t value, int64_t mask)
     CHECK_EQ(compileAndRun<int64_t>(proc, value), (static_cast<int64_t>(value) & mask));
 }
 
+void testBitAndSExt32WithOtherUse(int32_t value, int64_t mask)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
+    root->clearSuccessors();
+    Value* extended = root->appendNew<Value>(proc, SExt32, Origin(), arguments[0]);
+    Value* masked = root->appendNew<Value>(proc, BitAnd, Origin(), extended, root->appendNew<Const64Value>(proc, Origin(), mask));
+    root->appendNew<Value>(proc, Return, Origin(), root->appendNew<Value>(proc, Add, Origin(), masked, extended));
+
+    CHECK_EQ(compileAndRun<int64_t>(proc, value), (static_cast<int64_t>(value) & mask) + static_cast<int64_t>(value));
+}
+
 void testBasicSelect()
 {
     Procedure proc;
@@ -90,6 +103,27 @@ void testSelectTest()
     CHECK_EQ(invoke<intptr_t>(*code, 42, 642462, 32533), 642462);
     CHECK_EQ(invoke<intptr_t>(*code, 0, 1, 2), 2);
     CHECK_EQ(invoke<intptr_t>(*code, 0, 642462, 32533), 32533);
+}
+
+void testSelectTestHighBits()
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+
+    PatchpointValue* patchpoint = root->appendNew<PatchpointValue>(proc, Void, Origin());
+    patchpoint->clobberLate(RegisterSet(GPRInfo::argumentGPR0));
+    patchpoint->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+
+    Value* select = root->appendNew<Value>(proc, Select, Origin(), arguments[0], arguments[1], arguments[2]);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), select);
+
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 42, 1, 2), 1);
+    CHECK_EQ(invoke<int64_t>(*code, 0x100000000ll, 1, 2), 1);
+    CHECK_EQ(invoke<int64_t>(*code, 0xffffffff00000000ull, 1, 2), 1);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, 2), 2);
 }
 
 void testSelectCompareDouble()
@@ -1127,7 +1161,7 @@ void testCheckSelectWithUpsilonBeforeCheck()
     CHECK_EQ(invoke<intptr_t>(*code, false), 666);
 }
 
-double LEGACY_NODELETE b3Pow(double x, int y)
+NODELETE double b3Pow(double x, int y)
 {
     if (y < 0 || y > 1000)
         return pow(x, y);

@@ -81,13 +81,13 @@ template<typename Output> static ALWAYS_INLINE void appendOutputForElement(Outpu
         output.append(element);
 }
 
-static bool LEGACY_NODELETE canBeUsedForIdFastPath(const CSSSelector& selector)
+NODELETE static bool canBeUsedForIdFastPath(const CSSSelector& selector)
 {
     return selector.match() == CSSSelector::Match::Id
         || (selector.match() == CSSSelector::Match::Exact && selector.attribute() == HTMLNames::idAttr && selector.attributeMatchType() != CSSSelector::AttributeMatchType::CaseInsensitive);
 }
 
-static IdMatchingType LEGACY_NODELETE findIdMatchingType(const CSSSelector& firstSelector)
+NODELETE static IdMatchingType findIdMatchingType(const CSSSelector& firstSelector)
 {
     bool inRightmost = true;
     for (const CSSSelector* selector = &firstSelector; selector; selector = selector->precedingInComplexSelector()) {
@@ -173,7 +173,7 @@ SelectorDataList::SelectorDataList(const CSSSelectorList& selectorList)
 
 inline bool SelectorDataList::selectorMatches(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode, Style::SelectorMatchingState* selectorMatchingState) const
 {
-    SelectorChecker selectorChecker(element.document());
+    SelectorChecker selectorChecker(protect(element.document()));
     SelectorChecker::CheckingContext selectorCheckingContext(SelectorChecker::Mode::QueryingRules);
     selectorCheckingContext.scope = rootNode.isDocumentNode() ? nullptr : &rootNode;
     // Providing SelectorMatchingState allows cross-element optimizations like caching for :has() matches.
@@ -218,7 +218,7 @@ Element* SelectorDataList::queryFirst(ContainerNode& rootNode) const
     return result;
 }
 
-static const CSSSelector* LEGACY_NODELETE selectorForIdLookup(const ContainerNode& rootNode, const CSSSelector& firstSelector)
+NODELETE static const CSSSelector* selectorForIdLookup(const ContainerNode& rootNode, const CSSSelector& firstSelector)
 {
     if (!rootNode.isConnected())
         return nullptr;
@@ -298,7 +298,7 @@ static Ref<ContainerNode> filterRootById(ContainerNode& rootNode, const CSSSelec
     return rootNode;
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE localNameMatches(const Element& element, const AtomString& localName, const AtomString& lowercaseLocalName)
+NODELETE static ALWAYS_INLINE bool localNameMatches(const Element& element, const AtomString& localName, const AtomString& lowercaseLocalName)
 {
     if (element.isHTMLElement() && element.document().isHTMLDocument())
         return element.localName() == lowercaseLocalName;
@@ -310,7 +310,7 @@ template<typename OutputType>
 static inline void elementsForLocalName(const ContainerNode& rootNode, const AtomString& localName, const AtomString& lowercaseLocalName, OutputType& output)
 {
     if (auto* rootDocument = dynamicDowncast<Document>(rootNode); rootDocument && lowercaseLocalName == HTMLNames::baseTag->localName()) {
-        RefPtr firstBaseElement = rootDocument->firstBaseElement();
+        auto* firstBaseElement = rootDocument->firstBaseElement();
         if (!firstBaseElement)
             return;
         if constexpr (std::is_same_v<OutputType, Element*>) {

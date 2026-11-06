@@ -130,12 +130,12 @@ public:
         void* cellAlign(void*);
             
         bool isEmpty();
-        void setIsDestructible(bool);
+        void noteNeedsDestruction();
 
         void lastChanceToFinalize();
 
         BlockDirectory* directory() const;
-        Subspace* LEGACY_NODELETE subspace() const;
+        NODELETE Subspace* subspace() const;
         AlignedMemoryAllocator* alignedMemoryAllocator() const;
         JSC::Heap* heap() const;
         inline MarkedSpace* space() const;
@@ -153,6 +153,7 @@ public:
         // and the block is freshly created, then we'll make the mistake of running destructors in
         // the block. If it's not set and the block has nothing marked, then we'll make the
         // mistake of making a pop freelist rather than a bump freelist.
+        // Takes bitvectorLock().mutate() itself, so callers must not hold it.
         void sweep(FreeList*);
         
         // This is to be called by Subspace.
@@ -199,7 +200,7 @@ public:
         template <typename Functor> inline IterationStatus forEachDeadCell(NOESCAPE const Functor&);
         template <typename Functor> inline IterationStatus forEachMarkedCell(NOESCAPE const Functor&);
             
-        JS_EXPORT_PRIVATE bool LEGACY_NODELETE areMarksStale();
+        NODELETE JS_EXPORT_PRIVATE bool areMarksStale();
         bool areMarksStaleForSweep();
         
         void assertMarksNotStale();
@@ -210,8 +211,8 @@ public:
         
         void removeFromDirectory();
         
-        void LEGACY_NODELETE didAddToDirectory(BlockDirectory*, unsigned index);
-        void LEGACY_NODELETE didRemoveFromDirectory();
+        NODELETE void didAddToDirectory(BlockDirectory*, unsigned index);
+        NODELETE void didRemoveFromDirectory();
         
         void* start() const LIFETIME_BOUND { return &m_block->atoms()[m_startAtom]; }
         void* end() const LIFETIME_BOUND { return &m_block->atoms()[endAtom]; }
@@ -311,6 +312,43 @@ public:
         //     m_biasedMarkCount != m_markCountBias
         MarkCountBiasType m_markCountBias;
 
+        // A block's live cells, those that survived the last collection or were allocated
+        // after it (what isLive() means by "live"), are recorded in two bit sets. Each
+        // bit set is current while its version matches the heap's, and stale otherwise.
+        // Marking, sweeping and isLive() read them. A full block needs neither: its
+        // directory's allocated bit says every cell is live, isLive() checks that bit
+        // first, and a full block is not swept.
+        //
+        // "Survivors" means the cells marked as of the last collection's End.
+        //
+        // m_marks:
+        // - Current: every cell marked since the most recent Full collection's Begin,
+        //   when the marking version last advanced. Between collections, that is the
+        //   survivors; during an Eden collection, the survivors plus what it has marked
+        //   so far; during a Full collection, only what that collection has marked so far.
+        // - Stale but still the survivors: only during a Full collection, whose Begin
+        //   makes every block's marks stale while the survivors are still live. Marks one
+        //   version behind keep recording survivors until resetStaleMarks() moves them
+        //   into m_newlyAllocated (see staleMarksStillRecordSurvivors()). An Eden collection
+        //   never needs this, since it does not advance the marking version.
+        // - Otherwise: meaningless.
+        //
+        // m_newlyAllocated, usable while current and the block is not free-listed, holds
+        // the live cells the marks might not: those allocated since the last collection,
+        // and, once resetStaleMarks() has reset a Full collection's stale marks, the
+        // survivors.
+        // - While the block is free-listed, it is out of date, since allocation does not
+        //   update it; the cells not on the free list are the live ones.
+        // - stopAllocating() sets it to every cell not on the free list: the survivors
+        //   plus the cells allocated since the last collection.
+        // - resetStaleMarks(), in a Full collection, leaves it holding the same: either
+        //   stopAllocating() already rebuilt it, or nothing has been allocated since and
+        //   it becomes the survivors from the old marks.
+        // - At every collection's End it stops being current, and until the block is
+        //   allocated from again the marks alone say which cells are live.
+        //
+        // nullVersion means a bit set is not current: the block is new, or its bits were
+        // reset when the heap's version counter wrapped.
         HeapVersion m_markingVersion;
         HeapVersion m_newlyAllocatedVersion;
 
@@ -377,7 +415,7 @@ public:
     inline bool isNewlyAllocatedStale() const;
     
     inline bool hasAnyNewlyAllocated();
-    void resetAllocated();
+    void resetNewlyAllocatedForVersionWrap();
         
     size_t cellSize();
     CellAttributes attributes() const;
@@ -403,7 +441,7 @@ public:
     void assertMarksNotStale() { }
 #endif
         
-    void resetMarks();
+    void resetMarksForVersionWrap();
     
     bool isMarkedRaw(const void* p);
     HeapVersion markingVersion() const { return header().m_markingVersion; }
@@ -427,18 +465,18 @@ private:
     ~MarkedBlock();
     Atom* atoms();
         
-    JS_EXPORT_PRIVATE void aboutToMarkSlow(HeapVersion markingVersion, HeapCell*);
-    void LEGACY_NODELETE clearHasAnyMarked();
+    JS_EXPORT_PRIVATE void resetStaleMarks(HeapVersion markingVersion, HeapCell*);
+    NODELETE void clearHasAnyMarked();
     
     JS_EXPORT_PRIVATE void noteMarkedSlow();
     
-    inline bool marksConveyLivenessDuringMarking(HeapVersion markingVersion);
-    inline bool marksConveyLivenessDuringMarking(HeapVersion myMarkingVersion, HeapVersion markingVersion);
+    inline bool staleMarksStillRecordSurvivors(HeapVersion markingVersion);
+    inline bool staleMarksStillRecordSurvivors(HeapVersion myMarkingVersion, HeapVersion markingVersion);
 
     // FIXME: rdar://139998916
     NO_RETURN_DUE_TO_CRASH NEVER_INLINE void analyzeInvalidHandleAndCrash(AbstractLocker&, HeapCell*);
     NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void dumpInfoAndCrashForInvalidHandleV2(HeapCell*, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM);
-    inline void LEGACY_NODELETE setupTestForDumpInfoAndCrash();
+    NODELETE inline void setupTestForDumpInfoAndCrash();
 };
 
 inline MarkedBlock::Header& MarkedBlock::header()
@@ -596,7 +634,7 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
     if (version != markingVersion) [[unlikely]]
-        aboutToMarkSlow(markingVersion, cell);
+        resetStaleMarks(markingVersion, cell);
     return dependency;
 }
 

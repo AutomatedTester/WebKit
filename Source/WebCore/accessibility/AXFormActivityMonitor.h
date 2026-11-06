@@ -101,7 +101,7 @@ public:
     bool reportIsPending() const { return m_reportIsPending; }
     void report();
 
-    WEBCORE_EXPORT static void setSettleDelayForTesting(std::optional<Seconds>);
+    NODELETE WEBCORE_EXPORT static void setSettleDelayForTesting(std::optional<Seconds>);
 
 private:
     // Text the site added, and the element that holds it, so it can be paired with the field it is
@@ -111,9 +111,9 @@ private:
         WeakPtr<Element, WeakPtrImplWithEventTargetData> element;
     };
 
-    Seconds settleDelay() const;
-    Seconds checkInterval() const;
-    Seconds quietPeriod() const;
+    NODELETE Seconds settleDelay() const;
+    NODELETE Seconds checkInterval() const;
+    NODELETE Seconds quietPeriod() const;
     void startWatchWindow();
     void captureRenderedFields(Element& container);
     void requestReport();

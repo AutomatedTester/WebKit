@@ -31,6 +31,7 @@
 #include "LegacyRenderSVGResource.h"
 #include "LegacyRenderSVGResourceContainer.h"
 #include "LocalFrame.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
@@ -335,7 +336,7 @@ void LegacyRenderSVGRoot::paintReplaced(PaintInfo& paintInfo, const LayoutPoint&
 
     // Convert from container offsets (html renderers) to a relative transform (svg renderers).
     // Transform from our paint container's coordinate system to our local coords.
-    FloatPoint adjustedPaintOffset = roundPointToDevicePixels(paintOffset, protect(document())->deviceScaleFactor());
+    FloatPoint adjustedPaintOffset = roundPointToDevicePixels(paintOffset, document().deviceScaleFactor());
     auto transform = AffineTransform::makeTranslation(toFloatSize(adjustedPaintOffset)) * localToBorderBoxTransform();
     childPaintInfo.applyTransform(transform);
     if (paintInfo.phase == PaintPhase::EventRegion && childPaintInfo.eventRegionContext())
@@ -589,7 +590,7 @@ bool LegacyRenderSVGRoot::nodeAtPoint(const HitTestRequest& request, HitTestResu
         // to be able to detect hits on the background of a <div> element. If we'd return true here in the 'Foreground' phase, we are not able
         // to detect these hits anymore.
         LayoutRect boundsRect(accumulatedOffset + location(), borderBoxSize());
-        if (locationInContainer.intersects(boundsRect)) {
+        if (locationInContainer.intersects(boundsRect) && hitTestBorderRadius(locationInContainer, accumulatedOffset)) {
             updateHitTestResult(result, pointInBorderBox);
             if (result.addNodeToListBasedTestResult(protect(nodeForHitTest()).get(), request, locationInContainer, boundsRect) == HitTestProgress::Stop)
                 return true;
@@ -612,4 +613,9 @@ void LegacyRenderSVGRoot::addResourceForClientInvalidation(LegacyRenderSVGResour
     svgRoot->m_resourcesNeedingToInvalidateClients.add(*resource);
 }
 
+NaturalDimensions LegacyRenderSVGRoot::zoomedNaturalDimensions() const
+{
+    return protect(svgSVGElement())->naturalDimensions().zoomed(style().usedZoom());
 }
+
+} // namespace WebCore

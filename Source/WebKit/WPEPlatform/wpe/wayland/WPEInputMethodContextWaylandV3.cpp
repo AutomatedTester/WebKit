@@ -39,6 +39,8 @@
 #include <wtf/text/StringCommon.h>
 #include <xkbcommon/xkbcommon.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 typedef struct _TextInputV3Global TextInputV3Global;
 typedef struct _Preedit Preedit;
 
@@ -130,6 +132,8 @@ static uint32_t toTextInputV3Hints(WPEInputHints inputHints, WPEInputPurpose pur
         hints |= ZWP_TEXT_INPUT_V3_CONTENT_HINT_TITLECASE;
     if (inputHints & WPE_INPUT_HINT_UPPERCASE_SENTENCES)
         hints |= ZWP_TEXT_INPUT_V3_CONTENT_HINT_AUTO_CAPITALIZATION;
+    if (inputHints & WPE_INPUT_HINT_PRIVATE)
+        hints |= ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA;
 
     if (purpose == WPE_INPUT_PURPOSE_PIN || purpose == WPE_INPUT_PURPOSE_PASSWORD)
         hints |= (ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT | ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA);
@@ -641,3 +645,5 @@ WPEInputMethodContext* wpe_im_context_wayland_v3_new(WPEDisplayWayland* display,
     textInputV3GetGlobalByDisplay(display); // ensure creation of listener
     return WPE_INPUT_METHOD_CONTEXT(g_object_new(WPE_TYPE_IM_CONTEXT_WAYLAND_V3, "view", view, nullptr));
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

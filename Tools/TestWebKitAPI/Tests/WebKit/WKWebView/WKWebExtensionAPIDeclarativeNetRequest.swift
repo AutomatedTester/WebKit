@@ -39,8 +39,75 @@ private import WebKit_Private.WKWebExtensionControllerConfigurationPrivate
 import struct Foundation.URL
 import struct Swift.String
 
+#if ENABLE_WK_WEB_EXTENSIONS_SIDEBAR
+private import TestWebKitAPILibrary.Helpers.cocoa.TestWebExtensionsDelegate
+private import WebKit_Private._WKWebExtensionSidebar
+#endif
+
 @MainActor
 struct WKWebExtensionAPIDeclarativeNetRequestTests {
+    @Test
+    func resourceTypeEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.declarativeNetRequest.ResourceType, 'object', 'ResourceType should be an object')
+
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.MAIN_FRAME, 'main_frame', 'MAIN_FRAME should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.SUB_FRAME, 'sub_frame', 'SUB_FRAME should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.STYLESHEET, 'stylesheet', 'STYLESHEET should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.SCRIPT, 'script', 'SCRIPT should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.IMAGE, 'image', 'IMAGE should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.FONT, 'font', 'FONT should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.XMLHTTPREQUEST, 'xmlhttprequest', 'XMLHTTPREQUEST should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.PING, 'ping', 'PING should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.MEDIA, 'media', 'MEDIA should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.WEBSOCKET, 'websocket', 'WEBSOCKET should be defined')
+            browser.test.assertEq(browser.declarativeNetRequest.ResourceType.OTHER, 'other', 'OTHER should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.declarativeNetRequest.ResourceType).sort(), [ 'FONT', 'IMAGE', 'MAIN_FRAME', 'MEDIA', 'OTHER', 'PING', 'SCRIPT', 'STYLESHEET', 'SUB_FRAME', 'WEBSOCKET', 'XMLHTTPREQUEST' ], 'ResourceType should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func unsupportedRegexReasonEnum() async throws {
+        let backgroundScript = """
+            browser.test.assertEq(typeof browser.declarativeNetRequest.UnsupportedRegexReason, 'object', 'UnsupportedRegexReason should be an object')
+
+            browser.test.assertEq(browser.declarativeNetRequest.UnsupportedRegexReason.SYNTAX_ERROR, 'syntaxError', 'SYNTAX_ERROR should be defined')
+
+            browser.test.assertDeepEq(Object.keys(browser.declarativeNetRequest.UnsupportedRegexReason).sort(), [ 'SYNTAX_ERROR' ], 'UnsupportedRegexReason should only define the supported values')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
     @Test
     func blockedLoadTest() async throws {
         var server = try HTTPServer(protocol: .http) {
@@ -218,6 +285,38 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         let context = try #require(manager.context)
 
         // Grant the declarativeNetRequest permission.
+        context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+
+        try await manager.run()
+    }
+
+    @Test
+    func updateRulesWithEmptyOptions() async throws {
+        let backgroundScript = """
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateDynamicRules({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateSessionRules({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.updateEnabledRulesets({ }))
+            await browser.test.assertSafeResolve(() => browser.declarativeNetRequest.setExtensionActionOptions({ }))
+
+            browser.test.assertEq((await browser.declarativeNetRequest.getDynamicRules()).length, 0, 'Dynamic rules should be unchanged')
+            browser.test.assertEq((await browser.declarativeNetRequest.getEnabledRulesets()).length, 0, 'Enabled rulesets should be unchanged')
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        let context = try #require(manager.context)
+
         context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
 
         try await manager.run()
@@ -721,6 +820,36 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
     }
 
     @Test
+    func removeDuplicatedSessionRuleIDs() async throws {
+        let backgroundScript = """
+            await browser.declarativeNetRequest.updateSessionRules({ addRules: [{ id: 1, priority: 1, action: {type: 'block'}, condition: { urlFilter: 'foo' } }] })
+
+            let sessionRules = await browser.declarativeNetRequest.getSessionRules()
+            browser.test.assertEq(sessionRules.length, 1)
+
+            await browser.test.assertResolves(browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: [1, 1] }))
+
+            sessionRules = await browser.declarativeNetRequest.getSessionRules()
+            browser.test.assertEq(sessionRules.length, 0)
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
     func dynamicRules() async throws {
         var server = try HTTPServer(protocol: .http) {
             Route("/", headerFields: ["Content-Type": "text/html"]) {
@@ -884,6 +1013,36 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             await browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1, 2, 3] })
 
             dynamicRules = await browser.declarativeNetRequest.getDynamicRules({ })
+            browser.test.assertEq(dynamicRules.length, 0)
+
+            browser.test.notifyPass()
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+        ]
+
+        let manager = try loadWebExtension(manifest: declarativeNetRequestManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func removeDuplicatedDynamicRuleIDs() async throws {
+        let backgroundScript = """
+            await browser.declarativeNetRequest.updateDynamicRules({ addRules: [{ id: 1, priority: 1, action: {type: 'block'}, condition: { urlFilter: 'foo' } }] })
+
+            let dynamicRules = await browser.declarativeNetRequest.getDynamicRules()
+            browser.test.assertEq(dynamicRules.length, 1)
+
+            await browser.test.assertResolves(browser.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [1, 1] }))
+
+            dynamicRules = await browser.declarativeNetRequest.getDynamicRules()
             browser.test.assertEq(dynamicRules.length, 0)
 
             browser.test.notifyPass()
@@ -1599,6 +1758,204 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
 
             try await manager.run()
         }
+    }
+
+    private func queryTransformRedirectRule(id: Int, urlFilter: String, removeParams: [String]) -> [String: Any] {
+        [
+            "id": id,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "transform": [
+                        "queryTransform": [
+                            "removeParams": removeParams
+                        ]
+                    ]
+                ],
+            ],
+
+            "condition": [
+                "urlFilter": urlFilter,
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+    }
+
+    private func runEqualPriorityRedirectComposition(
+        rules: [[String: Any]],
+        requestQuery: String,
+        expectedQuery: String,
+        unexpectedQuery: String = "?unexpected"
+    ) async throws {
+        let correctPageScript = """
+            <script>
+              browser.test.notifyPass()
+            </script>
+            """
+
+        let incorrectPageScript = """
+            <script>
+              browser.test.notifyFail('Equal-priority redirects should compose into ' + '\(expectedQuery)' + ', but loaded ' + location.search)
+            </script>
+            """
+
+        var server = try HTTPServer(protocol: .http) {
+            Route("/\(expectedQuery)", headerFields: ["Content-Type": "text/html"]) {
+                correctPageScript
+            }
+            Route("/\(requestQuery)", headerFields: ["Content-Type": "text/html"]) {
+                incorrectPageScript
+            }
+            Route("/\(unexpectedQuery)", headerFields: ["Content-Type": "text/html"]) {
+                incorrectPageScript
+            }
+        }
+
+        let manifest: [String: Any] = [
+            "manifest_version": 3,
+
+            "name": "Test",
+            "description": "Test",
+            "version": "1",
+
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+
+            "permissions": ["declarativeNetRequestWithHostAccess"],
+            "host_permissions": ["*://localhost/*"],
+
+            "declarative_net_request": [
+                "rule_resources": [
+                    [
+                        "id": "redirectRule",
+                        "enabled": true,
+                        "path": "rules.json",
+                    ]
+                ]
+            ],
+        ]
+
+        let backgroundScript = """
+            browser.test.sendMessage('Load Tab')
+            """
+
+        try await server.run { configuration in
+            let urlRequest = URLRequest(url: try #require(URL(string: requestQuery, relativeTo: configuration.localhostAddress)))
+
+            let resources: [String: Any] = [
+                "background.js": backgroundScript,
+                "rules.json": rules,
+            ]
+
+            let manager = try loadWebExtension(manifest: manifest, resources: resources)
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: configuration.localhostAddress)
+
+            try await manager.waitForTestMessage("Load Tab")
+
+            let webView = try #require(manager.defaultTab?.webView)
+            webView.load(urlRequest)
+
+            try await manager.run()
+        }
+    }
+
+    @Test
+    func equalPriorityQueryTransformRedirectsCompose() async throws {
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            queryTransformRedirectRule(id: 2, urlFilter: "from=", removeParams: ["from"]),
+        ]
+
+        try await runEqualPriorityRedirectComposition(rules: rules, requestQuery: "?utm_source=em&from=glia&id=1", expectedQuery: "?id=1")
+    }
+
+    @Test
+    func noOpQueryTransformRedirectDoesNotSuppressEqualPriorityRedirect() async throws {
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            queryTransformRedirectRule(id: 2, urlFilter: "af_xp=", removeParams: ["c", "pid"]),
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&af_xp=1&id=1",
+            expectedQuery: "?af_xp=1&id=1"
+        )
+    }
+
+    @Test
+    func equalPriorityRegexSubstitutionRedirectDoesNotComposeWithQueryTransform() async throws {
+        let regexSubstitutionRule: [String: Any] = [
+            "id": 2,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "regexSubstitution": "\\1"
+                ],
+            ],
+
+            "condition": [
+                "regexFilter": "^(.*)&debug=1$",
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            regexSubstitutionRule,
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&id=1&debug=1",
+            expectedQuery: "?utm_source=em&id=1",
+            unexpectedQuery: "?id=1"
+        )
+    }
+
+    @Test
+    func equalPriorityAddOrReplaceParamsRedirectDoesNotComposeWithRemoveParams() async throws {
+        let addParamsRule: [String: Any] = [
+            "id": 2,
+            "priority": 1,
+
+            "action": [
+                "type": "redirect",
+                "redirect": [
+                    "transform": [
+                        "queryTransform": [
+                            "addOrReplaceParams": [["key": "ref", "value": "feed"]]
+                        ]
+                    ]
+                ],
+            ],
+
+            "condition": [
+                "urlFilter": "localhost",
+                "resourceTypes": ["main_frame"],
+            ],
+        ]
+
+        let rules = [
+            queryTransformRedirectRule(id: 1, urlFilter: "localhost", removeParams: ["utm_source"]),
+            addParamsRule,
+        ]
+
+        try await runEqualPriorityRedirectComposition(
+            rules: rules,
+            requestQuery: "?utm_source=em&id=1",
+            expectedQuery: "?utm_source=em&id=1&ref=feed",
+            unexpectedQuery: "?id=1&ref=feed"
+        )
     }
 
     @Test
@@ -2978,6 +3335,108 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         }
     }
     #endif
+
+    @Test
+    func staticRulesetThatIsNotAnArray() async throws {
+        let backgroundScript = """
+            let enabledRulesets = await browser.declarativeNetRequest.getEnabledRulesets()
+            browser.test.assertEq(enabledRulesets.length, 1, 'The static ruleset should be enabled.')
+
+            browser.test.sendMessage('Load Tab')
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "name": "Test",
+            "description": "Test dNR extension",
+            "version": "1",
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+            "declarative_net_request": [
+                "rule_resources": [
+                    [
+                        "id": "not_an_array",
+                        "enabled": true,
+                        "path": "rules.json",
+                    ]
+                ]
+            ],
+        ]
+
+        let rules =
+            "{ \"id\" : 1, \"priority\": 1, \"action\" : { \"type\" : \"block\" }, \"condition\" : { \"urlFilter\" : \"foo\" } }"
+
+        let manager = try loadWebExtension(
+            manifest: declarativeNetRequestManifest,
+            resources: ["background.js": backgroundScript, "rules.json": rules]
+        )
+        let context = try #require(manager.context)
+        context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+
+        try await manager.waitForTestMessage("Load Tab")
+
+        let errors = context.errors
+        try #require(errors.count == 1)
+        try #require(
+            errors.first?.localizedDescription
+                == "`declarative_net_request` ruleset with id `not_an_array` is invalid. The top level of the ruleset must be an array."
+        )
+    }
+
+    @Test
+    func staticRulesetWithMalformedJSON() async throws {
+        let backgroundScript = """
+            let enabledRulesets = await browser.declarativeNetRequest.getEnabledRulesets()
+            browser.test.assertEq(enabledRulesets.length, 1, 'The static ruleset should be enabled.')
+
+            browser.test.sendMessage('Load Tab')
+            """
+
+        let declarativeNetRequestManifest: [String: Any] = [
+            "name": "Test",
+            "description": "Test dNR extension",
+            "version": "1",
+            "manifest_version": 3,
+            "permissions": ["declarativeNetRequest"],
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+            "declarative_net_request": [
+                "rule_resources": [
+                    [
+                        "id": "malformed_json",
+                        "enabled": true,
+                        "path": "rules.json",
+                    ]
+                ]
+            ],
+        ]
+
+        let rules =
+            "[ { \"id\" : 1, \"priority\": 1, \"action\" : { \"type\" : \"block\" }, \"condition\" : { \"urlFilter\" : \"foo\" } }"
+
+        let manager = try loadWebExtension(
+            manifest: declarativeNetRequestManifest,
+            resources: ["background.js": backgroundScript, "rules.json": rules]
+        )
+        let context = try #require(manager.context)
+        context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+
+        try await manager.waitForTestMessage("Load Tab")
+
+        let errors = context.errors
+        try #require(errors.count == 1)
+        try #require(
+            errors.first?.localizedDescription
+                .hasPrefix("`declarative_net_request` ruleset with id `malformed_json` is invalid. Unable to parse JSON: ") == true
+        )
+    }
 
     // MARK: Rule translation tests
 
@@ -4468,6 +4927,7 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             let correctRuleConversion = withDebugIdentifiers([
                 "action": [
                     "type": "redirect",
+                    "priority": 1,
                     "redirect": expectedRedirect,
                 ],
                 "trigger": [
@@ -4593,6 +5053,7 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         try testModifyHeaders("responseHeaders", [["header": "accept", "operation": "remove", "value": "v1"]], nil, nil)
         try testModifyHeaders("requestHeaders", [["operation": "set", "value": "v1"]], nil, nil)
         try testModifyHeaders("requestHeaders", [["header": "ellie's custom header", "operation": "set", "value": "v1"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "authorization", "operation": "append", "value": "v1"]], nil, nil)
 
         try testModifyHeaders(
             "requestHeaders",
@@ -4614,6 +5075,63 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
         )
         try testModifyHeaders(
             "requestHeaders",
+            [["header": "cookie", "operation": "append", "value": "a=1"]],
+            "request-headers",
+            [["header": "cookie", "operation": "append", "value": "a=1"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "authorization", "operation": "set", "value": "v1"]],
+            "request-headers",
+            [["header": "authorization", "operation": "set", "value": "v1"]]
+        )
+        try testModifyHeaders("requestHeaders", [["header": "host", "operation": "set", "value": "example.com"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Content-Length", "operation": "set", "value": "0"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Proxy-Authorization", "operation": "set", "value": "v1"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "Transfer-Encoding", "operation": "append", "value": "chunked"]], nil, nil)
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "host", "operation": "remove"]],
+            "request-headers",
+            [["header": "host", "operation": "remove"]]
+        )
+        try testModifyHeaders(
+            "responseHeaders",
+            [["header": "content-length", "operation": "set", "value": "0"]],
+            "response-headers",
+            [["header": "content-length", "operation": "set", "value": "0"]]
+        )
+        try testModifyHeaders("requestHeaders", [["header": "connection", "operation": "set", "value": "upgrade"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "accept-encoding", "operation": "set", "value": "*"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "accept-encoding", "operation": "append", "value": "dcb"]], nil, nil)
+        try testModifyHeaders("requestHeaders", [["header": "X-HTTP-Method-Override", "operation": "set", "value": "TRACE"]], nil, nil)
+        try testModifyHeaders("responseHeaders", [["header": "x-test", "operation": "set", "value": "a\r\nb: c"]], nil, nil)
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "connection", "operation": "set", "value": "close"]],
+            "request-headers",
+            [["header": "connection", "operation": "set", "value": "close"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "accept-encoding", "operation": "set", "value": "gzip, deflate"]],
+            "request-headers",
+            [["header": "accept-encoding", "operation": "set", "value": "gzip, deflate"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
+            [["header": "X-HTTP-Method-Override", "operation": "set", "value": "PUT"]],
+            "request-headers",
+            [["header": "X-HTTP-Method-Override", "operation": "set", "value": "PUT"]]
+        )
+        try testModifyHeaders(
+            "responseHeaders",
+            [["header": "authorization", "operation": "append", "value": "v1"]],
+            "response-headers",
+            [["header": "authorization", "operation": "append", "value": "v1"]]
+        )
+        try testModifyHeaders(
+            "requestHeaders",
             [["header": "accept", "operation": "append", "value": "v1"], ["header": "accept", "operation": "set", "value": "v1"]],
             "request-headers",
             [["header": "accept", "operation": "append", "value": "v1"], ["header": "accept", "operation": "set", "value": "v1"]]
@@ -4624,6 +5142,100 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
             "response-headers",
             [["header": "accept", "operation": "set", "value": "v1"]]
         )
+    }
+
+    @Test
+    func ruleConversionWithModifyHeadersWithCustomHeaderNames() throws {
+        func convertedRule(
+            headerName: String,
+            operation: String = "set",
+            value: String? = "1",
+            headerKey: String = "requestHeaders"
+        ) -> [String: Any]? {
+            var headerInfo: [String: Any] = ["header": headerName, "operation": operation]
+            if let value {
+                headerInfo["value"] = value
+            }
+
+            let rule: [String: Any] = [
+                "id": 10,
+                "priority": 2,
+                "action": [
+                    "type": "modifyHeaders",
+                    headerKey: [headerInfo],
+                ],
+                "condition": [
+                    "urlFilter": "*",
+                    "resourceTypes": ["script"],
+                ],
+            ]
+
+            return unsafe _WKWebExtensionDeclarativeNetRequestRule(
+                dictionary: rule,
+                rulesetID: "Test Ruleset",
+                errorString: nil
+            )?
+            .ruleInWebKitFormat.first
+        }
+
+        #expect(convertedRule(headerName: "X-Custom-Header") != nil)
+        #expect(convertedRule(headerName: "Foo") != nil)
+        #expect(convertedRule(headerName: "X-Custom-Header", operation: "remove", value: nil) != nil)
+        #expect(convertedRule(headerName: "X-Request-Id", operation: "append", headerKey: "responseHeaders") != nil)
+
+        #expect(convertedRule(headerName: "X-Request-Id", operation: "append") == nil)
+        #expect(convertedRule(headerName: "") == nil)
+        #expect(convertedRule(headerName: "Foo:Bar") == nil)
+        #expect(convertedRule(headerName: "X Custom Header") == nil)
+        #expect(convertedRule(headerName: "X-Custom-Header", value: nil) == nil)
+    }
+
+    @Test
+    func translatingRulesDropsOnlyRulesAppendingToUnsupportedRequestHeaders() {
+        let rules: [String: [[String: Any]]] = [
+            "Test Ruleset": [
+                [
+                    "id": 1,
+                    "priority": 1,
+                    "action": ["type": "block"],
+                    "condition": [
+                        "urlFilter": "foo",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+                [
+                    "id": 2,
+                    "priority": 1,
+                    "action": [
+                        "type": "modifyHeaders",
+                        "requestHeaders": [["header": "authorization", "operation": "append", "value": "Bearer token"]],
+                    ],
+                    "condition": [
+                        "urlFilter": "bar",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+                [
+                    "id": 3,
+                    "priority": 1,
+                    "action": [
+                        "type": "modifyHeaders",
+                        "responseHeaders": [["header": "authorization", "operation": "append", "value": "Bearer token"]],
+                    ],
+                    "condition": [
+                        "urlFilter": "baz",
+                        "resourceTypes": ["script"],
+                    ],
+                ],
+            ]
+        ]
+
+        var errorStrings: NSArray?
+        let translatedRules = unsafe _WKWebExtensionDeclarativeNetRequestTranslator.translateRules(rules, errorStrings: &errorStrings)
+
+        #expect(translatedRules.count == 2)
+        #expect(errorStrings?.count == 1)
+        #expect((errorStrings?.firstObject as? String)?.contains("Rule with id 2 is invalid") == true)
     }
 
     @Test
@@ -4934,6 +5546,346 @@ struct WKWebExtensionAPIDeclarativeNetRequestTests {
 
         try await manager.run()
     }
+
+    private func makeScopedRulesServer() throws -> HTTPServer {
+        let headerFields = ["Content-Type": "text/plain", "Access-Control-Allow-Origin": "*"]
+        return try HTTPServer(protocol: .http) {
+            Route("/blocked-by-self", headerFields: headerFields) { "ok" }
+            Route("/blocked-by-other", headerFields: headerFields) { "ok" }
+            Route("/allowed", headerFields: headerFields) { "ok" }
+        }
+    }
+
+    private func scopedRulesManifest(overriding overrides: [String: Any] = [:]) -> [String: Any] {
+        var manifest: [String: Any] = [
+            "manifest_version": 3,
+            "name": "Scoped Rules Test",
+            "description": "Scoped Rules Test",
+            "version": "1",
+
+            "permissions": ["declarativeNetRequest"],
+            "host_permissions": ["*://localhost/*"],
+
+            "background": [
+                "scripts": ["background.js"],
+                "type": "module",
+                "persistent": false,
+            ],
+
+            "declarative_net_request": [
+                "rule_resources": [
+                    [
+                        "id": "blockRules",
+                        "enabled": true,
+                        "path": "rules.json",
+                    ]
+                ]
+            ],
+        ]
+
+        manifest.merge(overrides) { _, override in override }
+        return manifest
+    }
+
+    private func blockRules(forURLFilter urlFilter: String) -> [[String: Any]] {
+        [
+            [
+                "id": 1,
+                "priority": 1,
+                "action": ["type": "block"],
+                "condition": ["urlFilter": urlFilter],
+            ]
+        ]
+    }
+
+    private func scopedRulesChecksScript(address: URL) -> String {
+        """
+        const baseURL = '\(address.absoluteString)'
+
+        const isBlocked = async (path) => {
+            try {
+                await fetch(new URL(path, baseURL))
+                return false
+            } catch {
+                return true
+            }
+        }
+
+        const waitUntilBlocked = async (path) => {
+            for (let i = 0; i < 100; ++i) {
+                if (await isBlocked(path))
+                    return true
+
+                await new Promise(resolve => setTimeout(resolve, 50))
+            }
+
+            return false
+        }
+
+        const runChecks = async () => {
+            browser.test.assertTrue(await waitUntilBlocked('/blocked-by-self'), 'The extension\\'s own rules should apply')
+            browser.test.assertFalse(await isBlocked('/blocked-by-other'), 'Another extension\\'s rules should not apply')
+            browser.test.assertFalse(await isBlocked('/allowed'), 'Unmatched requests should not be blocked')
+        }
+
+        """
+    }
+
+    private func loadOtherBlockingExtension(into manager: TestWebExtensionManager, address: URL) async throws {
+        let backgroundScript =
+            scopedRulesChecksScript(address: address)
+                + """
+                await waitUntilBlocked('/blocked-by-other')
+                browser.test.sendMessage('Other Ready')
+                """
+
+        let otherManager = parseWebExtension(
+            manifest: scopedRulesManifest(overriding: ["name": "Other Scoped Rules Test"]),
+            resources: ["background.js": backgroundScript, "rules.json": blockRules(forURLFilter: "blocked-by-other")]
+        )
+
+        let otherContext = WKWebExtensionContext(for: otherManager.extension)
+        otherContext.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+        otherContext.setPermissionStatus(.grantedExplicitly, for: address)
+
+        try manager.controller.load(otherContext)
+
+        try await manager.waitForTestMessage("Other Ready")
+    }
+
+    @Test
+    func ownRulesOnlyApplyToBackgroundPage() async throws {
+        var server = try makeScopedRulesServer()
+
+        try await server.run { configuration in
+            let address = configuration.localhostAddress
+
+            let backgroundScript =
+                scopedRulesChecksScript(address: address)
+                    + """
+                    browser.test.onMessage.addListener(async (message) => {
+                        if (message !== 'Run test')
+                            return
+
+                        await runChecks()
+                        browser.test.notifyPass()
+                    })
+
+                    browser.test.sendMessage('Background Ready')
+                    """
+
+            let manager = try loadWebExtension(
+                manifest: scopedRulesManifest(),
+                resources: ["background.js": backgroundScript, "rules.json": blockRules(forURLFilter: "blocked-by-self")]
+            )
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+            context.setPermissionStatus(.grantedExplicitly, for: address)
+
+            try await manager.waitForTestMessage("Background Ready")
+            try await loadOtherBlockingExtension(into: manager, address: address)
+
+            manager.sendTestMessage("Run test")
+
+            try await manager.run()
+        }
+    }
+
+    @Test
+    func ownRulesOnlyApplyToServiceWorker() async throws {
+        var server = try makeScopedRulesServer()
+
+        try await server.run { configuration in
+            let address = configuration.localhostAddress
+
+            let backgroundScript =
+                scopedRulesChecksScript(address: address)
+                    + """
+                    browser.test.onMessage.addListener(async (message) => {
+                        if (message !== 'Run test')
+                            return
+
+                        await runChecks()
+                        browser.test.notifyPass()
+                    })
+
+                    browser.test.sendMessage('Background Ready')
+                    """
+
+            let manager = try loadWebExtension(
+                manifest: scopedRulesManifest(overriding: ["background": ["service_worker": "background.js", "type": "module"]]),
+                resources: ["background.js": backgroundScript, "rules.json": blockRules(forURLFilter: "blocked-by-self")]
+            )
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+            context.setPermissionStatus(.grantedExplicitly, for: address)
+
+            try await manager.waitForTestMessage("Background Ready")
+            try await loadOtherBlockingExtension(into: manager, address: address)
+
+            manager.sendTestMessage("Run test")
+
+            try await manager.run()
+        }
+    }
+
+    @Test
+    func ownRulesOnlyApplyToPopupPage() async throws {
+        var server = try makeScopedRulesServer()
+
+        try await server.run { configuration in
+            let address = configuration.localhostAddress
+
+            let popupScript =
+                scopedRulesChecksScript(address: address)
+                    + """
+                    await runChecks()
+                    browser.test.notifyPass()
+                    """
+
+            let manager = try loadWebExtension(
+                manifest: scopedRulesManifest(overriding: ["action": ["default_popup": "popup.html"]]),
+                resources: [
+                    "background.js": "browser.test.sendMessage('Background Ready')",
+                    "popup.html": "<script type='module' src='popup.js'></script>",
+                    "popup.js": popupScript,
+                    "rules.json": blockRules(forURLFilter: "blocked-by-self"),
+                ]
+            )
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+            context.setPermissionStatus(.grantedExplicitly, for: address)
+
+            try await manager.waitForTestMessage("Background Ready")
+            try await loadOtherBlockingExtension(into: manager, address: address)
+
+            context.performAction(for: manager.defaultTab)
+
+            try await manager.run()
+        }
+    }
+
+    #if ENABLE_WK_WEB_EXTENSIONS_OFFSCREEN
+    @Test
+    func ownRulesOnlyApplyToOffscreenDocument() async throws {
+        var server = try makeScopedRulesServer()
+
+        let configuration: WKWebExtensionController.Configuration = .nonPersistent()
+        for feature in WKPreferences._features() where feature.key == "WebExtensionOffscreenEnabled" {
+            configuration.webViewConfiguration.preferences._setEnabled(true, for: feature)
+        }
+
+        try await server.run { serverConfiguration in
+            let address = serverConfiguration.localhostAddress
+
+            let backgroundScript = """
+                browser.test.onMessage.addListener(async (message) => {
+                    if (message !== 'Run test')
+                        return
+
+                    await browser.offscreen.createDocument({ url: 'offscreen.html', reasons: ['TESTING'], justification: 'test' })
+                })
+
+                browser.test.sendMessage('Background Ready')
+                """
+
+            let offscreenScript =
+                scopedRulesChecksScript(address: address)
+                    + """
+                    await runChecks()
+                    browser.test.notifyPass()
+                    """
+
+            let manager = try loadWebExtension(
+                manifest: scopedRulesManifest(overriding: [
+                    "permissions": ["declarativeNetRequest", "offscreen"],
+                    "background": ["service_worker": "background.js", "type": "module"],
+                ]),
+                resources: [
+                    "background.js": backgroundScript,
+                    "offscreen.html": "<script type='module' src='offscreen.js'></script>",
+                    "offscreen.js": offscreenScript,
+                    "rules.json": blockRules(forURLFilter: "blocked-by-self"),
+                ],
+                configuration: configuration
+            )
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+            context.setPermissionStatus(.grantedExplicitly, for: address)
+
+            try await manager.waitForTestMessage("Background Ready")
+            try await loadOtherBlockingExtension(into: manager, address: address)
+
+            manager.sendTestMessage("Run test")
+
+            try await manager.run()
+        }
+    }
+    #endif
+
+    #if ENABLE_WK_WEB_EXTENSIONS_SIDEBAR
+    @Test
+    func ownRulesOnlyApplyToSidebarPage() async throws {
+        var server = try makeScopedRulesServer()
+
+        let configuration: WKWebExtensionController.Configuration = .nonPersistent()
+        for feature in WKPreferences._features() where feature.key == "WebExtensionSidebarEnabled" {
+            configuration.webViewConfiguration.preferences._setEnabled(true, for: feature)
+        }
+
+        try await server.run { serverConfiguration in
+            let address = serverConfiguration.localhostAddress
+
+            let backgroundScript = """
+                browser.test.onMessage.addListener(async (message) => {
+                    if (message !== 'Run test')
+                        return
+
+                    await browser.test.runWithUserGesture(() => browser.sidebarAction.open())
+                })
+
+                browser.test.sendMessage('Background Ready')
+                """
+
+            let sidebarScript =
+                scopedRulesChecksScript(address: address)
+                    + """
+                    await runChecks()
+                    browser.test.notifyPass()
+                    """
+
+            let manager = try loadWebExtension(
+                manifest: scopedRulesManifest(overriding: ["sidebar_action": ["default_panel": "sidebar.html", "open_at_install": false]]),
+                resources: [
+                    "background.js": backgroundScript,
+                    "sidebar.html": "<script type='module' src='sidebar.js'></script>",
+                    "sidebar.js": sidebarScript,
+                    "rules.json": blockRules(forURLFilter: "blocked-by-self"),
+                ],
+                configuration: configuration
+            )
+            let context = try #require(manager.context)
+
+            context.setPermissionStatus(.grantedExplicitly, for: WKWebExtension.Permission.declarativeNetRequest)
+            context.setPermissionStatus(.grantedExplicitly, for: address)
+
+            manager.internalDelegate.presentSidebar = { sidebar in
+                _ = sidebar.webView
+            }
+
+            try await manager.waitForTestMessage("Background Ready")
+            try await loadOtherBlockingExtension(into: manager, address: address)
+
+            manager.sendTestMessage("Run test")
+
+            try await manager.run()
+        }
+    }
+    #endif
 }
 
 #endif // ENABLE_WK_WEB_EXTENSIONS

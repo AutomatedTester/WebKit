@@ -358,6 +358,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
     void flushCommandBuffer(mtl::CommandBufferFinishOperation operation);
     void present(const gl::Context *context, id<CAMetalDrawable> presentationDrawable);
     angle::Result finishCommandBuffer();
+    angle::Result checkCommandBufferError();
 
     void addCommandBufferScheduledCallback(std::function<void()> callback);
 
@@ -412,6 +413,9 @@ class ContextMtl : public ContextImpl, public mtl::Context
     mtl::BufferManager &getBufferManager() { return mBufferManager; }
 
     ProvokingVertexHelper &getProvokingVertexHelper() { return mProvokingVertexHelper; }
+
+    // The staging buffers of small texture uploads.
+    mtl::BufferPool &getStagingBufferPool() { return mStagingBufferPool; }
 
     mtl::PipelineCache &getPipelineCache() { return mPipelineCache; }
 
@@ -546,8 +550,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                          bool xfbPass,
                                          bool *pipelineDescChanged);
 
-    angle::Result checkCommandBufferError();
-
     // Dirty bits.
     enum DirtyBitType : size_t
     {
@@ -650,6 +652,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
     mtl::BufferPool mLineLoopIndexBuffer;
     mtl::BufferPool mLineLoopLastSegmentIndexBuffer;
     mtl::BufferPool mTriFanIndexBuffer;
+    mtl::BufferPool mStagingBufferPool;
     // one buffer can be reused for any starting vertex in DrawArrays()
     mtl::BufferRef mTriFanArraysIndexBuffer;
 
@@ -667,6 +670,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
     id<MTLTexture> mRasterizationRateMapTexture;
 
     mtl::ContextDevice mContextDevice;
+
+    bool mContextLost = false;
 
     mtl::BufferRef mOcclusionQueryResultBuffer;
     bool mOcclusionQueryIsEnabledInRenderPass{false};

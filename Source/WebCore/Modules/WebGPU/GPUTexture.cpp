@@ -31,7 +31,7 @@
 #include "GPUTextureDescriptor.h"
 #include "GPUTextureView.h"
 #include "GPUTextureViewDescriptor.h"
-#include "WebGPUTextureViewDescriptor.h"
+#include <WebCore/WebGPUCppAPI.h>
 #include <bit>
 #include <wtf/CheckedArithmetic.h>
 
@@ -60,6 +60,7 @@ static uint32_t getDimension(auto& extent3D)
 
 GPUTexture::GPUTexture(Ref<WebGPU::Texture>&& backing, const GPUTextureDescriptor& descriptor, GPUDevice& device, bool isCanvasBacking)
     : m_backing(WTF::move(backing))
+    , m_label(descriptor.label)
     , m_format(descriptor.format)
     , m_width(getDimension<0>(descriptor.size))
     , m_height(getDimension<1>(descriptor.size))
@@ -90,15 +91,16 @@ GPUDevice* GPUTexture::device() const
 
 String GPUTexture::label() const
 {
-    return m_backing->label();
+    return m_label;
 }
 
 void GPUTexture::setLabel(String&& label)
 {
+    m_label = label;
     m_backing->setLabel(WTF::move(label));
 }
 
-static std::optional<WebGPU::TextureViewDescriptor> LEGACY_NODELETE convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
+NODELETE static std::optional<WebGPU::TextureViewDescriptor> convertToBacking(const std::optional<GPUTextureViewDescriptor>& textureViewDescriptor)
 {
     if (!textureViewDescriptor)
         return WebGPU::TextureViewDescriptor { };
@@ -118,7 +120,7 @@ ExceptionOr<Ref<GPUTextureView>> GPUTexture::createView(const std::optional<GPUT
     RefPtr view = m_backing->createView(backingDescriptor);
     if (!view)
         return Exception { ExceptionCode::InvalidStateError, "GPUTexture.createView: Unable to create view."_s };
-    return GPUTextureView::create(view.releaseNonNull(), *this);
+    return GPUTextureView::create(view.releaseNonNull(), WTF::move(backingDescriptor->label), *this);
 }
 
 void GPUTexture::destroy()
@@ -174,7 +176,7 @@ JSC::JSValue GPUTexture::textureBindingViewDimension() const
     return JSC::jsUndefined();
 }
 
-static GPUTextureFormat LEGACY_NODELETE depthSpecificFormat(GPUTextureFormat textureFormat)
+NODELETE static GPUTextureFormat depthSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -188,7 +190,7 @@ static GPUTextureFormat LEGACY_NODELETE depthSpecificFormat(GPUTextureFormat tex
     }
 }
 
-static GPUTextureFormat LEGACY_NODELETE stencilSpecificFormat(GPUTextureFormat textureFormat)
+NODELETE static GPUTextureFormat stencilSpecificFormat(GPUTextureFormat textureFormat)
 {
     // https://gpuweb.github.io/gpuweb/#aspect-specific-format
 
@@ -581,13 +583,13 @@ uint32_t GPUTexture::texelBlockHeight(GPUTextureFormat format)
     return 0;
 }
 
-static uint32_t LEGACY_NODELETE texelBlockCount(uint32_t size, uint32_t blockSize)
+NODELETE static uint32_t texelBlockCount(uint32_t size, uint32_t blockSize)
 {
     return size / blockSize + !!(size % blockSize);
 }
 
 // The most mip levels a texture this size can have.
-static uint32_t LEGACY_NODELETE maxMipLevelCount(GPUTextureDimension dimension, uint32_t width, uint32_t height, uint32_t depthOrArrayLayers)
+NODELETE static uint32_t maxMipLevelCount(GPUTextureDimension dimension, uint32_t width, uint32_t height, uint32_t depthOrArrayLayers)
 {
     switch (dimension) {
     case GPUTextureDimension::_1d:

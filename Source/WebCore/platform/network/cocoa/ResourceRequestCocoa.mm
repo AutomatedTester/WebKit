@@ -69,6 +69,7 @@ ResourceRequest::ResourceRequest(ResourceRequestPlatformData&& platformData, boo
         setDidFilterLinkDecoration(platformData.m_didFilterLinkDecoration);
         setIsPrivateTokenUsageByThirdPartyAllowed(platformData.m_isPrivateTokenUsageByThirdPartyAllowed);
         setWasSchemeOptimisticallyUpgraded(platformData.m_wasSchemeOptimisticallyUpgraded);
+        setLatchedThirdPartyCookieBlockingDecision(platformData.m_latchedThirdPartyCookieBlockingDecision);
     }
 
     setShouldBlockThirdPartyStorage(shouldBlockThirdPartyStorage);
@@ -127,7 +128,8 @@ ResourceRequestPlatformData ResourceRequest::getResourceRequestPlatformData() co
         useAdvancedPrivacyProtections(),
         didFilterLinkDecoration(),
         isPrivateTokenUsageByThirdPartyAllowed(),
-        wasSchemeOptimisticallyUpgraded()
+        wasSchemeOptimisticallyUpgraded(),
+        latchedThirdPartyCookieBlockingDecision()
     };
 }
 
@@ -136,7 +138,7 @@ CFURLRequestRef ResourceRequest::cfURLRequest(HTTPBodyUpdatePolicy bodyPolicy) c
     return [protect(nsURLRequest(bodyPolicy)) _CFURLRequest];
 }
 
-static inline ResourceRequestCachePolicy LEGACY_NODELETE fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
+NODELETE static inline ResourceRequestCachePolicy fromPlatformRequestCachePolicy(NSURLRequestCachePolicy policy)
 {
     switch (policy) {
     case NSURLRequestUseProtocolCachePolicy:
@@ -150,7 +152,7 @@ static inline ResourceRequestCachePolicy LEGACY_NODELETE fromPlatformRequestCach
     }
 }
 
-static inline NSURLRequestCachePolicy LEGACY_NODELETE toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
+NODELETE static inline NSURLRequestCachePolicy toPlatformRequestCachePolicy(ResourceRequestCachePolicy policy)
 {
     switch (policy) {
     case ResourceRequestCachePolicy::UseProtocolCachePolicy:
@@ -303,10 +305,8 @@ void ResourceRequest::doUpdatePlatformRequest()
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL NSString *oldHeaderName in [nsRequest allHTTPHeaderFields])
         [nsRequest setValue:nil forHTTPHeaderField:oldHeaderName];
-    for (const auto& header : httpHeaderFields()) {
-        RetainPtr encodedValue = httpHeaderValueUsingSuitableEncoding(header);
-        [nsRequest setValue:bridge_cast(encodedValue.get()) forHTTPHeaderField:header.key.createNSString().get()];
-    }
+    for (const auto& header : httpHeaderFields())
+        [nsRequest setValue:header.value.createNSString().get() forHTTPHeaderField:header.key.createNSString().get()];
 
     [nsRequest setContentDispositionEncodingFallbackArray:createNSArray(m_requestData.m_responseContentDispositionEncodingFallbackArray, [] (auto& name) -> NSNumber * {
         auto encoding = CFStringConvertEncodingToNSStringEncoding(CFStringConvertIANACharSetNameToEncoding(name.createCFString().get()));

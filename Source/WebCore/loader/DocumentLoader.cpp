@@ -153,7 +153,7 @@
 namespace WebCore {
 
 #if ENABLE(CONTENT_FILTERING)
-static bool& LEGACY_NODELETE contentFilterInDocumentLoader()
+NODELETE static bool& contentFilterInDocumentLoader()
 {
     static bool filter = false;
     RELEASE_ASSERT(isMainThread());
@@ -173,7 +173,7 @@ static void setAllDefersLoading(const ResourceLoaderMap& loaders, bool defers)
         loader->setDefersLoading(defers);
 }
 
-static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& LEGACY_NODELETE scriptExecutionContextIdentifierToLoaderMap()
+NODELETE static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& scriptExecutionContextIdentifierToLoaderMap()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>> map;
     return map.get();
@@ -483,7 +483,7 @@ void DocumentLoader::notifyFinished(CachedResource& resource, const NetworkLoadM
 
 void DocumentLoader::finishedLoading()
 {
-    // If the prefetch response was not successful, remove the failed prefetch from the memory cache and retry the navigation as a continuing load.
+    // If the prefetch response can't serve this navigation, remove the prefetch from the memory cache and retry the navigation as a continuing load.
     if (m_prefetchResponseFailed) {
         RefPtr frame = m_frame;
         if (!frame)
@@ -500,6 +500,8 @@ void DocumentLoader::finishedLoading()
         FrameLoadRequest frameLoadRequest { document.copyRef(), protect(document->securityOrigin()), WTF::move(request), { }, InitiatedByMainFrame::Unknown };
         frameLoadRequest.setIsRequestFromClientOrUserInput();
         frameLoadRequest.setShouldTreatAsContinuingLoad(ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
+        if (auto navigationID = takeNavigationID())
+            frameLoadRequest.setNavigationID(*navigationID);
         frame->loader().load(WTF::move(frameLoadRequest));
         return;
     }
@@ -754,7 +756,10 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
 
     RefPtr document = frame->document();
     ASSERT(document);
-    
+
+    if (!didReceiveRedirectResponse && !isContinuingLoadAfterProvisionalLoadStarted())
+        newRequest.setLatchedThirdPartyCookieBlockingDecision(ThirdPartyCookieBlockingDecision::None);
+
     // Update cookie policy base URL as URL changes, except for subframes, which use the
     // URL of the main frame which doesn't change when we redirect.
     if (frame->isMainFrame())
@@ -797,7 +802,7 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
     if (!newRequest.url().host().isEmpty() && SecurityOrigin::shouldIgnoreHost(newRequest.url())) {
         auto url = newRequest.url();
         url.removeHostAndPort();
-        newRequest.setURL(WTF::move(url));
+        newRequest.setURL(WTF::move(url), newRequest.didFilterLinkDecoration());
     }
 
 #if ENABLE(CONTENT_FILTERING)
@@ -937,16 +942,17 @@ void DocumentLoader::responseReceived(const CachedResource& resource, const Reso
 {
     ASSERT_UNUSED(resource, m_mainResource == &resource);
 
-    // If we joined an in-flight prefetch and the response is not successful,
-    // set a flag to suppress committing the error response. The retry will be
+    RefPtr frame = m_frame;
+
+    // If we joined an in-flight prefetch whose response can't serve this navigation,
+    // set a flag to suppress committing it. The retry will be
     // scheduled in finishedLoading via the NavigationScheduler.
     if (m_mainResource
         && m_mainResource->options().cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch
-        && !response.isSuccessful()
-        && response.httpStatusCode() > 0)
+        && response.httpStatusCode() > 0
+        && frame && !frame->loader().documentPrefetcher().canServeNavigations(response))
         m_prefetchResponseFailed = true;
 
-    RefPtr frame = m_frame.get();
     if (shouldClearContentSecurityPolicyForResponse(response))
         m_contentSecurityPolicy = nullptr;
     else {
@@ -1180,7 +1186,7 @@ void DocumentLoader::continueAfterContentPolicy(PolicyAction policy, CompletionH
     switch (policy) {
     case PolicyAction::Use: {
         if (!protect(frameLoader()->client())->canShowMIMEType(m_response.mimeType()) || disallowWebArchive() || disallowDataRequest()) {
-            frameLoader()->policyChecker().cannotShowMIMEType(m_response);
+            protect(frameLoader()->policyChecker())->cannotShowMIMEType(m_response);
             // Check reachedTerminalState since the load may have already been canceled inside of _handleUnimplementablePolicyWithErrorCode::.
             stopLoadingForPolicyChange();
             return;
@@ -1340,7 +1346,7 @@ static inline bool shouldUseActiveServiceWorkerFromParent(const Document& docume
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static inline bool LEGACY_NODELETE shouldEnableResourceMonitor(const Frame& frame)
+NODELETE static inline bool shouldEnableResourceMonitor(const Frame& frame)
 {
     if (frame.isMainFrame())
         return false;
@@ -1545,7 +1551,7 @@ void DocumentLoader::checkLoadComplete()
         return;
 
     ASSERT(this == frameLoader()->activeDocumentLoader());
-    protect(protect(*m_frame)->document()->window())->finishedLoading();
+    protect(protect(*m_frame)->document()->window())->runPrintWhenLoadedSteps();
 }
 
 void DocumentLoader::applyPoliciesToSettings()
@@ -1568,7 +1574,7 @@ void DocumentLoader::applyPoliciesToSettings()
     });
 }
 
-ColorSchemePreference LEGACY_NODELETE DocumentLoader::colorSchemePreference() const
+NODELETE ColorSchemePreference DocumentLoader::colorSchemePreference() const
 {
     return m_colorSchemePreference;
 }
@@ -2033,7 +2039,7 @@ URL DocumentLoader::documentURL() const
 // FIXME: This method seems to violate the encapsulation of this class.
 void DocumentLoader::setResponseMIMEType(const String& responseMIMEType)
 {
-    m_response.setMimeType(String { responseMIMEType });
+    m_response.setMimeType(extractMIMETypeFromMediaType(responseMIMEType));
 }
 
 #endif
@@ -2429,7 +2435,7 @@ void DocumentLoader::loadMainResource(ResourceRequest&& request)
     // the fragment identifier, so add that back in.
     // Otherwise, if the main resource was loaded from a prefetch, we need to conserve the redirect URL here
     if (equalIgnoringFragmentIdentifier(m_request.url(), updatedRequest.url()) || (m_mainResource && m_mainResource->options().cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch))
-        updatedRequest.setURL(URL { m_request.url() });
+        updatedRequest.setURL(URL { m_request.url() }, m_request.didFilterLinkDecoration());
     setRequest(WTF::move(updatedRequest));
 }
 
@@ -2437,7 +2443,7 @@ void DocumentLoader::cancelPolicyCheckIfNeeded()
 {
     if (m_waitingForContentPolicy || m_waitingForNavigationPolicy) {
         RELEASE_ASSERT(frameLoader());
-        frameLoader()->policyChecker().stopCheck();
+        protect(frameLoader()->policyChecker())->stopCheck();
         m_waitingForContentPolicy = false;
         m_waitingForNavigationPolicy = false;
     }
@@ -2750,7 +2756,7 @@ ResourceError DocumentLoader::handleContentFilterDidBlock(ContentFilterUnblockHa
         unblockHandler.wrapWithDecisionHandler([scriptController = WeakPtr { frame()->script() }, script = WTF::move(unblockRequestDeniedScript).isolatedCopy()](bool unblocked) {
             if (!unblocked && scriptController) {
                 // FIXME: This probably needs to figure out if the origin is considered tainted.
-                scriptController->executeScriptIgnoringException(script, JSC::SourceTaintedOrigin::Untainted);
+                protect(scriptController)->executeScriptIgnoringException(script, JSC::SourceTaintedOrigin::Untainted);
             }
         });
     }
@@ -2807,6 +2813,12 @@ bool DocumentLoader::allowsActiveContentRuleListActionsForURL(const String& cont
             return true;
     }
     return false;
+}
+
+void DocumentLoader::copyContentRuleListPoliciesFrom(const DocumentLoader& other)
+{
+    m_contentExtensionEnablement = other.m_contentExtensionEnablement;
+    m_activeContentRuleListActionPatterns = other.m_activeContentRuleListActionPatterns;
 }
 
 void DocumentLoader::setHTTPSByDefaultMode(HTTPSByDefaultMode mode)

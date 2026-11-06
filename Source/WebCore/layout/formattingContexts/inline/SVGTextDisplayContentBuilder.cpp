@@ -49,8 +49,8 @@ struct SVGTextRun {
     bool isWordSeparator { false };
     bool hasContent { false };
 
-    bool isText() const { return is<InlineTextBox>(layoutBox.get()); }
-    bool hasCollapsibleTrailingWhitespace() const { return trailingWhitespace == TrailingWhitespace::Collapsible || trailingWhitespace == TrailingWhitespace::Collapsed; }
+    NODELETE bool isText() const { return is<InlineTextBox>(layoutBox.get()); }
+    NODELETE bool hasCollapsibleTrailingWhitespace() const { return trailingWhitespace == TrailingWhitespace::Collapsible || trailingWhitespace == TrailingWhitespace::Collapsed; }
 };
 
 }

@@ -93,6 +93,8 @@ struct WebNavigationDataStore;
 using LayerHostingContextID = uint32_t;
 #endif
 
+enum class ProvisionalLoadIsReplaced : bool { No, Yes };
+
 class ProvisionalPageProxy final : public IPC::MessageReceiver, public IPC::MessageSender, public RefCounted<ProvisionalPageProxy> {
     WTF_MAKE_TZONE_ALLOCATED(ProvisionalPageProxy);
 public:
@@ -112,7 +114,7 @@ public:
     WebCore::PageIdentifier webPageID() const { return m_webPageID; }
     WebFrameProxy* mainFrame() const { return m_mainFrame.get(); }
     BrowsingContextGroup& browsingContextGroup() const { return m_browsingContextGroup.get(); }
-    WebProcessProxy& LEGACY_NODELETE process() const;
+    NODELETE WebProcessProxy& process() const;
     ProcessSwapRequestedByClient processSwapRequestedByClient() const { return m_processSwapRequestedByClient; }
     WebCore::NavigationIdentifier navigationID() const { return m_navigationID; }
     const URL& provisionalURL() const LIFETIME_BOUND { return m_provisionalLoadURL; }
@@ -130,7 +132,7 @@ public:
     DrawingAreaProxy* drawingArea() const { return m_drawingArea.get(); }
     RefPtr<DrawingAreaProxy> takeDrawingArea();
 
-    void LEGACY_NODELETE setNavigation(API::Navigation&);
+    NODELETE void setNavigation(API::Navigation&);
 
 #if PLATFORM(COCOA)
     Vector<uint8_t> takeAccessibilityToken() { return WTF::move(m_accessibilityToken); }
@@ -153,7 +155,7 @@ public:
     void loadData(API::Navigation&, Ref<WebCore::SharedBuffer>&&, const String& mimeType, const String& encoding, const String& baseURL, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, RefPtr<API::WebsitePolicies>&&, WebCore::SubstituteData::SessionHistoryVisibility);
     void loadRequest(API::Navigation&, WebCore::ResourceRequest&&, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, RefPtr<API::WebsitePolicies>&&, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, WebCore::NavigationUpgradeToHTTPSBehavior, MonotonicTime originalNavigationStartTime);
     void goToBackForwardItem(API::Navigation&, WebBackForwardListItem&, RefPtr<API::WebsitePolicies>&&, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume = std::nullopt, WebCore::ProcessSwapDisposition processSwapDisposition = WebCore::ProcessSwapDisposition::None);
-    void cancel();
+    void cancel(ProvisionalLoadIsReplaced);
 
     void swipeAnimationDidEnd();
 
@@ -190,6 +192,7 @@ private:
     void didStartProvisionalLoadForFrame(WebCore::FrameIdentifier, FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, URL&&, URL&& unreachableURL, const UserData&, WallTime);
     void didCommitLoadForFrame(IPC::Connection&, WebCore::FrameIdentifier, FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, String&& mimeType, bool frameHasCustomContentProvider, WebCore::FrameLoadType, bool hasCertificateInfo, bool usedLegacyTLS, bool privateRelayed, String&& proxyName, WebCore::ResourceResponseSource, bool containsPluginDocument, WebCore::HasInsecureContent, WebCore::MouseEventPolicy, WebCore::DocumentSecurityPolicy&&, IPC::Untrusted<HashSet<WebCore::SecurityOriginData>>&& cspOriginsThatUpgradeInsecureNavigations, const UserData&, WebCore::RestoredFromBackForwardCache, RefPtr<FrameState>&& redirectReplaceFrameState);
     void didFailProvisionalLoadForFrame(FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, String&& provisionalURL, WebCore::ResourceError&&, WebCore::WillContinueLoading, const UserData&, WebCore::WillInternallyHandleFailure);
+    void didFailProvisionalLoad(FrameInfoData&&, WebCore::ResourceRequest&&, std::optional<WebCore::NavigationIdentifier>, String&& provisionalURL, WebCore::ResourceError&&, WebCore::WillContinueLoading, const UserData&, WebCore::WillInternallyHandleFailure, ProvisionalLoadIsReplaced);
 
     Ref<FrameState> copyFrameStateForBackForwardNavigation(API::Navigation&, WebBackForwardListItem&) const;
     void logDiagnosticMessageFromWebProcess(const String& message, const String& description, WebCore::ShouldSample);
@@ -217,7 +220,7 @@ private:
 #endif
 
     void initializeWebPage(RefPtr<API::WebsitePolicies>&&, bool isRestoringFromBFCache = false);
-    bool LEGACY_NODELETE validateInput(WebCore::FrameIdentifier, const std::optional<WebCore::NavigationIdentifier>& = std::nullopt);
+    NODELETE bool validateInput(WebCore::FrameIdentifier, const std::optional<WebCore::NavigationIdentifier>& = std::nullopt);
 
     WeakPtr<WebPageProxy> m_page;
     WebCore::PageIdentifier m_webPageID;

@@ -28,6 +28,7 @@
 
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <WebCore/CacheStorageConnection.h>
+#include <WebCore/CanBeCrossOriginIsolated.h>
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/ImageBitmap.h>
 #include <WebCore/NetworkLoadPolicy.h>
@@ -101,6 +102,7 @@ public:
     void suspend() final;
     void resume() final;
     GraphicsClient* graphicsClient() final;
+    ReportingClient* reportingClient() final { return this; }
 
 
     USING_CAN_MAKE_WEAKPTR(EventTarget);
@@ -126,7 +128,7 @@ public:
     virtual ExceptionOr<void> importScripts(const FixedVector<Variant<Ref<TrustedScriptURL>, String>>& urls);
     WorkerNavigator& navigator();
 
-    void LEGACY_NODELETE setIsOnline(bool);
+    NODELETE void setIsOnline(bool);
     bool isOnline() const { return m_isOnline; }
 
     ExceptionOr<int> setTimeout(std::unique_ptr<ScheduledAction>, int timeout, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
@@ -135,7 +137,7 @@ public:
     void clearInterval(int timeoutId);
 
     bool isSecureContext() const final;
-    bool LEGACY_NODELETE crossOriginIsolated() const final;
+    NODELETE bool crossOriginIsolated() const final;
 
     WorkerNavigator* optionalNavigator() const { return m_navigator.get(); }
     WorkerLocation* optionalLocation() const { return m_location.get(); }
@@ -146,7 +148,7 @@ public:
     bool hasUnpartitionedStorageAccess() const final { return m_hasUnpartitionedStorageAccess; }
 
     Crypto& crypto();
-    Performance& LEGACY_NODELETE performance() const;
+    NODELETE Performance& performance() const;
     ReportingScope& reportingScope() const { return m_reportingScope.get(); }
 
     void prepareForDestruction() override;
@@ -162,7 +164,7 @@ public:
     RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource) final;
     void beginLoadingFontSoon(FontLoadRequest&) final;
 
-    const SettingsValues& LEGACY_NODELETE settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    NODELETE const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
 
     const NetworkLoadPolicy& networkLoadPolicy() const LIFETIME_BOUND final { return m_networkLoadPolicy; }
 
@@ -172,7 +174,7 @@ public:
     static void releaseMemoryInWorkers(Synchronous);
     static void dumpGCHeapForWorkers();
 
-    void LEGACY_NODELETE setMainScriptSourceProvider(ScriptBufferSourceProvider&);
+    NODELETE void setMainScriptSourceProvider(ScriptBufferSourceProvider&);
     void addImportedScriptSourceProvider(const URL&, ScriptBufferSourceProvider&);
 
     ClientOrigin clientOrigin() const { return { topOrigin().data(), securityOrigin()->data() }; }
@@ -209,7 +211,7 @@ private:
 
     EventTarget* errorEventTarget() final;
     String resourceRequestIdentifier() const final { return m_inspectorIdentifier; }
-    SocketProvider* LEGACY_NODELETE socketProvider() final;
+    NODELETE SocketProvider* socketProvider() final;
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
 
     bool shouldBypassMainWorldContentSecurityPolicy() const final { return m_shouldBypassMainWorldContentSecurityPolicy; }
@@ -260,6 +262,7 @@ private:
     FetchOptions::Credentials m_credentials;
     String m_agentClusterID;
     const NetworkLoadPolicy m_networkLoadPolicy;
+    const CanBeCrossOriginIsolated m_canBeCrossOriginIsolated;
     const RefPtr<WorkerStorageConnection> m_storageConnection;
     RefPtr<WorkerFileSystemStorageConnection> m_fileSystemStorageConnection;
 };

@@ -27,6 +27,7 @@
 #include "TextExtractionCache.h"
 
 #include <optional>
+#include <wtf/Borrow.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
@@ -56,8 +57,7 @@ void TextExtractionCache::add(const String& url, Vector<TextExtractionLineConten
 
 Vector<String> TextExtractionCache::contextWindowBefore(const Vector<TextExtractionLineContent>& lines, unsigned targetIndex)
 {
-    Vector<String> window;
-    window.reserveInitialCapacity(contextLineCount);
+    Vector<String> window(ReserveCapacityTag { }, contextLineCount);
     for (unsigned offset = contextLineCount; offset >= 1; --offset) {
         if (offset > targetIndex)
             window.append(emptyString());
@@ -70,8 +70,7 @@ Vector<String> TextExtractionCache::contextWindowBefore(const Vector<TextExtract
 Vector<String> TextExtractionCache::contextWindowAfter(const Vector<TextExtractionLineContent>& lines, unsigned targetIndex)
 {
     unsigned lineCount = lines.size();
-    Vector<String> window;
-    window.reserveInitialCapacity(contextLineCount);
+    Vector<String> window(ReserveCapacityTag { }, contextLineCount);
     for (unsigned offset = 1; offset <= contextLineCount; ++offset) {
         unsigned index = targetIndex + offset;
         if (index >= lineCount)
@@ -101,9 +100,10 @@ auto TextExtractionCache::resolve(const String& identifier) const -> ResolvedNod
         return { { identifier }, NodeResolution::Unknown };
 
     Vector<String> candidates;
-    auto& newestURL = m_entries[newestIndex].url;
+    Borrow borrowedEntries = m_entries;
+    auto& newestURL = borrowedEntries[newestIndex].url;
     for (size_t targetIndex = newestIndex; targetIndex > sourceEntryIndices.first(); --targetIndex) {
-        auto& target = m_entries[targetIndex];
+        auto& target = borrowedEntries[targetIndex];
         if (target.url != newestURL)
             continue;
 
@@ -112,7 +112,7 @@ auto TextExtractionCache::resolve(const String& identifier) const -> ResolvedNod
             if (sourceIndex >= targetIndex)
                 break;
 
-            auto& source = m_entries[sourceIndex];
+            auto& source = borrowedEntries[sourceIndex];
             auto sourceLineIndex = source.lineIndexForUID.get(identifier);
             auto sourceLineContent = source.lines[sourceLineIndex].cachedRepresentation;
             auto sourceContextBefore = contextWindowBefore(source.lines, sourceLineIndex);

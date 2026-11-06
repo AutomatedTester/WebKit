@@ -34,6 +34,7 @@
 #include "NetworkResourceLoadMap.h"
 #include "NetworkStorageSession.h"
 #include "PolicyDecision.h"
+#include "ProcessCrossOriginIsolation.h"
 #include "SandboxExtension.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "StorageAccessPermissionChangeObserver.h"
@@ -105,7 +106,7 @@ enum class HTTPCookieAcceptPolicy : uint8_t;
 enum class IncludeSecureCookies : bool;
 enum class RequiresScriptTrackingPrivacy : bool;
 
-enum class IsInitiatedByDedicatedWorker : bool;
+enum class IsInitiatedByWorker : bool;
 }
 
 namespace IPC {
@@ -116,7 +117,6 @@ namespace WebKit {
 
 class NetworkOriginAccessPatterns;
 class NetworkSchemeRegistry;
-class NetworkProcess;
 class NetworkResourceLoader;
 class NetworkSession;
 class NetworkSocketChannel;
@@ -170,7 +170,7 @@ public:
 
     using RegistrableDomain = WebCore::RegistrableDomain;
 
-    static Ref<NetworkConnectionToWebProcess> create(NetworkProcess&, WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier&&);
+    static Ref<NetworkConnectionToWebProcess> create(WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier&&);
     virtual ~NetworkConnectionToWebProcess();
 
     void ref() const final { RefCounted::ref(); }
@@ -178,6 +178,7 @@ public:
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const { return m_sharedPreferencesForWebProcess; }
     SharedPreferencesForWebProcess sharedPreferencesForWebProcessValue() const { return m_sharedPreferencesForWebProcess; }
+    ProcessCrossOriginIsolation crossOriginIsolation() const { return m_crossOriginIsolation; }
     void updateSharedPreferencesForWebProcess(SharedPreferencesForWebProcess&&);
 
     // std::nullopt means the process may host documents from any site.
@@ -187,7 +188,6 @@ public:
     NetworkSession* networkSession();
 
     IPC::Connection& connection() { return m_connection.get(); }
-    NetworkProcess& networkProcess() { return m_networkProcess.get(); }
 
     bool usesSingleWebProcess() const { return m_sharedPreferencesForWebProcess.usesSingleWebProcess; }
     bool blobFileAccessEnforcementEnabled() const { return m_sharedPreferencesForWebProcess.blobFileAccessEnforcementEnabled; }
@@ -297,19 +297,19 @@ public:
     void allowAccessToFile(const String& path);
     void loadCancelledDownloadRedirectRequestInFrame(const WebCore::ResourceRequest&, const WebCore::FrameIdentifier&, const WebCore::PageIdentifier&);
 
-    bool LEGACY_NODELETE isAlwaysOnLoggingAllowed() const;
+    NODELETE bool isAlwaysOnLoggingAllowed() const;
 
-    std::optional<NetworkActivityTracker::CompletionCode> LEGACY_NODELETE lastRootActivityCompletionCodeForTesting(WebCore::PageIdentifier) const;
+    NODELETE std::optional<NetworkActivityTracker::CompletionCode> lastRootActivityCompletionCodeForTesting(WebCore::PageIdentifier) const;
 
     // Called by NetworkSession when draining the deferred-claim queue for a parked loader.
     void completeQueuedExistingLoaderResume(Ref<NetworkResourceLoader>&&, NetworkResourceLoadParameters&&);
     void terminateForInvalidLoaderResumeClaim();
 
 private:
-    NetworkConnectionToWebProcess(NetworkProcess&, WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier&&);
+    NetworkConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, NetworkProcessConnectionParameters&&, IPC::Connection::Identifier&&);
 
     void didFinishPreconnection(WebCore::ResourceLoaderIdentifier preconnectionIdentifier, const WebCore::ResourceError&);
-    NetworkStorageSession* LEGACY_NODELETE storageSession();
+    NODELETE NetworkStorageSession* storageSession();
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -324,7 +324,7 @@ private:
     void performSynchronousLoad(NetworkResourceLoadParameters&&, CompletionHandler<void(const WebCore::ResourceError&, const WebCore::ResourceResponse, Vector<uint8_t>&&)>&&);
     void testProcessIncomingSyncMessagesWhenWaitingForSyncReply(WebPageProxyIdentifier, CompletionHandler<void(bool)>&&);
     void prefetchDNS(const String&);
-    void sendH2Ping(URL&&, WebPageProxyIdentifier, WebCore::PageIdentifier, WebCore::FrameIdentifier, std::optional<NavigatingToAppBoundDomain>, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
+    void sendH2Ping(URL&&, WebPageProxyIdentifier, WebCore::PageIdentifier, WebCore::FrameIdentifier, std::optional<NavigatingToAppBoundDomain>, OptionSet<WebCore::AdvancedPrivacyProtections>, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
     void preconnectTo(PreconnectRequest&&);
     void isResourceLoadFinished(WebCore::ResourceLoaderIdentifier, CompletionHandler<void(bool)>&&);
 #if ENABLE(IPC_TESTING_API)
@@ -337,8 +337,10 @@ private:
     void pageLoadCompleted(WebCore::PageIdentifier);
     void browsingContextRemoved(WebPageProxyIdentifier, WebCore::PageIdentifier, WebCore::FrameIdentifier);
     void crossOriginRedirectReceived(WebCore::ResourceLoaderIdentifier, const URL& redirectURL);
-    void startDownload(DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, const String& suggestedName = { }, WebCore::FromDownloadAttribute = WebCore::FromDownloadAttribute::No, std::optional<WebCore::FrameIdentifier> = std::nullopt, std::optional<WebCore::PageIdentifier> = std::nullopt);
+    void startDownload(DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, OptionSet<WebCore::AdvancedPrivacyProtections>, const String& suggestedName = { }, WebCore::FromDownloadAttribute = WebCore::FromDownloadAttribute::No, std::optional<WebCore::FrameIdentifier> = std::nullopt, std::optional<WebCore::PageIdentifier> = std::nullopt);
     void convertMainResourceLoadToDownload(std::optional<WebCore::ResourceLoaderIdentifier> mainResourceLoadIdentifier, DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, const WebCore::ResourceResponse&, std::optional<NavigatingToAppBoundDomain>);
+
+    bool consumeDownloadAuthorization(DownloadID);
 
     void registerURLSchemesAsCORSEnabled(Vector<String>&& schemes);
 
@@ -378,7 +380,7 @@ private:
 
     void setCaptureExtraNetworkLoadMetricsEnabled(bool);
 
-    void createSocketChannel(const WebCore::ResourceRequest&, const String& protocol, WebCore::WebSocketIdentifier, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker);
+    void createSocketChannel(const WebCore::ResourceRequest&, const String& protocol, WebCore::WebSocketIdentifier, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker);
     void queryLocalNetworkAccessPermission(std::optional<WebPageProxyIdentifier>, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
     void countWebSocketChannelsForTesting(CompletionHandler<void(uint32_t)>&&);
 
@@ -545,11 +547,11 @@ private:
 #endif
 
     const Ref<IPC::Connection> m_connection;
-    const Ref<NetworkProcess> m_networkProcess;
-    PAL::SessionID m_sessionID;
+    const PAL::SessionID m_sessionID;
 
     HashMap<WebCore::WebSocketIdentifier, Ref<NetworkSocketChannel>> m_networkSocketChannels;
     NetworkResourceLoadMap m_networkResourceLoaders;
+    HashSet<WebCore::ResourceLoaderIdentifier> m_loadsWaitingForServiceWorkerImport;
     Vector<ResourceNetworkActivityTracker> m_networkActivityTrackers;
     HashMap<WebCore::PageIdentifier, NetworkActivityTracker::CompletionCode> m_lastRootActivityCompletionCodesForTesting;
     HashMap<WebCore::FrameIdentifier, LocalNetworkAccessFrameRecord> m_localNetworkAccessFrameRecords;
@@ -593,6 +595,7 @@ private:
     HashCountedSet<BlobURLKey> m_blobURLHandles;
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
     std::optional<HashSet<WebCore::RegistrableDomain>> m_hostedDomains;
+    const ProcessCrossOriginIsolation m_crossOriginIsolation;
     HashSet<String> m_allowedFilePaths;
 #if ENABLE(IPC_TESTING_API)
     const Ref<IPCTester> m_ipcTester;

@@ -60,8 +60,8 @@ namespace WebKit {
 std::expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictionary *details, std::optional<WebExtensionWindowIdentifier>& windowIdentifier, std::optional<WebExtensionTabIdentifier>& tabIdentifier)
 {
     static NSDictionary<NSString *, id> *types = @{
-        tabIdKey: NSNumber.class,
-        windowIdKey: NSNumber.class,
+        tabIdKey: [NSOrderedSet orderedSetWithObjects:NSNumber.class, NSNull.class, nil],
+        windowIdKey: [NSOrderedSet orderedSetWithObjects:NSNumber.class, NSNull.class, nil],
     };
 
     NSString *outExceptionString;
@@ -69,18 +69,21 @@ std::expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictiona
     if (!validateDictionary(details, @"details", nil, types, &outExceptionString))
         return makeUnexpected(String(outExceptionString));
 
-    if (details[tabIdKey] && details[windowIdKey]) {
+    auto *tabID = objectForKey<NSNumber>(details, tabIdKey);
+    auto *windowID = objectForKey<NSNumber>(details, windowIdKey);
+
+    if (tabID && windowID) {
         outExceptionString = toErrorString(nullString(), @"details", @"it cannot specify both 'tabId' and 'windowID'").createNSString().autorelease();
         return makeUnexpected(String(outExceptionString));
     }
 
-    if (NSNumber *tabID = details[tabIdKey]) {
+    if (tabID) {
         tabIdentifier = toWebExtensionTabIdentifier(tabID.doubleValue);
         if (!isValid(tabIdentifier, &outExceptionString))
             return makeUnexpected(String(outExceptionString));
     }
 
-    if (NSNumber *windowID = details[windowIdKey]) {
+    if (windowID) {
         windowIdentifier = toWebExtensionWindowIdentifier(windowID.doubleValue);
         if (!isValid(windowIdentifier, &outExceptionString))
             return makeUnexpected(String(outExceptionString));
@@ -235,33 +238,52 @@ void WebExtensionAPIAction::setBadgeBackgroundColor(NSDictionary *details, Ref<W
     callback->call();
 }
 
-void WebExtensionAPIAction::enable(double tabID, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIAction::enable(NSObject *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/enable
 
-    auto tabIdentifer = toWebExtensionTabIdentifier(tabID);
-    if (tabIdentifer && !isValid(tabIdentifer, outExceptionString))
-        return;
-
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, true), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
-        if (!result) {
-            callback->reportError(result.error().createNSString().get());
-            return;
-        }
-
-        callback->call();
-    }, extensionContext().identifier());
+    setEnabled(details, true, WTF::move(callback), outExceptionString);
 }
 
-void WebExtensionAPIAction::disable(double tabID, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIAction::disable(NSObject *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/disable
 
-    auto tabIdentifer = toWebExtensionTabIdentifier(tabID);
-    if (tabIdentifer && !isValid(tabIdentifer, outExceptionString))
+    setEnabled(details, false, WTF::move(callback), outExceptionString);
+}
+
+bool WebExtensionAPIAction::parseTabIdentifierOrActionDetails(NSObject *details, std::optional<WebExtensionWindowIdentifier>& windowIdentifier, std::optional<WebExtensionTabIdentifier>& tabIdentifier, NSString **outExceptionString)
+{
+    if (auto *number = dynamic_objc_cast<NSNumber>(details)) {
+        tabIdentifier = toWebExtensionTabIdentifier(number.doubleValue);
+        return !tabIdentifier || isValid(tabIdentifier, outExceptionString);
+    }
+
+    if (auto *dictionary = dynamic_objc_cast<NSDictionary>(details)) {
+        if (auto actionDetailsResult = parseActionDetails(dictionary, windowIdentifier, tabIdentifier); !actionDetailsResult) {
+            *outExceptionString = actionDetailsResult.error().createNSString().autorelease();
+            return false;
+        }
+
+        return true;
+    }
+
+    if (details) {
+        *outExceptionString = toErrorString(nullString(), @"details", @"a number or an object is expected").createNSString().autorelease();
+        return false;
+    }
+
+    return true;
+}
+
+void WebExtensionAPIAction::setEnabled(NSObject *details, bool enabled, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+{
+    std::optional<WebExtensionWindowIdentifier> windowIdentifier;
+    std::optional<WebExtensionTabIdentifier> tabIdentifier;
+    if (!parseTabIdentifierOrActionDetails(details, windowIdentifier, tabIdentifier, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(tabIdentifer, false), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionSetEnabled(windowIdentifier, tabIdentifier, enabled), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error().createNSString().get());
             return;
@@ -271,16 +293,14 @@ void WebExtensionAPIAction::disable(double tabID, Ref<WebExtensionCallbackHandle
     }, extensionContext().identifier());
 }
 
-void WebExtensionAPIAction::isEnabled(NSDictionary *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIAction::isEnabled(NSObject *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/isEnabled
 
     std::optional<WebExtensionWindowIdentifier> windowIdentifier;
     std::optional<WebExtensionTabIdentifier> tabIdentifier;
-    if (auto actionDetailsResult = parseActionDetails(details, windowIdentifier, tabIdentifier); !actionDetailsResult) {
-        *outExceptionString = actionDetailsResult.error().createNSString().get();
+    if (!parseTabIdentifierOrActionDetails(details, windowIdentifier, tabIdentifier, outExceptionString))
         return;
-    }
 
     WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionGetEnabled(windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<bool, WebExtensionError>&& result) {
         if (!result) {
@@ -539,6 +559,17 @@ void WebExtensionAPIAction::setIcon(WebFrame& frame, NSDictionary *details, Ref<
 
     if (!validateDictionary(details, @"details", nil, types, outExceptionString))
         return;
+
+    // Without a known property the call changes nothing. An explicit null still resets the icon.
+    bool hasIconProperty = details[pathKey] || details[imageDataKey];
+#if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
+    hasIconProperty = hasIconProperty || details[variantsKey];
+#endif
+
+    if (!hasIconProperty) {
+        callback->call();
+        return;
+    }
 
     if (details[pathKey] && details[imageDataKey]) {
         *outExceptionString = toErrorString(nullString(), @"details", @"it cannot specify both 'path' and 'imageData'").createNSString().autorelease();

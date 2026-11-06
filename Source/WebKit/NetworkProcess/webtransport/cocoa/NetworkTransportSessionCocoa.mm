@@ -33,6 +33,7 @@
 #import "MessageSenderInlines.h"
 #import "NetworkConnectionToWebProcess.h"
 #import "NetworkProcess.h"
+#import "NetworkRTCUtilitiesCocoa.h"
 #import "NetworkSessionCocoa.h"
 #import "NetworkTransportStream.h"
 #import "WebTransportSessionMessages.h"
@@ -43,6 +44,7 @@
 #import <WebCore/ExceptionCode.h>
 #import <WebCore/HTTPParsers.h>
 #import <WebCore/RFC8941.h>
+#import <WebCore/RegistrableDomain.h>
 #import <WebCore/WebTransportConnectionInfo.h>
 #import <WebCore/WebTransportConnectionStats.h>
 #import <WebCore/WebTransportReceiveStreamStats.h>
@@ -162,7 +164,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    CheckedPtr sessionCocoa = downcast<NetworkSessionCocoa>(connectionToWebProcess.networkProcess().networkSession(connectionToWebProcess.sessionID()));
+    CheckedPtr sessionCocoa = downcast<NetworkSessionCocoa>(NetworkProcess::singleton().networkSession(connectionToWebProcess.sessionID()));
 
     if (sessionCocoa && sessionCocoa->fastServerTrustEvaluationEnabled()) {
         auto decisionHandler = makeBlockPtr([
@@ -176,7 +178,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
                 return;
             }
 
-            protect(connectionToWebProcess->networkProcess().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
+            protect(NetworkProcess::singleton().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge, NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
         });
 
 
@@ -184,7 +186,7 @@ static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connec
         return;
     }
 
-    protect(connectionToWebProcess.networkProcess().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess.sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
+    protect(NetworkProcess::singleton().authenticationManager())->didReceiveAuthenticationChallenge(connectionToWebProcess.sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTF::move(challengeCompletionHandler));
 }
 
 static String joinProtocolStrings(const Vector<String>& protocols)
@@ -255,7 +257,20 @@ static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess
 
     auto configureTCP = options.requireUnreliable ? NW_PARAMETERS_DISABLE_PROTOCOL : NW_PARAMETERS_DEFAULT_CONFIGURATION;
 
-    return adoptNS(MAYBE_SOFT_LINK(nw_parameters_create_webtransport_http)(configureWebTransport, configureTLS, configureQUIC, configureTCP));
+    RetainPtr parameters = adoptNS(MAYBE_SOFT_LINK(nw_parameters_create_webtransport_http)(configureWebTransport, configureTLS, configureQUIC, configureTCP));
+#if PLATFORM(IOS_FAMILY)
+    bool isSafari = WTF::IOSApplication::isMobileSafari() || WTF::IOSApplication::isSafariViewService() || WTF::IOSApplication::isAppleWebApp();
+#elif PLATFORM(MAC)
+    bool isSafari = WTF::MacApplication::isSafari();
+#else
+    bool isSafari = false;
+#endif
+    if (isSafari)
+        setNWParametersApplicationIdentifiers(parameters.get(), NetworkProcess::singleton().uiProcessBundleIdentifier().utf8(), NetworkProcess::singleton().sourceApplicationAuditToken(), emptyString());
+    bool isTracker = isKnownTracker(WebCore::RegistrableDomain { url });
+    bool isFirstParty = WebCore::RegistrableDomain { clientOrigin.clientOrigin } == WebCore::RegistrableDomain { clientOrigin.topOrigin };
+    setNWParametersTrackerOptions(parameters.get(), false, isFirstParty, isTracker, IsRTC::No);
+    return parameters;
 }
 
 RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connectionToWebProcess, WebTransportSessionIdentifier identifier, URL&& url, WebCore::WebTransportOptions&& options, Vector<KeyValuePair<String, String>>&& additionalHeaders, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)

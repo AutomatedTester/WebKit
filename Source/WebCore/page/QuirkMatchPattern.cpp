@@ -31,6 +31,7 @@
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(IOS_FAMILY)
+#include <pal/system/ios/Device.h>
 #include <pal/system/ios/UserInterfaceIdiom.h>
 #endif
 
@@ -39,6 +40,12 @@
 #endif
 
 namespace WebCore {
+
+TextStream& operator<<(TextStream& textStream, const QuirkMatchPattern& quirkMatchPattern)
+{
+    textStream << quirkMatchPattern.string();
+    return textStream;
+}
 
 const String& URLMatchContext::registrableDomain() const
 {
@@ -83,6 +90,12 @@ bool evaluateURLEnvironment(URLEnvironment environment)
 #else
         return false;
 #endif
+    case URLEnvironment::HomeView:
+#if PLATFORM(IOS_FAMILY)
+        return PAL::deviceClassIsHomeView();
+#else
+        return false;
+#endif
     }
 
     ASSERT_NOT_REACHED();
@@ -94,6 +107,15 @@ QuirkMatchPattern::QuirkMatchPattern(String&& string, UserContentURLPattern&& pa
     , m_pattern(WTF::move(pattern))
     , m_matchesAnyPublicSuffix(matchesAnyPublicSuffix)
 {
+}
+
+QuirkMatchPattern::QuirkMatchPattern(String&& string)
+    : m_string(WTF::move(string))
+{
+    if (auto parsed = parse(m_string)) {
+        m_pattern = WTF::move(parsed->m_pattern);
+        m_matchesAnyPublicSuffix = parsed->m_matchesAnyPublicSuffix;
+    }
 }
 
 std::optional<QuirkMatchPattern> QuirkMatchPattern::parse(StringView string)
@@ -134,6 +156,9 @@ static bool matchesPathAndQuery(const UserContentURLPattern& pattern, const URL&
 
 bool QuirkMatchPattern::matches(const URLMatchContext& context) const
 {
+    if (!isValid())
+        return false;
+
     auto& url = context.url();
     if (!m_pattern.matchesScheme(url))
         return false;

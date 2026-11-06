@@ -108,7 +108,7 @@ void WebInspectorUI::windowObjectCleared()
     if (frontendHost)
         frontendHost->disconnectClient();
 
-    frontendHost = InspectorFrontendHost::create(this, protect(RefPtr { m_page.get() }->corePage()).get());
+    frontendHost = InspectorFrontendHost::create(this, protect(protect(m_page)->corePage()).get());
     m_frontendHost = frontendHost.copyRef();
     frontendHost->addSelfToGlobalObjectInWorld(mainThreadNormalWorldSingleton());
 }
@@ -294,6 +294,16 @@ void WebInspectorUI::revealFileExternally(const String& path)
     sendToParentProcess(Messages::WebInspectorUIProxy::RevealFileExternally(path));
 }
 
+void WebInspectorUI::requestDisableSiteIsolation()
+{
+    sendToParentProcess(Messages::WebInspectorUIProxy::RequestDisableSiteIsolation());
+}
+
+void WebInspectorUI::setSiteIsolationDisablingAvailable(bool available)
+{
+    m_frontendAPIDispatcher->dispatchCommandWithResultAsync("setSiteIsolationDisablingAvailable"_s, { JSON::Value::create(available) });
+}
+
 void WebInspectorUI::save(Vector<InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)
 {
     sendToParentProcess(Messages::WebInspectorUIProxy::Save(WTF::move(saveDatas), forceSaveAs));
@@ -344,7 +354,7 @@ bool WebInspectorUI::supportsDiagnosticLogging()
 
 void WebInspectorUI::logDiagnosticEvent(const String& eventName, const DiagnosticLoggingClient::ValueDictionary& dictionary)
 {
-    protect(protect(RefPtr { m_page.get() }->corePage())->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
+    protect(protect(protect(m_page)->corePage())->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(eventName, "Web Inspector Frontend Diagnostics"_s, dictionary, ShouldSample::No);
 }
 
 void WebInspectorUI::setDiagnosticLoggingAvailable(bool available)

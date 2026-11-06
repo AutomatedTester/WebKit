@@ -39,6 +39,7 @@
 #import "SharedMemory.h"
 #import <pal/spi/cf/CoreVideoSPI.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
+#import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/Assertions.h>
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/EnumTraits.h>
@@ -217,7 +218,7 @@ void IOSurface::moveToPool(std::unique_ptr<IOSurface>&& surface, IOSurfacePool* 
 
 // MARK: -
 
-static OSType LEGACY_NODELETE coreVideoFormatFromIOSurfaceFormat(IOSurface::Format format, UseLosslessCompression useLosslessCompression)
+NODELETE static OSType coreVideoFormatFromIOSurfaceFormat(IOSurface::Format format, UseLosslessCompression useLosslessCompression)
 {
     switch (format) {
     case IOSurface::Format::BGRX:
@@ -254,7 +255,7 @@ static OSType LEGACY_NODELETE coreVideoFormatFromIOSurfaceFormat(IOSurface::Form
 }
 
 #if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
-static CFStringRef alphaChannelModeValue(AlphaPremultiplication alphaPremultiplication)
+NODELETE static CFStringRef alphaChannelModeValue(AlphaPremultiplication alphaPremultiplication)
 {
     return alphaPremultiplication == AlphaPremultiplication::Premultiplied ? kIOSurfaceAlphaChannelMode_PremultipliedAlpha : kIOSurfaceAlphaChannelMode_StraightAlpha;
 }
@@ -533,7 +534,7 @@ IOSurface::IOSurface(IOSurfaceRef surface, std::optional<ColorSpace>&& colorSpac
 
 IOSurface::~IOSurface() = default;
 
-static constexpr IntSize LEGACY_NODELETE fallbackMaxSurfaceDimension()
+NODELETE static constexpr IntSize fallbackMaxSurfaceDimension()
 {
     // Match limits imposed by Core Animation. FIXME: should have API for this <rdar://problem/25454148>
 #if PLATFORM(WATCHOS)
@@ -560,7 +561,7 @@ static IntSize computeMaximumSurfaceSize()
     return maxSize;
 }
 
-static WTF::Atomic<IntSize>& LEGACY_NODELETE surfaceMaximumSize()
+NODELETE static WTF::Atomic<IntSize>& surfaceMaximumSize()
 {
     static WTF::Atomic<IntSize> maximumSize;
     return maximumSize;
@@ -583,7 +584,7 @@ IntSize IOSurface::maximumSize()
     return size;
 }
 
-static WTF::Atomic<size_t>& LEGACY_NODELETE surfaceBytesPerRowAlignment()
+NODELETE static WTF::Atomic<size_t>& surfaceBytesPerRowAlignment()
 {
     static WTF::Atomic<size_t> alignment = 0;
     return alignment;
@@ -643,9 +644,8 @@ RetainPtr<CGImageRef> IOSurface::createImage(CGContextRef context)
     return adoptCF(CGIOSurfaceContextCreateImage(context));
 }
 
-RefPtr<NativeImage> IOSurface::createNativeImage(ShouldForceOpaque shouldForceOpaque)
+NODELETE static std::optional<CGImageAlphaInfo> alphaInfoForNativeImage(const IOSurface& surface, IOSurface::ShouldForceOpaque shouldForceOpaque)
 {
-    std::optional<CGImageAlphaInfo> alphaInfo;
 #if ENABLE(PIXEL_FORMAT_RGBA16F) || ENABLE(PIXEL_FORMAT_RGBA16)
     // A 64-bit surface always uses IOSurface::Format::RGBA16F or RGBA16 regardless of whether
     // its contents are opaque, so bitmapConfiguration() assumes premultiplied alpha.
@@ -654,21 +654,38 @@ RefPtr<NativeImage> IOSurface::createNativeImage(ShouldForceOpaque shouldForceOp
     // the contents composite transparently.
     bool formatCannotEncodeOpacity = false;
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-    formatCannotEncodeOpacity = formatCannotEncodeOpacity || pixelFormat() == Format::RGBA16F;
+    formatCannotEncodeOpacity = formatCannotEncodeOpacity || surface.pixelFormat() == IOSurface::Format::RGBA16F;
 #endif
 #if ENABLE(PIXEL_FORMAT_RGBA16)
-    formatCannotEncodeOpacity = formatCannotEncodeOpacity || pixelFormat() == Format::RGBA16;
+    formatCannotEncodeOpacity = formatCannotEncodeOpacity || surface.pixelFormat() == IOSurface::Format::RGBA16;
 #endif
-    if (shouldForceOpaque == ShouldForceOpaque::Yes && formatCannotEncodeOpacity)
-        alphaInfo = kCGImageAlphaNoneSkipLast;
+    if (shouldForceOpaque == IOSurface::ShouldForceOpaque::Yes && formatCannotEncodeOpacity)
+        return kCGImageAlphaNoneSkipLast;
 #else
+    UNUSED_PARAM(surface);
     UNUSED_PARAM(shouldForceOpaque);
 #endif
-    RetainPtr<CGContextRef> cgContext { createPlatformContext(0, alphaInfo) };
+    return std::nullopt;
+}
+
+RefPtr<NativeImage> IOSurface::createNativeImage(ShouldForceOpaque shouldForceOpaque)
+{
+    RetainPtr<CGContextRef> cgContext { createPlatformContext(0, alphaInfoForNativeImage(*this, shouldForceOpaque)) };
     if (!cgContext)
         return nullptr;
 
     return NativeImage::create(createImage(cgContext.get()));
+}
+
+void IOSurface::withNativeImage(ShouldForceOpaque shouldForceOpaque, NOESCAPE const Function<void(NativeImage*)>& function)
+{
+    RetainPtr<CGContextRef> cgContext { createPlatformContext(0, alphaInfoForNativeImage(*this, shouldForceOpaque)) };
+    if (!cgContext)
+        return function(nullptr);
+
+    RefPtr image = NativeImage::create(createImage(cgContext.get()));
+    function(image.get());
+    image = nullptr;
 }
 
 RetainPtr<CGImageRef> IOSurface::sinkIntoImage(std::unique_ptr<IOSurface> surface, RetainPtr<CGContextRef> context)
@@ -745,15 +762,22 @@ RetainPtr<CGContextRef> IOSurface::createCompatibleBitmap(unsigned width, unsign
     return adoptCF(CGBitmapContextCreate(NULL, width, height, configuration.bitsPerComponent, bytesPerRow, protect(m_colorSpace->platformColorSpace()).get(), configuration.bitmapInfo));
 }
 
-RetainPtr<CGContextRef> IOSurface::createPlatformContext(PlatformDisplayID displayID, std::optional<CGImageAlphaInfo> overrideAlphaInfo)
+RetainPtr<CGContextRef> IOSurface::createPlatformContext(PlatformDisplayID displayID, std::optional<CGImageAlphaInfo> overrideAlphaInfo, bool useWebKitBehavior)
 {
     auto configuration = bitmapConfiguration();
     if (overrideAlphaInfo)
         configuration.bitmapInfo = (configuration.bitmapInfo & ~kCGBitmapAlphaInfoMask) | *overrideAlphaInfo;
     auto bitsPerPixel = configuration.bitsPerComponent * 4;
 
+    RetainPtr<CFDictionaryRef> options;
+    if (useWebKitBehavior) {
+        const void* keys[] = { CFSTR("useWebKitBehavior") };
+        const void* values[] = { kCFBooleanTrue };
+        options = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, std::size(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    }
+
     ensureColorSpace();
-    auto cgContext = adoptCF(CGIOSurfaceContextCreate(m_surface.get(), m_size.width(), m_size.height(), configuration.bitsPerComponent, bitsPerPixel, protect(m_colorSpace->platformColorSpace()).get(), configuration.bitmapInfo));
+    RetainPtr cgContext = adoptCF(CGIOSurfaceContextCreateWithOptions(m_surface.get(), m_size.width(), m_size.height(), configuration.bitsPerComponent, bitsPerPixel, protect(m_colorSpace->platformColorSpace()).get(), configuration.bitmapInfo, options.get()));
 
 #if PLATFORM(MAC)
     if (auto displayMask = primaryOpenGLDisplayMask()) {
@@ -771,6 +795,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         CGContextSetOwnerIdentity(cgContext.get(), m_resourceOwner.taskIdToken());
 #endif
     return cgContext;
+}
+
+void IOSurface::releaseCGIOSurfaceContextResources()
+{
+    CABackingStoreCollectBlocking();
 }
 
 std::optional<IOSurface::LockAndContext> IOSurface::createBitmapPlatformContext()

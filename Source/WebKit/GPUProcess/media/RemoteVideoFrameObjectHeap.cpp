@@ -36,7 +36,9 @@
 #include <wtf/WorkQueue.h>
 
 #if PLATFORM(COCOA)
+#include <WebCore/CVUtilities.h>
 #include <WebCore/ColorSpaceCG.h>
+#include <WebCore/ImageRotationSessionVT.h>
 #include <WebCore/PixelBufferConformerCV.h>
 #include <WebCore/VideoFrameCV.h>
 #include <pal/cf/CoreMediaSoftLink.h>
@@ -107,7 +109,7 @@ void RemoteVideoFrameObjectHeap::releaseVideoFrame(RemoteVideoFrameWriteReferenc
 }
 
 #if PLATFORM(COCOA)
-void RemoteVideoFrameObjectHeap::getVideoFrameBuffer(RemoteVideoFrameReadReference&& read, bool canSendIOSurface)
+void RemoteVideoFrameObjectHeap::getVideoFrameBuffer(RemoteVideoFrameReadReference&& read)
 {
     assertIsCurrent(remoteVideoFrameObjectHeapQueueSingleton());
 
@@ -121,29 +123,13 @@ void RemoteVideoFrameObjectHeap::getVideoFrameBuffer(RemoteVideoFrameReadReferen
         buffer = m_sharedVideoFrameWriter.writeBuffer(protect(videoFrame->pixelBuffer()).get(),
             [&](auto& semaphore) { connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::SetSharedVideoFrameSemaphore { semaphore }, 0); },
             [&](SharedMemory::Handle&& handle) { connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::SetSharedVideoFrameMemory { WTF::move(handle) }, 0); },
-            canSendIOSurface);
+            false);
         // FIXME: We should ASSERT(result) once we support enough pixel buffer types.
     }
     connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::NewVideoFrameBuffer { identifier, WTF::move(buffer) }, 0);
 }
 
-void RemoteVideoFrameObjectHeap::pixelBuffer(RemoteVideoFrameReadReference&& read, CompletionHandler<void(RetainPtr<CVPixelBufferRef>)>&& completionHandler)
-{
-    assertIsCurrent(remoteVideoFrameObjectHeapQueueSingleton());
-
-    auto videoFrame = get(WTF::move(read));
-    if (!videoFrame) {
-        ASSERT_IS_TESTING_IPC();
-        completionHandler(nullptr);
-        return;
-    }
-
-    RetainPtr pixelBuffer = videoFrame->pixelBuffer();
-    ASSERT(pixelBuffer);
-    completionHandler(WTF::move(pixelBuffer));
-}
-
-void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVideoFrame, CompletionHandler<void(WebCore::ColorSpace)>&& callback)
+void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVideoFrame, bool shouldApplyRotation, CompletionHandler<void(WebCore::ColorSpace)>&& callback)
 {
     ColorSpace destinationColorSpace { ColorSpace::SRGB().platformColorSpace() };
     auto scope = makeScopeExit([&callback, &destinationColorSpace] { callback(destinationColorSpace); });
@@ -159,6 +145,20 @@ void RemoteVideoFrameObjectHeap::convertFrameBuffer(SharedVideoFrame&& sharedVid
     if (!frame) {
         connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::NewConvertedVideoFrameBuffer { { } }, 0);
         return;
+    }
+
+    // When requested, the native image is oriented and callers must not apply the rotation and mirroring of the frame again.
+    if (shouldApplyRotation && !frame->hasNoTransformation()) {
+        Locker locker { m_pixelBufferConformerLock };
+        if (!m_imageRotationSession)
+            m_imageRotationSession = makeUnique<WebCore::ImageRotationSessionVT>();
+
+        frame = m_imageRotationSession->applyRotation(*frame);
+        if (!frame) {
+            RELEASE_LOG_ERROR(WebRTC, "RemoteVideoFrameObjectHeap::convertFrameBuffer rotation failed");
+            connection->send(Messages::RemoteVideoFrameObjectHeapProxyProcessor::NewConvertedVideoFrameBuffer { { } }, 0);
+            return;
+        }
     }
 
     RetainPtr<CVPixelBufferRef> buffer = frame->pixelBuffer();
@@ -208,6 +208,7 @@ void RemoteVideoFrameObjectHeap::lowMemoryHandler()
 #if PLATFORM(COCOA)
     Locker locker { m_pixelBufferConformerLock };
     m_pixelBufferConformer = nullptr;
+    m_imageRotationSession = nullptr;
 #endif
 }
 

@@ -37,9 +37,9 @@
 
 namespace WebCore {
 class Color;
+class CornerRadii;
 class FloatQuad;
 class IntPoint;
-class IntSize;
 }
 
 namespace WebKit {
@@ -47,6 +47,7 @@ struct InteractionInformationAtPosition;
 }
 
 OBJC_CLASS NSPanGestureRecognizer;
+OBJC_CLASS WKClickHighlightController;
 OBJC_CLASS WKWebView;
 
 #if __has_include(<WebKitAdditions/WKAppKitGestureControllerAdditionsBefore.mm>) && !__has_feature(modules)
@@ -70,8 +71,9 @@ NS_SWIFT_UI_ACTOR
 - (void)setTextSelectionDragGesture:(NSGestureRecognizer *)gesture completionHandler:(void (^)(NSDraggingSession *))completionHandler;
 - (void)positionInformationDidChange:(const WebKit::InteractionInformationAtPosition&)info;
 - (void)didCommitLoadForMainFrame;
-- (void)didEndSyntheticMomentumScrolling;
 - (void)transformGestureWasNotHandledByContent;
+- (void)interruptMomentumForScrollWheelEvent;
+- (void)cancelClickHighlight;
 - (void)reset;
 
 @property (nonatomic, readonly) BOOL everMagnifiedDuringCurrentGesture;
@@ -81,7 +83,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly, getter=isPotentialClickInProgress) BOOL potentialClickInProgress;
 
 #if !__has_feature(modules)
-- (void)didGetClickHighlightForRequest:(WebKit::ClickIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+@property (nonatomic, readonly) WKClickHighlightController *clickHighlightController;
+- (void)didGetClickHighlightForRequest:(WebKit::ClickIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
 - (void)disableDoubleClickGesturesDuringClickIfNecessary:(WebKit::ClickIdentifier)requestID;
 - (void)commitPotentialClickFailed;
 - (void)didCompleteSyntheticClick;

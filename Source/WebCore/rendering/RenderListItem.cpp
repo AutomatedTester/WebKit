@@ -42,7 +42,6 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderMenuList.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
@@ -73,7 +72,7 @@ enum class MarkerSearchBoxType : uint8_t {
     NestedListInQuirksMode,
     TableRubyOrReplaced,
 };
-static MarkerSearchBoxType markerSearchBoxType(const RenderObject& box)
+NODELETE static MarkerSearchBoxType markerSearchBoxType(const RenderObject& box)
 {
     if (box.isFloating() || box.isOutOfFlowPositioned())
         return MarkerSearchBoxType::Opaque;
@@ -408,7 +407,7 @@ void RenderListItem::updateMarkerContent()
         return;
     }
 
-    CheckedPtr marker = dynamicDowncast<RenderInline>(m_marker.get());
+    CheckedPtr marker = m_marker;
     // css-lists-3 §3.3: with a non-normal `content` the marker's contents are the author's, not ours to fill in.
     if (!marker || marker->style().content().isData())
         return;
@@ -459,13 +458,13 @@ void RenderListItem::styleDidChange(Style::Difference diff, const Style::Compute
     }
 }
 
-void RenderListItem::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderListItem::computeIntrinsicLogicalWidthContributions()
 {
     // FIXME: RenderListOutsideMarker::updateInlineMargins() mutates margin style which affects preferred widths.
     if (CheckedPtr marker = markerBox(); marker && marker->hasInvalidContentLogicalWidths())
         marker->updateInlineMarginsAndContent();
 
-    RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
+    return RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 }
 
 std::pair<LayoutUnit, LayoutUnit> RenderListItem::computeIntrinsicLogicalWidths() const
@@ -519,7 +518,7 @@ void RenderListItem::layoutExcludedChildren(RelayoutChildren relayoutChildren)
 
     excludedMarker->setIsExcludedFromNormalLayout(true);
     if (relayoutChildren == RelayoutChildren::Yes)
-        excludedMarker->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        excludedMarker->setNeedsLayout(MarkingBehavior::OnlyThis);
     auto oldLayoutBounds = excludedMarker->layoutBounds();
     excludedMarker->layoutIfNeeded();
 
@@ -580,7 +579,7 @@ String RenderListItem::markerText(ListMarkerIncludeSuffix includeSuffix) const
 
     // css-lists-3 §3.3: with a non-normal `content` the marker says whatever its content renderers hold, unless the
     // author gave it alternative text (css-content-3 §1.2).
-    if (listMarkerHasContent(marker->style(), protect(document()))) {
+    if (listMarkerHasContent(marker->style(), document())) {
         if (auto altText = marker->style().content().altText(); !altText.isNull())
             return altText;
         StringBuilder text;
@@ -592,8 +591,7 @@ String RenderListItem::markerText(ListMarkerIncludeSuffix includeSuffix) const
     if (listMarkerImage(marker->style()))
         return { };
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto textContent = listMarkerTextContent(marker->style(), const_cast<RenderListItem&>(*this));
+    auto textContent = listMarkerTextContent(marker->style(), const_cast<RenderListItem&>(*this));
     return includeSuffix == ListMarkerIncludeSuffix::Yes ? textContent.textWithSuffix : textContent.textWithoutSuffix().toString();
 }
 
@@ -709,18 +707,19 @@ RenderListItem::FirstFormattedLineCandidate RenderListItem::firstFormattedLineRo
             return { { }, fallbackParent };
         case MarkerSearchBoxType::InlineContent:
             // Neither an empty inline (e.g. <a id="anchor"></a>) nor collapsible whitespace produces a line.
-            if (CheckedPtr text = dynamicDowncast<RenderText>(child); text && text->containsOnlyCollapsibleWhitespace()) {
+            if (auto* text = dynamicDowncast<RenderText>(child); text && text->containsOnlyCollapsibleWhitespace()) {
                 fallbackParent = &blockContainer;
                 break;
             }
-            if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(child)) {
-                if (isEmptyInline(*inlineBox)) {
+            if (child.isInlineBox()) {
+                CheckedRef inlineBox = downcast<RenderBoxModelObject>(child);
+                if (isEmptyInline(inlineBox.get())) {
                     fallbackParent = &blockContainer;
                     break;
                 }
                 // An inside marker takes a line ahead of the block, so only an outside marker follows the content in.
                 if (is<RenderListOutsideMarker>(marker)) {
-                    if (CheckedPtr leadingBlock = dynamicDowncast<RenderBlock>(firstContentfulChild(*inlineBox))) {
+                    if (CheckedPtr leadingBlock = dynamicDowncast<RenderBlock>(firstContentfulChild(inlineBox.get()))) {
                         if (auto firstFormattedLineRoot = firstFormattedLineRootIn(*leadingBlock))
                             return { firstFormattedLineRoot, { } };
                         break;
@@ -749,7 +748,7 @@ RenderListItem::FirstFormattedLineCandidate RenderListItem::firstFormattedLineRo
 CheckedPtr<RenderListOutsideMarker> RenderListItem::excludedMarkerAnchoredTo(const RenderBlockFlow& firstFormattedLineRoot)
 {
     for (CheckedPtr<const RenderBlock> ancestor = &firstFormattedLineRoot; ancestor; ancestor = ancestor->containingBlock()) {
-        CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor);
+        auto* listItem = dynamicDowncast<RenderListItem>(ancestor);
         CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
         if (!marker || !marker->isExcludedMarker())
             continue;

@@ -206,7 +206,7 @@ int clickCountForEvent(NSEvent *event)
     }
 }
 
-static PlatformWheelEventPhase LEGACY_NODELETE phaseFromNSEventPhase(NSEventPhase eventPhase)
+NODELETE static PlatformWheelEventPhase phaseFromNSEventPhase(NSEventPhase eventPhase)
 {
     switch (eventPhase) {
     case NSEventPhaseNone:
@@ -761,6 +761,11 @@ public:
         m_menuTypeForEvent = typeForEvent(event);
     }
 };
+
+bool PlatformMouseEvent::isContextMenuEvent() const
+{
+    return static_cast<NSMenuType>(m_menuTypeForEvent) == NSMenuTypeContextMenu;
+}
 
 PlatformMouseEvent PlatformEventFactory::createPlatformMouseEvent(NSEvent *event, NSEvent *correspondingPressureEvent, NSView *windowView)
 {

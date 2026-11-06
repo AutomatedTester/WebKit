@@ -80,7 +80,7 @@ DEFINE_TYPE_WRAPPER_GET(MaskBorderRepeat, values);
 
 // MARK: - Conversion
 
-template<> struct ToCSS<MaskBorderRepeat> { auto operator()(const MaskBorderRepeat&, const Style::ComputedStyle&) -> CSS::MaskBorderRepeat; };
+template<> struct ToCSS<MaskBorderRepeat> { NODELETE CSS::MaskBorderRepeat operator()(const MaskBorderRepeat&, const Style::ComputedStyle&); };
 template<> struct ToStyle<CSS::MaskBorderRepeat> { auto operator()(const CSS::MaskBorderRepeat&, const BuilderState&) -> MaskBorderRepeat; };
 
 template<> struct CSSValueConversion<MaskBorderRepeat> { auto operator()(BuilderState&, const CSSValue&) -> MaskBorderRepeat; };

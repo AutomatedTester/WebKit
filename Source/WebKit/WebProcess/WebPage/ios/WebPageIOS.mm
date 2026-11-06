@@ -48,7 +48,6 @@
 #import "RemoteWebTouchEvent.h"
 #import "RevealItem.h"
 #import "SandboxUtilities.h"
-#import "ShareableBitmapUtilities.h"
 #import "SharedBufferReference.h"
 #import "SyntheticEditingCommandType.h"
 #import "TapHandlingResult.h"
@@ -183,6 +182,7 @@
 #import <WebCore/SharedMemory.h>
 #import <WebCore/StylePrimitiveNumericTypes+Evaluation.h>
 #import <WebCore/StyleProperties.h>
+#import <WebCore/Text.h>
 #import <WebCore/TextIndicator.h>
 #import <WebCore/TextIterator.h>
 #import <WebCore/UserAgent.h>
@@ -583,6 +583,12 @@ static double scaleAfterViewportWidthChange(double currentScale, bool scaleToFit
     // end up zoomed too far in landscape->portrait, and too close in portrait->landscape.
     double widthToKeepInView = visibleHorizontalFraction * newContentSize.width();
     double newScale = unobscuredWidthInScrollViewCoordinates / widthToKeepInView;
+    if (!std::isfinite(newScale)) {
+        // An empty content size can make newScale NaN, which the clamp below lets through.
+        scale = viewportConfiguration.initialScale();
+        LOG(VisibleRects, "scaleAfterViewportWidthChange content width is empty, using initial scale: %.2f", scale);
+        return scale;
+    }
     scale = std::max(std::min(newScale, viewportConfiguration.maximumScale()), viewportConfiguration.minimumScale());
     LOG(VisibleRects, "scaleAfterViewportWidthChange scaling content to fit: %.2f", scale);
     return scale;
@@ -1040,7 +1046,7 @@ void WebPage::insertDroppedImagePlaceholders(const Vector<IntSize>& imageSizes, 
 {
     m_page->dragController().insertDroppedImagePlaceholdersAtCaret(imageSizes);
     auto placeholderRects = m_page->dragController().droppedImagePlaceholders().map([&] (auto& element) {
-        return rootViewBounds(element);
+        return mainFrameViewBounds(element);
     });
 
     auto imagePlaceholderRange = m_page->dragController().droppedImagePlaceholderRange();
@@ -1333,17 +1339,18 @@ static std::pair<std::optional<SimpleRange>, SelectionWasFlipped> rangeForPointI
     VisiblePosition selectionStart = existingSelection.visibleStart();
     VisiblePosition selectionEnd = existingSelection.visibleEnd();
 
-    RefPtr localMainFrame = frame.localMainFrame();
     RefPtr frameView = frame.view();
     if (!frameView)
         return { std::nullopt, SelectionWasFlipped::No };
 
     // Constrain the drag point (in this frame's root-view coordinates) to the visible viewport so the
-    // selection can't be extended outside it. For the main frame its unobscured content rect is used
-    // directly (root-view and contents coincide there). For a cross-origin subframe -- whose main
-    // frame is remote -- use this frame's own unobscured content rect converted to root-view
-    // coordinates; clamping against the contents-space rect directly would fold the frame's scroll
-    // offset into the point, which rootViewToContents would then apply a second time.
+    // selection can't be extended outside it. For a frame whose local root is the main frame, the main
+    // frame's unobscured content rect is used directly (root-view and contents coincide there). For a
+    // frame under a remote ancestor -- whose local root isn't the main frame -- use this frame's own
+    // unobscured content rect converted to root-view coordinates; clamping against the contents-space
+    // rect directly would fold the frame's scroll offset into the point, which rootViewToContents
+    // would then apply a second time.
+    RefPtr localMainFrame = frame.rootFrame().isMainFrame() ? frame.localMainFrame() : nullptr;
     auto viewportToConstrainWithin = localMainFrame ? protect(localMainFrame->view())->unobscuredContentRect() : frameView->contentsToRootView(frameView->unobscuredContentRect());
     auto pointInDocument = frameView->rootViewToContents(pointInRootViewCoordinates.constrainedWithin(viewportToConstrainWithin));
 
@@ -1482,23 +1489,6 @@ static std::optional<SimpleRange> rangeAtWordBoundaryForPosition(LocalFrame* fra
     if (!(base < extent))
         std::swap(base, extent);
     return makeSimpleRange(base, extent);
-}
-
-IntRect WebPage::rootViewBounds(const Node& node)
-{
-    RefPtr frame = node.document().frame();
-    if (!frame)
-        return { };
-
-    RefPtr view = frame->view();
-    if (!view)
-        return { };
-
-    CheckedPtr renderer = node.renderer();
-    if (!renderer)
-        return { };
-
-    return view->contentsToRootView(renderer->absoluteBoundingBoxRect());
 }
 
 IntRect WebPage::mainFrameViewBounds(const Node& node)
@@ -1966,7 +1956,7 @@ void WebPage::requestEvasionRectsAboveSelection(CompletionHandler<void(const Vec
         return;
     }
 
-    auto unobscuredContentArea = RefPtr(localMainFrame->view())->unobscuredContentRect().area();
+    auto unobscuredContentArea = RefPtr(localMainFrame->view())->unobscuredContentRect().area<RecordOverflow>();
     if (unobscuredContentArea.hasOverflowed()) {
         reply({ });
         return;
@@ -2338,7 +2328,7 @@ void WebPage::requestAutocorrectionData(const String& textForAutocorrection, Com
         selectionGeometries = RenderObject::collectSelectionGeometries(*range).geometries;
 
     auto rootViewSelectionRects = selectionGeometries.map([&](const auto& selectionGeometry) -> FloatRect {
-        return frame->view()->contentsToMainFrameView(selectionGeometry.rect());
+        return protect(frame->view())->contentsToMainFrameView(selectionGeometry.rect());
     });
 
     bool multipleFonts = false;
@@ -2596,10 +2586,10 @@ static void handleAnimationActions(Element& element, uint32_t action)
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (static_cast<SheetAction>(action) == SheetAction::PlayAnimation) {
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element))
-            imageElement->setAllowsAnimation(true);
+            imageElement->setAnimationOverride(ImageAnimationOverride::Play);
     } else if (static_cast<SheetAction>(action) == SheetAction::PauseAnimation) {
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element))
-            imageElement->setAllowsAnimation(false);
+            imageElement->setAnimationOverride(ImageAnimationOverride::Pause);
     }
 #endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 }
@@ -3296,7 +3286,7 @@ void WebPage::updateTextAutosizingEnablementFromInitialScale(double initialScale
     if (shouldEnable == m_page->settings().textAutosizingEnabled())
         return;
 
-    m_page->settings().setTextAutosizingEnabled(shouldEnable);
+    protect(m_page->settings())->setTextAutosizingEnabled(shouldEnable);
 }
 
 void WebPage::resetIdempotentTextAutosizingIfNeeded(double previousInitialScale)
@@ -3777,7 +3767,7 @@ void WebPage::cancelAsynchronousTouchEvents(UniqueRef<EventDispatcher::TouchEven
 }
 #endif
 
-void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(uint64_t)>&& reply)
+void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(uint64_t, const WebCore::FloatBoxExtent&)>&& reply)
 {
     ASSERT_WITH_MESSAGE(!printInfo.snapshotFirstPage, "If we are just snapshotting the first page, we don't need a synchronous message to determine the page count, which is 1.");
 
@@ -3789,7 +3779,7 @@ void WebPage::computePagesForPrintingiOS(WebCore::FrameIdentifier frameID, const
     RELEASE_LOG(Printing, "Computing pages for printing. Page rects size = %zu", pageRects.size());
 
     ASSERT(pageRects.size() >= 1);
-    reply(pageRects.size());
+    reply(pageRects.size(), margin);
 }
 
 void WebPage::drawToImage(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& reply)
@@ -4000,8 +3990,8 @@ void WebPage::drawPrintingPagesToSnapshotiOS(RemoteSnapshotIdentifier snapshotId
     ASSERT(coreFrame->document()->printing());
 
     auto mediaBox = FloatRect { 0, 0, printInfo.availablePaperWidth, printInfo.availablePaperHeight };
-    if (!printInfo.snapshotFirstPage && m_printContext && m_printContext->pageCount())
-        mediaBox = m_printContext->pageRect(0);
+    if (!printInfo.snapshotFirstPage)
+        mediaBox = printedPageMediaBox(printInfo);
 
     recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::PDFDocument, mediaBox, mediaBox.size(), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
         if (printInfo.snapshotFirstPage) {
@@ -4521,7 +4511,7 @@ void WebPage::focusTextInputContextAndPlaceCaret(const ElementContext& elementCo
 
     // FIXME: Do not focus an element if it moved or the caret point is outside its bounds
     // because we only want to do so if the caret can be placed.
-    UserGestureIndicator gestureIndicator { IsProcessingUserGesture::Yes, &target->document() };
+    UserGestureIndicator gestureIndicator { IsProcessingUserGesture::Yes, protect(target->document()).ptr() };
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
     protect(corePage())->focusController().setFocusedElement(target.get(), targetFrame.ptr());
 
@@ -4692,7 +4682,7 @@ void WebPage::computeEnclosingLayerID(EditorState& state, const VisibleSelection
 
     auto scrollOffsetAndNodeIDForLayer = [](RenderLayer* layer) -> std::pair<ScrollOffset, std::optional<ScrollingNodeID>> {
         CheckedRef renderer = layer->renderer();
-        WeakPtr scrollableArea = [&] -> ScrollableArea* {
+        CheckedPtr scrollableArea = [&] -> ScrollableArea* {
             if (renderer->isRenderView())
                 return protect(renderer->document())->isTopDocument() ? nullptr : renderer->frame().view();
 

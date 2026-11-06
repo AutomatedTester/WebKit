@@ -58,15 +58,15 @@ Ref<CSSValue> CSSValueCreation<Clip>::operator()(CSSValuePool&, const Style::Com
 // MARK: - Blending
 
 template<> struct Blending<ClipEdge> {
-    auto canBlend(const ClipEdge&, const ClipEdge&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const ClipEdge&, const ClipEdge&) -> bool;
-    auto blend(const ClipEdge&, const ClipEdge&, const BlendingContext&) -> ClipEdge;
+    NODELETE bool canBlend(const ClipEdge&, const ClipEdge&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const ClipEdge&, const ClipEdge&);
+    NODELETE ClipEdge blend(const ClipEdge&, const ClipEdge&, const BlendingContext&);
 };
 
 template<> struct Blending<ClipRect> {
-    auto canBlend(const ClipRect&, const ClipRect&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const ClipRect&, const ClipRect&) -> bool;
-    auto blend(const ClipRect&, const ClipRect&, const BlendingContext&) -> ClipRect;
+    NODELETE bool canBlend(const ClipRect&, const ClipRect&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const ClipRect&, const ClipRect&);
+    NODELETE ClipRect blend(const ClipRect&, const ClipRect&, const BlendingContext&);
 };
 
 auto Blending<ClipEdge>::canBlend(const ClipEdge& a, const ClipEdge& b) -> bool

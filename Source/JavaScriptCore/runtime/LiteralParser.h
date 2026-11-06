@@ -132,7 +132,7 @@ template<typename CharacterType> struct LiteralParserToken {
 };
 
 template <typename CharType>
-ALWAYS_INLINE void LEGACY_NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
+NODELETE ALWAYS_INLINE void setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
 
 template <typename CharType, JSONReviverMode reviverMode>
 class LiteralParser {
@@ -217,8 +217,8 @@ private:
         TokenType next();
         TokenType nextMaybeIdentifier();
         TokenType nextAfterValue();
+        TokenType nextValueStart();
         bool consumeColon();
-        void skipWhitespaceBeforeKey();
         CharType peek() const { return m_ptr < m_end ? *m_ptr : CharType { }; }
         TokenType nextString();
         TokenType nextNumber();
@@ -229,7 +229,11 @@ private:
             ASSERT(length <= static_cast<size_t>(m_end - m_ptr));
             m_ptr += length;
         }
-        void cacheString(JSONCache&, JSString*, std::span<const CharType> source);
+        // The source text of the current string token, from its opening quote.
+        std::span<const CharType> currentStringSource() const { return { m_currentStringStart, static_cast<size_t>(m_end - m_currentStringStart) }; }
+        // Whether the current string token is JSON text whose characters, between its quotes, are the string's characters.
+        bool currentStringIsSourceText() const;
+        void cacheString(JSONCache&, JSString*);
 
 #if !ASSERT_ENABLED
         using LiteralParserTokenPtr = const LiteralParserToken<CharType>*;
@@ -270,8 +274,14 @@ private:
 
         const CharType* ptr() const { return m_ptr; }
         const CharType* start() const { return m_start; }
-        inline const CharType* LEGACY_NODELETE currentTokenStart() const;
-        inline const CharType* LEGACY_NODELETE currentTokenEnd() const;
+        const CharType* end() const { return m_end; }
+        void setPtr(const CharType* ptr)
+        {
+            ASSERT(m_start <= ptr && ptr <= m_end);
+            m_ptr = ptr;
+        }
+        NODELETE inline const CharType* currentTokenStart() const;
+        NODELETE inline const CharType* currentTokenEnd() const;
         
     private:
         template<JSONIdentifierHint>
@@ -282,6 +292,7 @@ private:
         ALWAYS_INLINE const CharType* findUnsafeStringCharacter(const CharType* start, const CharType* end, CharType terminator) const;
         TokenType lexStringSlow(LiteralParserToken<CharType>&, const CharType* runStart, CharType terminator);
         ALWAYS_INLINE TokenType lexNumber(LiteralParserToken<CharType>&);
+        TokenType lexDouble(LiteralParserToken<CharType>&, const CharType* initial, const CharType* start, uint64_t integer);
         TokenType lexNumberError(LiteralParserToken<CharType>&);
 
         String m_lexErrorMessage;
@@ -293,6 +304,7 @@ private:
         const CharType* m_start;
         const CharType* m_currentTokenStart { nullptr };
         const CharType* m_currentTokenEnd { nullptr };
+        const CharType* m_currentStringStart { nullptr };
 #if ASSERT_ENABLED
         unsigned m_currentTokenID { 0 };
 #endif
@@ -311,7 +323,7 @@ private:
     static ALWAYS_INLINE bool equalIdentifier(UniquedStringImpl*, typename Lexer::LiteralParserTokenPtr);
     static ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
     ALWAYS_INLINE Identifier makeIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
-    static ALWAYS_INLINE JSString* makeJSString(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
+    ALWAYS_INLINE JSString* makeJSString(VM&, JSONCache&);
 
     void setErrorMessageForToken(TokenType);
 

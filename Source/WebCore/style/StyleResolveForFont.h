@@ -48,12 +48,17 @@ namespace Style {
 
 FontSelectionValue fontWeightFromCSSValueDeprecated(const CSSValue&);
 
-FontSelectionValue fontStretchFromCSSValueDeprecated(const CSSValue&);
+FontSelectionValue fontWidthFromCSSValueDeprecated(const CSSValue&);
 
 std::optional<FontSelectionValue> fontStyleAngleFromCSSFontStyleWithAngleValueDeprecated(const CSSFontStyleWithAngleValue&);
 std::optional<FontSelectionValue> fontStyleFromCSSValueDeprecated(const CSSValue&);
 
 std::optional<FontCascade> resolveForUnresolvedFont(const CSSPropertyParserHelpers::UnresolvedFont&, FontCascadeDescription&&, ScriptExecutionContext&);
+
+// The font of the root element, for resolving root font relative units ('rem', 'rex', 'rcap',
+// 'rch', 'ric') outside of normal style resolution. Null when there is no root element with an
+// already resolved style, e.g. for an OffscreenCanvas in a worker.
+const FontCascade* rootFontCascadeForRootFontUnits(ScriptExecutionContext&);
 
 } // namespace Style
 } // namespace WebCore

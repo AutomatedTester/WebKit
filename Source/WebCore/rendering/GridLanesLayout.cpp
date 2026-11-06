@@ -87,7 +87,7 @@ GridArea GridLanesLayout::gridAreaForDefiniteGridAxisItem(const RenderBox& gridI
 
 LayoutUnit GridLanesLayout::calculateGridLanesIntrinsicLogicalWidth(RenderBox& gridItem, Phase layoutPhase)
 {
-    auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { gridItem.layoutContext(), gridItem };
+    auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { protect(gridItem.layoutContext()), gridItem };
     switch (layoutPhase) {
     case Phase::MinContent:
         return gridItem.computeSizingKeywordLogicalWidthUsing(CSS::Keyword::MinContent { }, { }, gridItem.borderAndPaddingLogicalWidth());
@@ -121,7 +121,7 @@ void GridLanesLayout::setItemContainingBlockToGridArea(const GridTrackSizingAlgo
     }
 
     // FIXME(249230): Try to cache grid lanes layout sizes
-    gridItem.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+    gridItem.setChildNeedsLayout(MarkingBehavior::OnlyThis);
 }
 
 GridLanesLayout::StackingAxisPlacement GridLanesLayout::insertIntoGridAndLayoutItem(const GridTrackSizingAlgorithm& algorithm, RenderBox& gridItem, const GridArea& area, Phase layoutPhase)

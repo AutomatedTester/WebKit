@@ -87,7 +87,7 @@ DocumentFullscreen::DocumentFullscreen(Document& document)
 
 Element* DocumentFullscreen::fullscreenElement() const
 {
-    for (Ref element : document().topLayerElements() | std::views::reverse) {
+    for (auto& element : document().topLayerElements() | std::views::reverse) {
         if (element->hasFullscreenFlag())
             return element.unsafePtr();
     }
@@ -138,7 +138,7 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
 {
     auto identifier = LOGIDENTIFIER;
 
-    if (protect(document())->quirks().shouldEnterNativeFullscreenWhenCallingElementRequestFullscreenQuirk()) {
+    if (document().quirks().shouldEnterNativeFullscreenWhenCallingElementRequestFullscreenQuirk()) {
         // Translate the request to enter fullscreen into requesting native fullscreen
         // for the last inner video element with a non-zero area.
         auto maybeVideoList = element->querySelectorAll("video"_s);
@@ -159,8 +159,8 @@ void DocumentFullscreen::requestFullscreen(Ref<Element>&& element, FullscreenChe
             if (!renderer)
                 continue;
 
-            auto area = renderer->videoBox().area();
-            if (!area || area.hasOverflowed())
+            auto area = renderer->videoBox().area<RecordOverflow>();
+            if (area.hasOverflowed() || !area)
                 continue;
 
             video->webkitRequestFullscreen();
@@ -721,7 +721,7 @@ void DocumentFullscreen::fullyExitFullscreen()
     });
 }
 
-static bool LEGACY_NODELETE hasJSEventListener(Node& node, const AtomString& eventType)
+NODELETE static bool hasJSEventListener(Node& node, const AtomString& eventType)
 {
     for (const auto& listener : node.eventListeners(eventType)) {
         if (listener->callback().type() == EventListener::JSEventListenerType)

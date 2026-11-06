@@ -28,18 +28,37 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "MessageReceiver.h"
-#include "WebExtensionContext.h"
+#include "WebExtensionContentWorldType.h"
 #include "WebExtensionContextParameters.h"
+#include "WebExtensionLocalization.h"
+#include "WebExtensionPortChannelIdentifier.h"
+#include "WebPageProxyIdentifier.h"
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <wtf/Forward.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 
+#if ENABLE(INSPECTOR_EXTENSIONS)
+#include "InspectorExtensionTypes.h"
+#endif
+
 OBJC_CLASS JSValue;
 OBJC_CLASS NSDictionary;
+
+namespace IPC {
+class FormDataReference;
+}
+
+namespace WebCore {
+class AuthenticationChallenge;
+class ResourceError;
+class ResourceRequest;
+class ResourceResponse;
+}
 
 namespace WebKit {
 
@@ -49,18 +68,26 @@ class WebExtensionAPIWebPageNamespace;
 class WebExtensionControllerProxy;
 class WebExtensionMatchPattern;
 class WebFrame;
+class WebPage;
 
+struct ResourceLoadInfo;
 struct WebExtensionAlarmParameters;
 struct WebExtensionFrameParameters;
+struct WebExtensionMenuItemContextParameters;
+struct WebExtensionMenuItemParameters;
+struct WebExtensionMessageSenderParameters;
+struct WebExtensionMessageTargetParameters;
 struct WebExtensionTabParameters;
 struct WebExtensionWindowParameters;
+
+enum class WebExtensionEventListenerType : uint8_t;
 
 class WebExtensionContextProxy final : public RefCounted<WebExtensionContextProxy>, public IPC::MessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(WebExtensionContextProxy);
     WTF_MAKE_NONCOPYABLE(WebExtensionContextProxy);
 
 public:
-    static RefPtr<WebExtensionContextProxy> LEGACY_NODELETE get(WebExtensionContextIdentifier);
+    NODELETE static RefPtr<WebExtensionContextProxy> get(WebExtensionContextIdentifier);
     static Ref<WebExtensionContextProxy> getOrCreate(const WebExtensionContextParameters&, WebExtensionControllerProxy&, WebPage* = nullptr);
 
     ~WebExtensionContextProxy();
@@ -71,13 +98,13 @@ public:
     using WeakFrameSet = WeakHashSet<WebFrame>;
     using TabWindowIdentifierPair = std::pair<std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>>;
     using WeakPageTabWindowMap = WeakHashMap<WebPage, TabWindowIdentifierPair>;
-    using PermissionsMap = WebExtensionContext::PermissionsMap;
+    using PermissionsMap = WebExtensionPermissionsMap;
 
     WebExtensionContextIdentifier identifier() const { return m_privilegedIdentifier ? *m_privilegedIdentifier : m_unprivilegedIdentifier; }
     WebExtensionContextIdentifier unprivilegedIdentifier() const { return m_unprivilegedIdentifier; }
     Markable<WebExtensionContextIdentifier> privilegedIdentifier() const { return m_privilegedIdentifier; }
 
-    WebExtensionControllerProxy* LEGACY_NODELETE extensionControllerProxy() const;
+    NODELETE WebExtensionControllerProxy* extensionControllerProxy() const;
 
     bool operator==(const WebExtensionContextProxy& other) const { return (this == &other); }
 
@@ -96,7 +123,7 @@ public:
 
     PAL::SessionID defaultSessionID() const { return m_defaultSessionID; }
 
-    bool LEGACY_NODELETE inTestingMode() const;
+    NODELETE bool inTestingMode() const;
 
     bool hasDOMWrapperWorld(WebExtensionContentWorldType contentWorldType) const { return contentWorldType != WebExtensionContentWorldType::ContentScript || hasContentScriptWorld(); }
     Ref<WebCore::DOMWrapperWorld> toDOMWrapperWorld(WebExtensionContentWorldType) const;
@@ -111,10 +138,10 @@ public:
 
     void didEncounterScriptError(const String& message, const String& sourceURL, unsigned lineNumber, unsigned columnNumber, WebExtensionContentWorldType);
 
-    std::optional<WebExtensionTabIdentifier> LEGACY_NODELETE tabIdentifier(WebPage&) const;
+    NODELETE std::optional<WebExtensionTabIdentifier> tabIdentifier(WebPage&) const;
 
-    RefPtr<WebPage> LEGACY_NODELETE backgroundPage() const;
-    void LEGACY_NODELETE setBackgroundPage(WebPage&);
+    NODELETE RefPtr<WebPage> backgroundPage() const;
+    NODELETE void setBackgroundPage(WebPage&);
 
     bool isUnsupportedAPI(const String& propertyPath, const ASCIILiteral& propertyName) const;
 
@@ -124,7 +151,7 @@ public:
     void addInspectorPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
 
     void addInspectorBackgroundPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
-    bool LEGACY_NODELETE isInspectorBackgroundPage(WebPage&) const;
+    NODELETE bool isInspectorBackgroundPage(WebPage&) const;
 
     Inspector::ExtensionAppearance inspectorAppearance() const { return m_inspectorAppearance; }
     void setInspectorAppearance(Inspector::ExtensionAppearance appearance) { m_inspectorAppearance = appearance; }
@@ -137,8 +164,8 @@ public:
     void addTabPage(WebPage&, std::optional<WebExtensionTabIdentifier>, std::optional<WebExtensionWindowIdentifier>);
 
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
-    void LEGACY_NODELETE setOffscreenPage(WebPage&);
-    bool LEGACY_NODELETE isOffscreenPage(WebPage&) const;
+    NODELETE void setOffscreenPage(WebPage&);
+    NODELETE bool isOffscreenPage(WebPage&) const;
 #endif
 
     void enumerateFramesAndNamespaceObjects(NOESCAPE const Function<void(WebFrame&, WebExtensionAPINamespace&)>&, Ref<WebCore::DOMWrapperWorld>&& = mainWorldSingleton());
@@ -220,7 +247,7 @@ private:
     void internalDispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
     void dispatchRuntimeMessageEvent(WebExtensionContentWorldType, const String& messageJSON, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(String&& replyJSON)>&&);
     void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, bool userGesture, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
-    void dispatchRuntimeInstalledEvent(WebExtensionContext::InstallReason, String previousVersion);
+    void dispatchRuntimeInstalledEvent(WebExtensionContextInstallReason, String previousVersion);
     void dispatchRuntimeStartupEvent();
     bool matchesTarget(WebFrame&, const std::optional<WebExtensionMessageTargetParameters>&);
 
@@ -237,7 +264,7 @@ private:
     void dispatchTabsAttachedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier newWindowIdentifier, uint64_t newIndex);
     void dispatchTabsActivatedEvent(WebExtensionTabIdentifier previousActiveTabIdentifier, WebExtensionTabIdentifier newActiveTabIdentifier, WebExtensionWindowIdentifier);
     void dispatchTabsHighlightedEvent(const Vector<WebExtensionTabIdentifier>&, WebExtensionWindowIdentifier);
-    void dispatchTabsRemovedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, WebExtensionContext::WindowIsClosing);
+    void dispatchTabsRemovedEvent(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, WebExtensionContextWindowIsClosing);
 
     // Test
     void dispatchTestMessageEvent(const String& message, const String& argumentJSON, WebExtensionContentWorldType);
@@ -287,6 +314,10 @@ private:
 #endif
     WeakPageTabWindowMap m_popupPageMap;
     WeakPageTabWindowMap m_tabPageMap;
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionContextProxyAdditions.h>)
+#include <WebKitAdditions/WebExtensionContextProxyAdditions.h>
+#endif
 };
 
 } // namespace WebKit

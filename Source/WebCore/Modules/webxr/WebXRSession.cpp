@@ -45,13 +45,16 @@
 #include "WebXRBoundedReferenceSpace.h"
 #include "WebXRFrame.h"
 #include "WebXRHitTestSource.h"
+#include "WebXRPlane.h"
 #include "WebXRTransientInputHitTestSource.h"
+#include "XRCompositionLayer.h"
 #include "XRFrameRequestCallback.h"
 #include "XRGPUProjectionLayerInit.h"
 #include "XRHitTestOptionsInit.h"
 #include "XRRenderStateInit.h"
 #include "XRSessionEvent.h"
 #include "XRTransientInputHitTestOptionsInit.h"
+#include <wtf/HashSet.h>
 #include <wtf/RefPtr.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -76,7 +79,9 @@ WebXRSession::WebXRSession(Document& document, XRSessionMode mode, PlatformXR::D
     , m_activeRenderState(WebXRRenderState::create(mode))
     , m_viewerReferenceSpace(WebXRReferenceSpace::create(document, *this, XRReferenceSpaceType::Viewer))
     , m_timeOrigin(MonotonicTime::now())
-    , m_views(device.views(mode))
+    , m_views(device.views(mode).map([](auto& viewData) {
+        return View { viewData, UnderlyingView::create() };
+    }))
 {
     device.setTrackingAndRenderingClient(*this);
     if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::WebGPU))
@@ -194,6 +199,11 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
     // https://www.w3.org/TR/webxrlayers-1/#updaterenderstatechanges
 #if ENABLE(WEBXR_LAYERS)
     else if (newState.layers) {
+        for (auto& layer : *newState.layers) {
+            if (layer->isDestroyed())
+                return Exception { ExceptionCode::InvalidStateError, "Cannot set a destroyed layer in the layers list."_s };
+        }
+
         if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::Layers) && newState.layers->size() > 1)
             return Exception { ExceptionCode::NotSupportedError, "Cannot set layers when the Layers feature is not enabled for this session."_s };
 
@@ -373,10 +383,13 @@ IntSize WebXRSession::recommendedWebGLFramebufferResolution() const
 // https://immersive-web.github.io/webxr/#view-viewport-modifiable
 bool WebXRSession::supportsViewportScaling() const
 {
-    RefPtr device { m_device };
-    ASSERT(device);
-    // Only immersive sessions support viewport scaling.
-    return isImmersive(m_mode) && device && device->supportsViewportScaling();
+    if (!m_activeRenderState)
+        return false;
+    if (RefPtr baseLayer = m_activeRenderState->baseLayer())
+        return baseLayer->supportsViewportScaling();
+    return m_activeRenderState->layers().containsIf([](auto& layer) {
+        return layer->supportsViewportScaling();
+    });
 }
 
 bool WebXRSession::isPositionEmulated() const
@@ -412,6 +425,9 @@ void WebXRSession::shutdown(InitiatedBySystem initiatedBySystem)
     m_sessionListeners.clear();
 
     m_inputSources->clear();
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    invalidateDetectedPlanes();
+#endif
 
     RefPtr device { m_device };
     if (initiatedBySystem == InitiatedBySystem::Yes) {
@@ -598,8 +614,10 @@ void WebXRSession::applyPendingRenderState()
         if (baseLayer->isCompositionEnabled())
             m_requestData->activeLayerHandles.append(baseLayer->layerHandle());
     } else {
-        for (Ref layer : m_activeRenderState->layers())
-            m_requestData->activeLayerHandles.append(layer->layerHandle());
+        for (Ref layer : m_activeRenderState->layers()) {
+            if (!layer->isDestroyed())
+                m_requestData->activeLayerHandles.append(layer->layerHandle());
+        }
     }
 }
 
@@ -682,6 +700,71 @@ void WebXRSession::cleanupInactiveHitTestSources()
 
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+
+// https://immersive-web.github.io/plane-detection/#update-planes
+void WebXRSession::updateDetectedPlanes(DOMHighResTimeStamp time)
+{
+    if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::PlaneDetection))
+        return;
+
+    RefPtr document = dynamicDowncast<Document>(scriptExecutionContext());
+    if (!document)
+        return;
+
+    if (!m_frameData.detectedPlanes)
+        return;
+
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> currentIds;
+    for (auto& platformPlane : *m_frameData.detectedPlanes) {
+        currentIds.add(platformPlane.id);
+        auto it = m_detectedPlanes.find(platformPlane.id);
+        if (it != m_detectedPlanes.end())
+            it->value->update(platformPlane, time);
+        else
+            m_detectedPlanes.add(platformPlane.id, WebXRPlane::create(*document, *this, platformPlane, time));
+    }
+
+    m_detectedPlanes.removeIf([&](auto& entry) {
+        if (currentIds.contains(entry.key))
+            return false;
+        entry.value->invalidate();
+        return true;
+    });
+}
+
+void WebXRSession::invalidateDetectedPlanes()
+{
+    for (auto& plane : m_detectedPlanes.values())
+        plane->invalidate();
+    m_detectedPlanes.clear();
+}
+
+Vector<Ref<WebXRPlane>> WebXRSession::detectedPlanes() const
+{
+    return copyToVector(m_detectedPlanes.values());
+}
+
+// https://immersive-web.github.io/plane-detection/#dom-xrsession-initiateroomcapture
+void WebXRSession::initiateRoomCapture(DOMPromiseDeferred<void>&& promise)
+{
+    if (m_ended || m_roomCaptureCompleted) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError });
+        return;
+    }
+    if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::PlaneDetection)) {
+        promise.reject(Exception { ExceptionCode::NotSupportedError });
+        return;
+    }
+
+    // FIXME: The only existing implementation (OpenXR), does not have the room capture concept, so complete immediately.
+    // Other implementations might do differently. Update accordingly.
+    m_roomCaptureCompleted = true;
+    promise.resolve();
+}
+
+#endif
+
 void WebXRSession::onFrame(PlatformXR::FrameData&& frameData)
 {
     ASSERT(isMainThread());
@@ -715,13 +798,17 @@ void WebXRSession::onFrame(PlatformXR::FrameData&& frameData)
         // FIXME: implement.
 
         // FIXME: I moved step 7 before 6 because of https://github.com/immersive-web/webxr/issues/1164
-        // 7.If session’s pending render state is not null, apply the pending render state.
+        // Render state updates requested while a frame is running are applied at the end of it, so only updates requested between frames are still pending here.
         if (session.m_pendingRenderState)
             session.applyPendingRenderState();
 
 #if ENABLE(WEBXR_HIT_TEST)
         // Cancel hit test sources that are not referenced by the application.
         session.cleanupInactiveHitTestSources();
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+        session.updateDetectedPlanes(now);
 #endif
 
         // 6. If the frame should be rendered for session:
@@ -732,8 +819,10 @@ void WebXRSession::onFrame(PlatformXR::FrameData&& frameData)
                     session.m_activeRenderState->baseLayer()->startFrame(session.m_frameData);
 #if ENABLE(WEBXR_LAYERS)
                 else if (session.m_activeRenderState->layers().size()) {
-                    for (Ref layer : session.m_activeRenderState->layers())
-                        layer->startFrame(session.m_frameData);
+                    for (Ref layer : session.m_activeRenderState->layers()) {
+                        if (!layer->isDestroyed())
+                            layer->startFrame(session.m_frameData);
+                    }
                 }
 #endif
             }
@@ -782,14 +871,19 @@ void WebXRSession::onFrame(PlatformXR::FrameData&& frameData)
                 frameLayers.append(session.m_activeRenderState->baseLayer()->endFrame());
 #if ENABLE(WEBXR_LAYERS)
             else if (!session.m_activeRenderState->layers().isEmpty()) {
-                for (Ref layer : session.m_activeRenderState->layers())
-                    frameLayers.append(layer->endFrame());
+                for (Ref layer : session.m_activeRenderState->layers()) {
+                    if (!layer->isDestroyed())
+                        frameLayers.append(layer->endFrame());
+                }
             }
 #endif
 
             if (RefPtr device = session.m_device)
                 device->submitFrame(WTF::move(frameLayers));
         }
+
+        if (session.m_pendingRenderState)
+            session.applyPendingRenderState();
 
         session.requestFrameIfNeeded();
     });
@@ -964,6 +1058,36 @@ unsigned WebXRSession::maxRenderLayers() const
 {
     RefPtr device { m_device };
     return device ? device->maxRenderLayers() : 0;
+}
+
+void WebXRSession::layerDestroyed(const XRCompositionLayer& layer)
+{
+    auto handle = layer.layerHandle();
+
+    if (RefPtr device = this->device())
+        device->deleteLayer(handle);
+
+    auto containsLayer = [handle](const WebXRRenderState& state) {
+        return state.layers().containsIf([handle](auto& stateLayer) {
+            return stateLayer->layerHandle() == handle;
+        });
+    };
+
+    // https://www.w3.org/TR/webxrlayers-1/#dom-xrcompositionlayer-destroy steps 5 to 8.
+    if (!m_pendingRenderState) {
+        if (!containsLayer(*m_activeRenderState))
+            return;
+        m_pendingRenderState = m_activeRenderState->clone();
+    }
+
+    if (!containsLayer(*m_pendingRenderState))
+        return;
+
+    auto layers = m_pendingRenderState->layers();
+    layers.removeAllMatching([handle](auto& stateLayer) {
+        return stateLayer->layerHandle() == handle;
+    });
+    m_pendingRenderState->setLayers(layers);
 }
 #endif
 

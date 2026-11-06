@@ -43,30 +43,35 @@ namespace LayoutIntegration { class FlexIntegrationUtils; }
 
 class FlexLayoutItem {
 public:
-    FlexLayoutItem(RenderBox&, bool flexContainerIsHorizontalFlow, bool everHadLayout, bool shouldInvalidateChildContent);
+    FlexLayoutItem(RenderBox&, bool flexContainerIsHorizontalFlow, const LayoutBoxExtent& margins, bool everHadLayout, bool shouldInvalidateChildContent);
 
     // The item's content-box main size plus its main-axis border, padding and margin.
-    LayoutUnit LEGACY_NODELETE outerMainSize(LayoutUnit mainSize) const;
-    const Style::ComputedStyle& LEGACY_NODELETE style() const LIFETIME_BOUND;
+    NODELETE LayoutUnit outerMainSize(LayoutUnit mainSize) const;
+    NODELETE LayoutUnit mainAxisMarginExtent() const;
+    NODELETE LayoutUnit crossAxisMarginExtent() const;
+    NODELETE const Style::ComputedStyle& style() const LIFETIME_BOUND;
 
     // The item's current, laid-out geometry.
-    LayoutUnit LEGACY_NODELETE logicalWidth() const;
-    LayoutUnit LEGACY_NODELETE logicalHeight() const;
+    NODELETE LayoutUnit logicalWidth() const;
+    NODELETE LayoutUnit logicalHeight() const;
     LayoutUnit borderAndPaddingLogicalHeight() const;
     LayoutSize intrinsicSize() const;
 #if ASSERT_ENABLED
     bool needsLayout() const;
 #endif
 
-    bool LEGACY_NODELETE isTable() const;
-    bool LEGACY_NODELETE isReplaced() const;
+    NODELETE bool isTable() const;
+    NODELETE bool isReplaced() const;
 
     CheckedRef<RenderBox> renderer;
     const LayoutUnit mainAxisBorderAndPadding;
-    LayoutUnit mainAxisMargin;
     const LayoutUnit crossAxisBorderAndPadding;
+    const bool flexContainerIsHorizontalFlow;
     // True when the flex container's main axis is this item's inline axis (i.e. the item is not orthogonal to the container).
     const bool mainAxisIsInlineAxis;
+    // The margins the flex algorithm works with: resolved from style before it runs, with 'auto' as 0, then with the
+    // auto margins it resolves. The renderer gets them along with the item's position.
+    LayoutBoxExtent margins;
     bool everHadLayout { false };
     // Whether the container is relaying out all its items this pass (RelayoutChildren::Yes); layoutFlexItemWithMainSize
     // combines it with !hasFlexItemCompletedLayout to decide whether to invalidate this child's content.
@@ -120,6 +125,17 @@ public:
     };
     Result layout(FlexLayoutItems&);
 
+    // An in-flow item's min-content and max-content contributions to the container's inline size, margins included.
+    struct IntrinsicWidthContribution {
+        LayoutUnit minimum;
+        LayoutUnit maximum;
+    };
+    static std::pair<LayoutUnit, LayoutUnit> minimumMaximumContentSize(const RenderFlexibleBox&, const Vector<IntrinsicWidthContribution>&);
+
+    using SizeList = Vector<LayoutUnit>;
+    // CSS Flexbox 9.9.2. Lays out the items.
+    LayoutUnit maximumContentSizeForMultilineColumn(FlexLayoutItems&, const SizeList& flexItemsMaxContentWidths);
+
 private:
     struct FlexBaseAndHypotheticalMainSize {
         LayoutUnit flexBase;
@@ -130,7 +146,6 @@ private:
     using FlexBaseAndHypotheticalMainSizeList = Vector<FlexBaseAndHypotheticalMainSize, 4>;
 
     using LineRanges = Vector<WTF::Range<size_t>>;
-    using SizeList = Vector<LayoutUnit>;
     using PositionList = Vector<LayoutPoint>;
     using LinesCrossSizeList = Vector<LayoutUnit>;
     using LinesCrossPositionList = Vector<LayoutUnit>;
@@ -173,8 +188,8 @@ private:
     void computeFlexItemRects(const FlexLines&, FlexLayoutItems&, const PositionList& flexItemsPositionList, const LinesCrossPositionList& flexLinesCrossPositionList, const LinesCrossSizeList& flexLinesCrossSizeList, const SizeList& flexItemsCrossSizeList, LayoutUnit crossContentExtent, LayoutUnit crossExtent, LayoutUnit mainBorderBoxExtent);
 
     LayoutUnit placeFlexItems(LayoutUnit crossAxisOffset, std::span<FlexLayoutItem>, std::span<LayoutPoint> positions, LayoutUnit availableFreeSpace);
-    LayoutUnit mainAxisFlippedOffsetForRow(const FlexLayoutItem&, LayoutUnit flowRelativeOffset) const;
-    void setFlexItemCountsForFirstAndLastLine(const FlexLines&);
+    NODELETE LayoutUnit mainAxisFlippedOffsetForRow(const FlexLayoutItem&, LayoutUnit flowRelativeOffset) const;
+    NODELETE void setFlexItemCountsForFirstAndLastLine(const FlexLines&);
 
     FlexBaseAndHypotheticalMainSizeList computeFlexBaseAndHypotheticalMainSizes(FlexLayoutItems&);
     LayoutUnit flexBaseSizeForFlexItem(const FlexLayoutItem&);
@@ -190,13 +205,13 @@ private:
 
     bool flexItemHasComputableAspectRatioAndCrossSizeIsConsideredDefinite(const FlexLayoutItem&);
 
-    LayoutUnit LEGACY_NODELETE autoMarginOffsetInMainAxis(std::span<const FlexLayoutItem>, LayoutUnit& availableFreeSpace);
+    NODELETE unsigned numberOfAutoMarginsInMainAxis(std::span<const FlexLayoutItem>, LayoutUnit availableFreeSpace);
 
     LayoutUnit applyStretchAlignmentToFlexItem(const FlexLayoutItem&, LayoutUnit lineCrossAxisExtent, LayoutUnit crossContentExtent);
     LayoutUnit applyStretchMinMaxCrossSize(const FlexLayoutItem&, LayoutUnit lineCrossAxisExtent, LogicalBoxAxis, LayoutUnit crossContentExtent);
 
-    const FlexFormattingUtils& flexFormattingUtils() const;
-    FlexLayoutState& layoutState() const;
+    NODELETE const FlexFormattingUtils& flexFormattingUtils() const;
+    NODELETE FlexLayoutState& layoutState() const;
     const LayoutIntegration::FlexIntegrationUtils& integrationUtils() const LIFETIME_BOUND { return m_integrationUtils; }
     LayoutIntegration::FlexIntegrationUtils& integrationUtils() LIFETIME_BOUND { return m_integrationUtils; }
 

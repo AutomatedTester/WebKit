@@ -28,6 +28,7 @@
 #include "InternalSettings.h"
 
 #include "CaptionUserPreferences.h"
+#include "ColorAppearance.h"
 #include "DeprecatedGlobalSettings.h"
 #include "DocumentView.h"
 #include "FontCache.h"
@@ -141,7 +142,7 @@ public:
 #if ASSERT_ENABLED
     bool isRefCountedWrapper() const override { return true; }
 #endif
-    InternalSettings* LEGACY_NODELETE internalSettings() const { return m_internalSettings.get(); }
+    NODELETE InternalSettings* internalSettings() const { return m_internalSettings.get(); }
 
 private:
     bool isInternalSettingsWrapper() const final { return true; }
@@ -185,7 +186,7 @@ void InternalSettings::resetToConsistentState()
     if (RefPtr localMainFrame = page->localMainFrame())
         localMainFrame->setPageAndTextZoomFactors(1, 1);
     page->setCanStartMedia(true);
-    page->setUseColorAppearance(false, false);
+    page->setUseColorAppearance(UseDarkAppearance::No, UseElevatedUserInterfaceLevel::No);
 
     Ref settings = this->settings();
     m_backup.restoreTo(settings);
@@ -509,7 +510,7 @@ ExceptionOr<void> InternalSettings::setUseDarkAppearance(bool useDarkAppearance)
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
     RefPtr page = m_page;
-    page->setUseColorAppearance(useDarkAppearance, page->useElevatedUserInterfaceLevel());
+    page->setUseColorAppearance(useDarkAppearance ? UseDarkAppearance::Yes : UseDarkAppearance::No, page->useElevatedUserInterfaceLevel() ? UseElevatedUserInterfaceLevel::Yes : UseElevatedUserInterfaceLevel::No);
     return { };
 }
 
@@ -518,7 +519,7 @@ ExceptionOr<void> InternalSettings::setUseElevatedUserInterfaceLevel(bool useEle
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
     RefPtr page = m_page;
-    page->setUseColorAppearance(page->useDarkAppearance(), useElevatedUserInterfaceLevel);
+    page->setUseColorAppearance(page->useDarkAppearance() ? UseDarkAppearance::Yes : UseDarkAppearance::No, useElevatedUserInterfaceLevel ? UseElevatedUserInterfaceLevel::Yes : UseElevatedUserInterfaceLevel::No);
     return { };
 }
 
@@ -584,7 +585,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaContainerTypes(const String& 
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaContainerTypes(types);
+    protect(m_page->settings())->setAllowedMediaContainerTypes(types);
     return { };
 }
 
@@ -592,7 +593,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaCodecTypes(const String& type
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaCodecTypes(types);
+    protect(m_page->settings())->setAllowedMediaCodecTypes(types);
     return { };
 }
 
@@ -600,7 +601,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaVideoCodecIDs(const String& t
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaVideoCodecIDs(types);
+    protect(m_page->settings())->setAllowedMediaVideoCodecIDs(types);
     return { };
 }
 
@@ -608,7 +609,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaAudioCodecIDs(const String& t
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaAudioCodecIDs(types);
+    protect(m_page->settings())->setAllowedMediaAudioCodecIDs(types);
     return { };
 }
 
@@ -616,7 +617,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaCaptionFormatTypes(const Stri
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaCaptionFormatTypes(types);
+    protect(m_page->settings())->setAllowedMediaCaptionFormatTypes(types);
     return { };
 }
 

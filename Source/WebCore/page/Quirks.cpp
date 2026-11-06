@@ -37,11 +37,13 @@
 #include "DeprecatedGlobalSettings.h"
 #include "Document.h"
 #include "DocumentLoader.h"
+#include "DocumentInlines.h"
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
 #include "DocumentStorageAccess.h"
 #include "DocumentView.h"
 #include "Element.h"
+#include "ExtensionStyleSheets.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementInlines.h"
 #include "ElementTargetingTypes.h"
@@ -69,7 +71,6 @@
 #include "OrganizationStorageAccessPromptQuirk.h"
 #include "Page.h"
 #include "PlatformMouseEvent.h"
-#include "QuirkBehaviorDefinitions.h"
 #include "QuirkTable.h"
 #include "QuirksData.h"
 #include "RegistrableDomain.h"
@@ -110,6 +111,7 @@
 #endif
 
 #if PLATFORM(IOS_FAMILY)
+#include <pal/system/ios/Device.h>
 #include <pal/system/ios/UserInterfaceIdiom.h>
 #endif
 
@@ -121,7 +123,28 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Quirks);
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document& document)
+static QuirksData resolveSiteSpecificQuirks(const URLMatchContext& topContext, const URLMatchContext& documentContext, IsTopDocument documentIsTopDocument)
+{
+    QuirksData quirksData;
+    for (auto& quirk : quirkTable().quirks) {
+        if (quirk.appliesTo(topContext, documentContext, documentIsTopDocument))
+            quirk.apply(quirksData);
+    }
+    return quirksData;
+}
+
+QuirksData resolveSiteSpecificQuirks(const URL& topURL, const URL& documentURL, IsTopDocument documentIsTopDocument)
+{
+    return resolveSiteSpecificQuirks(URLMatchContext { topURL }, URLMatchContext { documentURL }, documentIsTopDocument);
+}
+
+QuirksData resolveTopURLQuirks(const URL& url)
+{
+    URLMatchContext context { url };
+    return resolveSiteSpecificQuirks(context, context, IsTopDocument::Yes);
+}
+
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document& document)
 {
     auto* loader = document.loader();
     if (!loader)
@@ -130,14 +153,14 @@ static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Doc
     return loader->allowedAutoplayQuirks();
 }
 
-static inline OptionSet<AutoplayQuirk> LEGACY_NODELETE allowedAutoplayQuirks(Document* document)
+NODELETE static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document* document)
 {
     if (!document)
         return { };
     return allowedAutoplayQuirks(*document);
 }
 
-static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAccessUserAgentStringQuirks()
+NODELETE static HashMap<RegistrableDomain, String>& updatableStorageAccessUserAgentStringQuirks()
 {
     // FIXME: Make this a member of Quirks.
     static MainThreadNeverDestroyed<HashMap<RegistrableDomain, String>> map;
@@ -147,19 +170,18 @@ static HashMap<RegistrableDomain, String>& LEGACY_NODELETE updatableStorageAcces
 #if USE(APPLE_INTERNAL_SDK)
 #import <WebKitAdditions/QuirksAdditions.cpp>
 #else
-static inline bool LEGACY_NODELETE needsDesktopUserAgentInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldPreventOrientationMediaQueryFromEvaluatingToLandscapeInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
-static inline bool LEGACY_NODELETE shouldDisableBlobFileAccessEnforcementInternal() { return false; }
-static inline bool LEGACY_NODELETE needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
+NODELETE static inline bool shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
+NODELETE static inline bool shouldDisableBlobFileAccessEnforcementInternal() { return false; }
+NODELETE static inline bool needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
+NODELETE static inline bool shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
 #if PLATFORM(COCOA)
-static inline String LEGACY_NODELETE standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
+NODELETE static inline String standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
 #endif
 #endif
 
-static bool urlHasQuirk(const URL& url, const QuirkBehavior& quirk)
+static bool urlHasQuirk(const URL& url, QuirkBehaviorID id)
 {
-    return resolveTopURLQuirks(url).isBehaviorEnabled(quirk.id);
+    return resolveTopURLQuirks(url).isBehaviorEnabled(id);
 }
 
 Quirks::Quirks(Document& document)
@@ -416,7 +438,7 @@ bool Quirks::shouldOpenAsAboutBlank(const String& stringToOpen) const
         return false;
 
     auto openerURL = protect(m_document)->url();
-    if (!m_document->frame() || !m_document->frame()->loader().userAgent(openerURL).contains("Macintosh"_s))
+    if (!m_document->frame() || !protect(m_document->frame()->loader())->userAgent(openerURL).contains("Macintosh"_s))
         return false;
 
     URL urlToOpen { URL { }, stringToOpen };
@@ -699,7 +721,7 @@ bool Quirks::shouldAllowNavigationToCustomProtocolWithoutUserGesture(StringView 
 {
     if (protocol != "msteams"_s)
         return false;
-    return urlHasQuirk(requesterOrigin.toURL(), QuirkBehaviors::shouldAllowMSTeamsProtocolWithoutUserGestureQuirk);
+    return urlHasQuirk(requesterOrigin.toURL(), QuirkBehaviorID::ShouldAllowMSTeamsProtocolWithoutUserGestureQuirk);
 }
 
 // play.hbomax.com https://bugs.webkit.org/show_bug.cgi?id=244737
@@ -781,7 +803,7 @@ bool Quirks::needsDisableDOMPasteAccessQuirk() const
 {
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
-    return isBehaviorEnabledAfterProbing(QuirkBehaviors::needsDisableDOMPasteAccessQuirk, [&] {
+    return isBehaviorEnabledAfterProbing(QuirkBehaviorID::NeedsDisableDOMPasteAccessQuirk, [&] {
         RefPtr document = m_document.get();
         if (!document)
             return false;
@@ -828,14 +850,53 @@ std::optional<String> Quirks::needsCustomUserAgentOverride(const URL& url, const
 
 bool Quirks::needsDesktopUserAgent(const URL& url)
 {
-    return needsDesktopUserAgentInternal(url);
+#if PLATFORM(APPLETV)
+    if (!PAL::deviceClassIsHomeView())
+        return false;
+
+    auto domain = RegistrableDomain(url).string();
+    if (domain == "messenger.com"_s || domain == "netflix.com"_s || domain == "webex.com"_s || domain == "hulu.com"_s || domain.startsWith("zoom."_s)
+        || domain == "tiktok.com"_s || domain == "disneyplus.com"_s || domain == "max.com"_s)
+        return true;
+
+    if (url.host() == "meet.google.com"_s || (url.host() == "apps.google.com"_s && url.path().endsWith("/meet/"_s)))
+        return true;
+#else
+    UNUSED_PARAM(url);
+#endif
+    return false;
 }
 
 bool Quirks::needsPartitionedCookies(const ResourceRequest& request)
 {
     if (request.isTopSite())
         return false;
-    return urlHasQuirk(request.url(), QuirkBehaviors::needsPartitionedCookiesQuirk);
+    return urlHasQuirk(request.url(), QuirkBehaviorID::NeedsPartitionedCookiesQuirk);
+}
+
+Vector<String> Quirks::cnameCloakingCookieCapExemptTargetPatterns(const URL& firstPartyURL)
+{
+    Vector<String> patterns;
+    for (const auto& behavior : resolveTopURLQuirks(firstPartyURL).behaviorsMatching(QuirkBehaviorID::NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk)) {
+        for (const auto& pattern : behavior.secondaryURL)
+            patterns.append(pattern.string().isolatedCopy());
+    }
+    return patterns;
+}
+
+bool Quirks::anyPatternMatchesCNAMETarget(const Vector<String>& patterns, const String& cnameHostName)
+{
+    auto hostName = cnameHostName.endsWith('.') ? cnameHostName.left(cnameHostName.length() - 1) : cnameHostName;
+    URLMatchContext context { URL { makeString("https://"_s, hostName, '/') } };
+    return patterns.containsIf([&](const String& patternString) {
+        auto pattern = QuirkMatchPattern::parse(patternString);
+        return pattern && pattern->matches(context);
+    });
+}
+
+bool Quirks::shouldExemptCookieFromITPDataRemoval(const String& cookieName)
+{
+    return shouldExemptCookieFromITPDataRemovalInternal(cookieName);
 }
 
 // m365.cloud.microsoft rdar://157794706
@@ -913,12 +974,33 @@ String Quirks::standardUserAgentWithApplicationNameIncludingCompatOverrides(cons
 
 std::optional<TargetedElementSelectors> Quirks::defaultVisibilityAdjustmentSelectors(const URL& requestURL)
 {
-#if ENABLE(VISIBILITY_ADJUSTMENT_QUIRKS)
-    return defaultVisibilityAdjustmentSelectorsInternal(requestURL);
+#if PLATFORM(APPLETV)
+    if (!PAL::deviceClassIsHomeView())
+        return { };
+
+    // FIXME: Remove this quirk when rdar://133550268 is addressed.
+    if (equalIgnoringASCIICase(requestURL.host(), "accounts.google.com"_s) && requestURL.path().endsWithIgnoringASCIICase("/signin/identifier"_s))
+        return { { { "div[data-tag*='passkey_first_auth_factor_error'] iframe"_s } } };
+
+    auto domain = RegistrableDomain(requestURL).string();
+    // FIXME: Remove this quirk when rdar://133550051 is addressed.
+    if (equalIgnoringASCIICase(domain, "goal.com"_s))
+        return { { { "div.modal_modal___IHnY.component-modal.modal_fade-in__PHe0E"_s } } };
+
+    // FIXME: Remove this quirk when rdar://133564017 is addressed.
+    if (equalIgnoringASCIICase(domain, "latimes.com"_s)) {
+        return { {
+            { "modality-custom-element[name^=metering]"_s },
+            { "DIV.modality-content"_s },
+        } };
+    }
+
+    if (equalIgnoringASCIICase(domain, "loveandlemons.com"_s))
+        return { { { "div#subscribe-popup"_s } } };
 #else
     UNUSED_PARAM(requestURL);
-    return { };
 #endif
+    return { };
 }
 
 Vector<String, 1> Quirks::scriptsToEvaluateBeforeRunningScriptFromURL(const URL& scriptURL)
@@ -948,6 +1030,32 @@ Vector<String, 1> Quirks::scriptsToEvaluateBeforeRunningScriptFromURL(const URL&
     }
 
     return scripts;
+}
+
+Vector<String> Quirks::styleSheetsToInject()
+{
+    constexpr auto id = QuirkBehaviorID::NeedsStyleSheetInjectedQuirk;
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE({ });
+
+    if (!m_quirksData.isBehaviorEnabled(id))
+        return { };
+
+    Vector<String> styleSheets;
+    for (const auto& behavior : m_quirksData.behaviorsMatching(id)) {
+        if (!behavior.styleSheet.isEmpty())
+            styleSheets.append(behavior.styleSheet);
+    }
+
+    return styleSheets;
+}
+
+void Quirks::updateInjectedStyleSheets()
+{
+    RefPtr document = m_document;
+    if (!document || !document->frame() || !needsQuirks())
+        return;
+
+    protect(document->extensionStyleSheets())->setQuirkStyleSheets(styleSheetsToInject());
 }
 
 bool Quirks::needsChromeOSNavigatorUserAgentQuirk(const Document& document) const
@@ -1262,20 +1370,20 @@ void Quirks::determineRelevantQuirks()
     static const bool needsResettingTransitionCancelsRunningTransitionQuirk = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ResettingTransitionCancelsRunningTransitionQuirk) && WTF::IOSApplication::isDOFUSTouch();
     static const bool shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk = !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoMediaLayerTeardownOnPageVisibilityChangeQuirk) && WTF::IOSApplication::isMoonPlayer();
 
-    m_quirksData.setEnabled(QuirkBehaviors::shouldDisableLazyIframeLoadingQuirk, shouldDisableLazyIframeLoadingQuirk);
+    m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisableLazyIframeLoadingQuirk, shouldDisableLazyIframeLoadingQuirk);
 
     // DOFUS Touch app (rdar://112679186)
-    m_quirksData.setEnabled(QuirkBehaviors::needsResettingTransitionCancelsRunningTransitionQuirk, needsResettingTransitionCancelsRunningTransitionQuirk);
+    m_quirksData.setEnabled(QuirkBehaviorID::NeedsResettingTransitionCancelsRunningTransitionQuirk, needsResettingTransitionCancelsRunningTransitionQuirk);
 
     // Moon Player app (rdar://162452658)
-    m_quirksData.setEnabled(QuirkBehaviors::shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk, shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk);
+    m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk, shouldDisableMediaLayerTeardownOnPageVisibilityChangeQuirk);
 #endif
 
 #if PLATFORM(MAC)
     static const bool shouldDisablePushStateFilePathRestrictions = WTF::MacApplication::isMimeoPhotoProject();
 
     // Push state file path restrictions break Mimeo Photo Plugin (rdar://112445672).
-    m_quirksData.setEnabled(QuirkBehaviors::shouldDisablePushStateFilePathRestrictions, shouldDisablePushStateFilePathRestrictions);
+    m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisablePushStateFilePathRestrictions, shouldDisablePushStateFilePathRestrictions);
 #endif
 
     auto quirksURL = topDocumentURL();
@@ -1284,14 +1392,6 @@ void Quirks::determineRelevantQuirks()
 
     Ref document = *protect(m_document);
     m_quirksData.merge(resolveSiteSpecificQuirks(quirksURL, documentURL(), document->isTopDocument() ? IsTopDocument::Yes : IsTopDocument::No));
-
-#if ENABLE(FLIP_SCREEN_DIMENSIONS_QUIRKS)
-    // rdar://133423460
-    m_quirksData.setEnabled(QuirkBehaviors::shouldFlipScreenDimensionsQuirk, shouldFlipScreenDimensionsInternal(quirksURL));
-#endif
-
-    // rdar://133423460
-    m_quirksData.setEnabled(QuirkBehaviors::shouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk, shouldPreventOrientationMediaQueryFromEvaluatingToLandscapeInternal(quirksURL));
 
 #if PLATFORM(IOS)
     // Use the opt-in Document tracks while parsing and freezes afterwards, rather than the live
@@ -1303,7 +1403,7 @@ void Quirks::determineRelevantQuirks()
     // platform actually reports, so for a subframe this is a declaration of intent rather than a
     // description of the platform state.
     if (PAL::currentUserInterfaceIdiomIsSmallScreen())
-        m_quirksData.setEnabled(QuirkBehaviors::shouldDisableElementFullscreenQuirk, document->safeAreaInsetOptIn() == Document::SafeAreaInsetOptIn::NotOptedIn);
+        m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisableElementFullscreenQuirk, document->safeAreaInsetOptIn() == Document::SafeAreaInsetOptIn::NotOptedIn);
 #endif
 }
 
@@ -1314,6 +1414,8 @@ void Quirks::urlsDidChange()
 
     if (!m_quirksData.hasSameBehaviorFlags(previousQuirksData))
         protect(m_document)->scheduleFullStyleRebuild();
+
+    updateInjectedStyleSheets();
 }
 
 void Quirks::logQuirksToConsoleIfNecessary() const
@@ -1326,7 +1428,7 @@ void Quirks::logQuirksToConsoleIfNecessary() const
         return;
 
     // FIXME: should we log english sentences instead of the quirk enum names?
-    const auto quirks = activeQuirks();
+    const auto quirks = activeQuirkNames();
     if (quirks.isEmpty())
         return;
 
@@ -1339,8 +1441,22 @@ Vector<String> Quirks::activeQuirks() const
 {
     Vector<String> result;
 
-    for (auto quirk : m_quirksData.behaviors())
-        result.append(String { WTF::enumName(static_cast<QuirkBehaviorID>(quirk.id)) });
+    for (auto quirk : m_quirksData.behaviors()) {
+        TextStream stream;
+        stream << quirk;
+        result.append(stream.release());
+    }
+
+    std::ranges::sort(result, codePointCompareLessThan);
+    return result;
+}
+
+Vector<String> Quirks::activeQuirkNames() const
+{
+    Vector<String> result;
+
+    for (auto id : m_quirksData.behaviors() | std::views::transform(&QuirkBehavior::id))
+        result.append(WTF::enumName(id));
 
     std::ranges::sort(result, codePointCompareLessThan);
     return result;

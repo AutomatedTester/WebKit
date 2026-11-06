@@ -72,7 +72,7 @@ template<> struct CSSValueConversion<FontWeight> { auto operator()(BuilderState&
 // MARK: - Blending
 
 template<> struct Blending<FontWeight> {
-    auto blend(const FontWeight&, const FontWeight&, const BlendingContext&) -> FontWeight;
+    NODELETE FontWeight blend(const FontWeight&, const FontWeight&, const BlendingContext&);
 };
 
 } // namespace Style

@@ -31,6 +31,7 @@
 #include "AudioDecoderCocoa.h"
 #include "AudioSampleBufferConverter.h"
 #include "AudioSampleFormat.h"
+#include "AudioUtilities.h"
 #include "CAAudioStreamDescription.h"
 #include "Logging.h"
 #include "MediaSampleAVFObjC.h"
@@ -49,6 +50,11 @@
 #include <pal/cf/CoreMediaSoftLink.h>
 
 namespace WebCore {
+
+static bool isMPEG4AudioFormat(AudioFormatID format)
+{
+    return format == kAudioFormatMPEG4AAC || format == kAudioFormatMPEG4AAC_HE || format == kAudioFormatMPEG4AAC_LD || format == kAudioFormatMPEG4AAC_HE_V2 || format == kAudioFormatMPEG4AAC_ELD;
+}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AudioEncoderCocoa);
 
@@ -71,7 +77,7 @@ public:
     };
     static std::expected<InternalConfig, String> checkConfiguration(const String&, const Config&);
 
-    static Ref<InternalAudioEncoderCocoa> create(const Config& config, InternalConfig&& internalConfig, AudioEncoder::DescriptionCallback&& descriptionCallback, AudioEncoder::OutputCallback&& outputCallback)
+    NODELETE static Ref<InternalAudioEncoderCocoa> create(const Config& config, InternalConfig&& internalConfig, AudioEncoder::DescriptionCallback&& descriptionCallback, AudioEncoder::OutputCallback&& outputCallback)
     {
         return adoptRef(*new InternalAudioEncoderCocoa(config, WTF::move(internalConfig), WTF::move(descriptionCallback), WTF::move(outputCallback)));
     }
@@ -86,7 +92,7 @@ public:
 
 private:
     InternalAudioEncoderCocoa(const AudioEncoder::Config&, InternalConfig&&, AudioEncoder::DescriptionCallback&&, AudioEncoder::OutputCallback&&);
-    Ref<AudioSampleBufferConverter> LEGACY_NODELETE converter() const { return *m_converter; }
+    NODELETE Ref<AudioSampleBufferConverter> converter() const { return *m_converter; }
     void processEncodedOutputs();
     AudioEncoder::ActiveConfiguration activeConfiguration(CMSampleBufferRef) const;
     Vector<uint8_t> generateDecoderDescriptionFromSample(CMSampleBufferRef) const;
@@ -132,7 +138,7 @@ std::expected<InternalAudioEncoderCocoa::InternalConfig, String> InternalAudioEn
         internalConfig.complexity = opusConfig.complexity;
         internalConfig.packetlossperc = opusConfig.packetlossperc;
         internalConfig.useinbandfec = opusConfig.useinbandfec;
-    } else if ((internalConfig.codec == kAudioFormatMPEG4AAC || internalConfig.codec == kAudioFormatMPEG4AAC_HE || internalConfig.codec == kAudioFormatMPEG4AAC_LD || internalConfig.codec == kAudioFormatMPEG4AAC_HE_V2 || internalConfig.codec == kAudioFormatMPEG4AAC_ELD)) {
+    } else if (isMPEG4AudioFormat(internalConfig.codec)) {
         if (config.isAacADTS.value_or(false))
             return makeUnexpected("AAC ADTS format is unsupported"_s);
     }
@@ -215,7 +221,7 @@ Vector<uint8_t> InternalAudioEncoderCocoa::generateDecoderDescriptionFromSample(
 {
     RetainPtr formatDescription = PAL::CMSampleBufferGetFormatDescription(sample);
     ASSERT(formatDescription);
-    const AudioStreamBasicDescription* const asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription.get());
+    auto* asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription);
     if (!asbd)
         return { };
 
@@ -223,10 +229,14 @@ Vector<uint8_t> InternalAudioEncoderCocoa::generateDecoderDescriptionFromSample(
         return createOpusPrivateData(*asbd, m_converter->preSkip());
 
     size_t cookieSize = 0;
-    auto* cookie = PAL::CMAudioFormatDescriptionGetMagicCookie(formatDescription.get(), &cookieSize);
+    auto* cookie = PAL::CMAudioFormatDescriptionGetMagicCookie(formatDescription, &cookieSize);
     if (!cookieSize)
         return { };
-    return unsafeMakeSpan(static_cast<const uint8_t*>(cookie), cookieSize);
+
+    auto cookieSpan = unsafeMakeSpan(static_cast<const uint8_t*>(cookie), cookieSize);
+    if (isMPEG4AudioFormat(asbd->mFormatID))
+        return AudioUtilities::extractAudioSpecificConfigFromESDescriptor(cookieSpan);
+    return cookieSpan;
 }
 
 AudioEncoder::ActiveConfiguration InternalAudioEncoderCocoa::activeConfiguration(CMSampleBufferRef sample) const
@@ -236,7 +246,7 @@ AudioEncoder::ActiveConfiguration InternalAudioEncoderCocoa::activeConfiguration
 
     RetainPtr formatDescription = PAL::CMSampleBufferGetFormatDescription(sample);
     ASSERT(formatDescription);
-    const AudioStreamBasicDescription* const asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription.get());
+    const AudioStreamBasicDescription* const asbd = PAL::CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription);
     if (!asbd)
         return { };
 

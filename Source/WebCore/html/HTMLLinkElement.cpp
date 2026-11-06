@@ -480,7 +480,7 @@ void HTMLLinkElement::processInternalResourceLink(Element* element)
     if (document->readyState() == Document::ReadyState::Loading && isConnected() && mediaAttributeMatches() && !indicatedElement) {
         potentiallyBlockRendering();
         if (!m_expectIdTargetObserver)
-            lazyInitialize(m_expectIdTargetObserver, makeUnique<ExpectIdTargetObserver>(makeAtomString(m_url.fragmentIdentifier()), *this));
+            m_expectIdTargetObserver = makeUnique<ExpectIdTargetObserver>(makeAtomString(m_url.fragmentIdentifier()), *this);
     } else
         unblockRendering();
 }
@@ -547,6 +547,10 @@ void HTMLLinkElement::removingSteps(RemovalType removalType, ContainerNode& oldP
         styleScope->removeStyleSheetCandidateNode(*this);
         m_styleScope = nullptr;
     }
+
+    // The observer is registered with the tree scope we are being removed from, so it must not
+    // outlive this removal: a shadow tree scope can be destroyed while this element is still alive.
+    m_expectIdTargetObserver = nullptr;
 
     processInternalResourceLink();
     unblockRendering();
@@ -768,7 +772,7 @@ std::optional<LinkIconType> HTMLLinkElement::iconType() const
     return m_relAttribute.iconType;
 }
 
-static bool LEGACY_NODELETE mayFetchResource(LinkRelAttribute relAttribute)
+NODELETE static bool mayFetchResource(LinkRelAttribute relAttribute)
 {
     // https://html.spec.whatwg.org/multipage/links.html#linkTypes
     return relAttribute.isStyleSheet

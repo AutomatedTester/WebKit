@@ -80,6 +80,7 @@
 #include "CSSMaskBorderSliceValue.h"
 #include "CSSMaskBorderSourceValue.h"
 #include "CSSMaskBorderWidthValue.h"
+#include "CSSMeshGradientValue.h"
 #include "CSSNamedImageValue.h"
 #include "CSSOffsetRotateValue.h"
 #include "CSSPaintImageValue.h"
@@ -202,6 +203,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESC
         return std::invoke(visitor, uncheckedDowncast<CSSFunctionValue>(*this));
     case Gradient:
         return std::invoke(visitor, uncheckedDowncast<CSSGradientValue>(*this));
+    case MeshGradient:
+        return std::invoke(visitor, uncheckedDowncast<CSSMeshGradientValue>(*this));
     case GridAutoFlow:
         return std::invoke(visitor, uncheckedDowncast<CSSGridAutoFlowValue>(*this));
     case GridLineValue:
@@ -295,8 +298,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESC
 
 template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESCAPE const Visitor& visitor) const
 {
-    return const_cast<CSSValue&>(*this).visitDerived([&](auto& value) {
-        return std::invoke(visitor, std::as_const(value));
+    return const_cast<CSSValue&>(*this).visitDerived([&](const auto& value) {
+        return std::invoke(visitor, value);
     });
 }
 

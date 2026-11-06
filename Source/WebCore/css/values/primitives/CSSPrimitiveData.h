@@ -232,7 +232,7 @@ union PrimitiveDataPayload {
     {
     }
 
-    WEBCORE_EXPORT UnevaluatedCalcBase unevaluatedCalc() const;
+    NODELETE WEBCORE_EXPORT UnevaluatedCalcBase unevaluatedCalc() const;
 };
 
 // MARK: - PrimitiveData

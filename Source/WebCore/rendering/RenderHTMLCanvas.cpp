@@ -35,11 +35,14 @@
 #include "ImageQualityController.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
+#include "RenderAncestorIterator.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderDescendantIterator.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -63,7 +66,7 @@ RenderHTMLCanvas::RenderHTMLCanvas(HTMLCanvasElement& element, Style::ComputedSt
 
 RenderHTMLCanvas::~RenderHTMLCanvas() = default;
 
-HTMLCanvasElement& LEGACY_NODELETE RenderHTMLCanvas::canvasElement() const
+NODELETE HTMLCanvasElement& RenderHTMLCanvas::canvasElement() const
 {
     return downcast<HTMLCanvasElement>(nodeForNonAnonymous());
 }
@@ -97,8 +100,15 @@ void RenderHTMLCanvas::layout()
     StackStats::LayoutCheckPoint layoutCheckPoint;
     RenderReplaced::layout();
 
-    if (CheckedPtr innerRenderer = this->innerRenderer())
+    if (CheckedPtr innerRenderer = this->innerRenderer()) {
+        for (CheckedRef renderer : descendantsOfType<RenderElement>(*innerRenderer)) {
+            if (renderer->everHadLayout() || !renderer->isCanvasDrawable() || renderer->drawableCanvas() != this)
+                continue;
+            if (RefPtr drawableElement = renderer->element())
+                protect(canvasElement())->drawableElementDidChange(*drawableElement);
+        }
         innerRenderer->layoutIfNeeded();
+    }
 
     m_canvasDrawableRecorderMap.clear();
 }
@@ -143,17 +153,16 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
     canvasEl->setIsSnapshotting(false);
 }
 
-DisplayList::RecorderImpl* RenderHTMLCanvas::canvasDrawableRecorder(RenderElement& element, GraphicsContext& context) const
+DisplayList::RecorderImpl* RenderHTMLCanvas::canvasDrawableRecorder(RenderElement& element, GraphicsContext& context, const IntRect& elementRelativeBounds) const
 {
     if (!element.isCanvasDrawable())
         return nullptr;
 
     // FIXME: Clearing the recorder should happen only when a repaint or a layout happens.
     auto initialState = context.state().clone(GraphicsContextState::Purpose::Initial);
-    auto boundingRect = element.absoluteBoundingBoxRect();
     auto initialCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-    Ref snapshotRecorder = DisplayList::RecorderImpl::create(initialState, boundingRect, initialCTM, context.colorSpace());
-    snapshotRecorder->translate(-boundingRect.x(), -boundingRect.y());
+    Ref snapshotRecorder = DisplayList::RecorderImpl::create(initialState, elementRelativeBounds, initialCTM, context.colorSpace());
+    snapshotRecorder->translate(-elementRelativeBounds.x(), -elementRelativeBounds.y());
 
     m_canvasDrawableRecorderMap.set(element, WTF::move(snapshotRecorder));
     return m_canvasDrawableRecorderMap.get(element);
@@ -168,6 +177,26 @@ std::optional<CanvasElementSnapshot> RenderHTMLCanvas::canvasDrawableSnapshot(Re
         return { { snapshotRecorder->copyDisplayList(), snapshotRecorder->initialClip().size() } };
 
     return std::nullopt;
+}
+
+void RenderHTMLCanvas::requestPaintEventIfNeeded(const RenderElement& repaintedRenderer) const
+{
+    ASSERT(repaintedRenderer.isDescendantOf(this));
+
+    if (!hasDrawableContent())
+        return;
+
+    for (CheckedRef renderer : lineageOfType<RenderElement>(repaintedRenderer)) {
+        if (renderer.ptr() == this)
+            return;
+
+        if (!renderer->isCanvasDrawable())
+            continue;
+
+        if (RefPtr drawableElement = renderer->element())
+            protect(canvasElement())->drawableElementDidChange(*drawableElement);
+        return;
+    }
 }
 
 bool RenderHTMLCanvas::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
@@ -205,6 +234,11 @@ void RenderHTMLCanvas::styleDidChange(Style::Difference difference, const Style:
 
     if (!oldStyle || style().dynamicRangeLimit() != oldStyle->dynamicRangeLimit())
         protect(canvasElement())->dynamicRangeLimitDidChange(style().dynamicRangeLimit().toPlatformDynamicRangeLimit());
+}
+
+NaturalDimensions RenderHTMLCanvas::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

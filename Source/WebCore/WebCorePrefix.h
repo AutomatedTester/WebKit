@@ -359,7 +359,6 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/IndexingHeader.h>
-#include <JavaScriptCore/IndexingHeaderInlines.h>
 #include <JavaScriptCore/IndexingType.h>
 #include <JavaScriptCore/Integrity.h>
 #include <JavaScriptCore/Interpreter.h>
@@ -383,6 +382,7 @@
 #include <JavaScriptCore/JSGlobalObjectFunctions.h>
 #include <JavaScriptCore/JSHeapFinalizerPrivate.h>
 #include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSONCache.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSRunLoopTimer.h>
@@ -708,8 +708,8 @@
 #include "Image.h"
 #include "ImageAdapter.h"
 #include "ImageBufferFormat.h"
+#include "ImageDrawDescriptor.h"
 #include "ImageOrientation.h"
-#include "ImagePaintingOptions.h"
 #include "InspectorInstrumentationPublic.h"
 #include "IntSizeHash.h"
 #include "IsImportant.h"

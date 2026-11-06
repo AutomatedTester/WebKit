@@ -62,6 +62,8 @@
 #import <WebCore/WebCoreURLResponse.h>
 #import <objc/runtime.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/WTFString.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -99,7 +101,7 @@ static void installFlip4MacPlugInWorkaroundIfNecessary();
 #endif
 
 
-static RetainPtr<NSMutableSet>& LEGACY_NODELETE pluginViews()
+NODELETE static RetainPtr<NSMutableSet>& pluginViews()
 {
     static NeverDestroyed<RetainPtr<NSMutableSet>> pluginViews;
     return pluginViews;
@@ -237,7 +239,7 @@ static RetainPtr<NSMutableSet>& LEGACY_NODELETE pluginViews()
     
     int viewsCount = [views count];
     for (int i = 0; i < viewsCount; i++)
-        [self stopOnePlugin:[views objectAtIndex:i]];
+        [self stopOnePlugin:checked_objc_cast<NSView>([views objectAtIndex:i])];
 
     _started = NO;
 }
@@ -253,8 +255,8 @@ static RetainPtr<NSMutableSet>& LEGACY_NODELETE pluginViews()
     if (viewsCount > 0)
         LOG(Plugins, "stopping WebKit plugins for PageCache: %@", [views description]);
 
-    for (NSUInteger i = 0; i < viewsCount; ++i)
-        [self stopOnePluginForPageCache:[views objectAtIndex:i]];
+    for (RetainPtr view : makeVector<RetainPtr<NSView>>(views.get()))
+        [self stopOnePluginForPageCache:view];
 
     _started = NO;
 }
@@ -377,7 +379,7 @@ static void cancelOutstandingCheck(const void *item, void *context)
     
     int viewsCount = [views count];
     for (int i = 0; i < viewsCount; i++) {
-        id aView = [views objectAtIndex:i];
+        RetainPtr aView = checked_objc_cast<NSView>([views objectAtIndex:i]);
         [self destroyOnePlugin:aView];
 
         [pluginViews() removeObject:aView];
@@ -442,10 +444,11 @@ static void cancelOutstandingCheck(const void *item, void *context)
             LOG_ERROR("could not load URL %@", [request URL]);
             return;
         }
-        WebCore::FrameLoadRequest frameLoadRequest { *core(frame), request };
+        RefPtr coreFrame = core(frame);
+        WebCore::FrameLoadRequest frameLoadRequest { *coreFrame, request };
         frameLoadRequest.setFrameName(target);
         frameLoadRequest.setShouldCheckNewWindowPolicy(true);
-        core(frame)->loader().load(WTF::move(frameLoadRequest));
+        protect(coreFrame->loader())->load(WTF::move(frameLoadRequest));
     }
 }
 

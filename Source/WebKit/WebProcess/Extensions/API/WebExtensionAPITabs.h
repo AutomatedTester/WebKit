@@ -35,6 +35,7 @@
 #include "WebPageProxyIdentifier.h"
 
 OBJC_CLASS NSDictionary;
+OBJC_CLASS NSObject;
 OBJC_CLASS NSString;
 
 namespace WebKit {
@@ -84,6 +85,9 @@ public:
     void removeCSS(WebPageProxyIdentifier, double tabID, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     double tabIdentifierNone() const { return -1; }
+
+    NODELETE NSDictionary *tabStatus();
+    NODELETE NSDictionary *windowType();
 
     WebExtensionAPIEvent& onActivated();
     WebExtensionAPIEvent& onAttached();

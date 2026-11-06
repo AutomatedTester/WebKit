@@ -233,7 +233,7 @@ ExceptionOr<Ref<XRProjectionLayer>> XRWebGLBinding::createProjectionLayer(Script
             Ref layer = XRProjectionLayer::create(scriptExecutionContext, m_session, WTF::move(backing), init);
             initializeCompositionLayer(layer.get());
             layer->setIsStatic(false);
-            layer->setIgnoreDepthValues(!!init.depthFormat);
+            layer->setIgnoreDepthValues(!init.depthFormat);
             layer->setFixedFoveation(0);
 
             auto layoutResult = determineLayout(init.textureType, XRLayerLayout::Default);
@@ -711,6 +711,9 @@ ExceptionOr<Ref<XRWebGLSubImage>> XRWebGLBinding::getSubImage(XRCompositionLayer
 {
     return WTF::switchOn(layer.init(),
         [&](const XRLayerInit& init) -> ExceptionOr<Ref<XRWebGLSubImage>> {
+            if (layer.isDestroyed())
+                return Exception { ExceptionCode::InvalidStateError, "Cannot get a subimage from a destroyed layer."_s };
+
             // FIXME: check that the layer is in the session layers list.
 
             if (layer.isXRProjectionLayer())
@@ -779,6 +782,9 @@ ExceptionOr<Ref<XRWebGLSubImage>> XRWebGLBinding::getSubImage(XRCompositionLayer
 
 ExceptionOr<Ref<XRWebGLSubImage>> XRWebGLBinding::getViewSubImage(XRProjectionLayer& layer, const WebXRView& view)
 {
+    if (layer.isDestroyed())
+        return Exception { ExceptionCode::InvalidStateError, "Cannot get a subimage from a destroyed layer."_s };
+
     XRTextureType textureType;
     GCGLenum colorFormat;
     GCGLenum depthFormat;
@@ -815,7 +821,9 @@ ExceptionOr<Ref<XRWebGLSubImage>> XRWebGLBinding::getViewSubImage(XRProjectionLa
         return Exception { ExceptionCode::InvalidStateError, "Cannot get view subimage."_s };
 
     // FIXME: if getViewSubImage() was called previously with the same binding, layer and view, the UA MAY return the same XRWebGLSubImage object as was returned previously.
-    Ref viewport = WebXRViewport::create(rectForView(layer, textureType, view));
+    auto viewRect = rectForView(layer, textureType, view);
+    layer.setViewport(view.eye() == XREye::Right ? 1 : 0, viewRect);
+    Ref viewport = WebXRViewport::create(viewRect);
     auto subImageResult = XRWebGLSubImage::create(WTF::move(viewport), layer);
     if (subImageResult.hasException())
         return subImageResult.releaseException();

@@ -36,7 +36,7 @@ namespace WebCore {
 class SpeechSynthesisVoice : public RefCounted<SpeechSynthesisVoice> {
 public:
     virtual ~SpeechSynthesisVoice() = default;
-    static Ref<SpeechSynthesisVoice> create(PlatformSpeechSynthesisVoice&);
+    NODELETE static Ref<SpeechSynthesisVoice> create(PlatformSpeechSynthesisVoice&);
 
     const String& voiceURI() const LIFETIME_BOUND { return m_platformVoice->voiceURI(); }
     const String& name() const LIFETIME_BOUND { return m_platformVoice->name(); }

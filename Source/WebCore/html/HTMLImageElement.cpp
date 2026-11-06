@@ -50,8 +50,10 @@
 #include "HTMLSrcsetParser.h"
 #include "ImageOrientation.h"
 #include "ImageRequestState.h"
+#include "ImageTypes.h"
 #include "JSRequestPriority.h"
 #include "LazyLoadElementObserver.h"
+#include "LazyLoading.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "MIMETypeRegistry.h"
@@ -67,7 +69,6 @@
 #include "RenderImageResource.h"
 #include "RenderView.h"
 #include "RequestPriority.h"
-#include "ScriptController.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "SizesAttributeParser.h"
@@ -85,6 +86,11 @@
 
 #if ENABLE(SPATIAL_IMAGE_CONTROLS)
 #include "SpatialImageControls.h"
+#endif
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+#include "DocumentImmersive.h"
+#include "JSDOMPromiseDeferred.h"
 #endif
 
 namespace WebCore {
@@ -328,7 +334,7 @@ ImageCandidate HTMLImageElement::bestFitSourceFromPictureElement()
         m_dynamicMediaQueryResults.appendVector(sizesParser.dynamicMediaQueryResults());
 
         auto sourceSize = sizesParser.effectiveSize();
-        if (sizesParser.isAuto() && isLazyLoadable()) {
+        if (sizesParser.isAuto() && LazyLoading::isInLazyState(*this)) {
             if (auto layoutWidth = autoSizesLayoutWidth())
                 sourceSize = std::optional<float>(*layoutWidth);
         }
@@ -379,7 +385,7 @@ void HTMLImageElement::selectImageSource(RelevantMutation relevantMutation)
     // If sizes=auto is active with loading=lazy but the layout width is not
     // yet available, defer source selection. didAttachRenderers() and
     // RenderImage::layout() will re-invoke this.
-    if (hasAutoSizes() && isLazyLoadable() && !autoSizesLayoutWidth() && usesSrcsetOrPicture())
+    if (allowsAutoSizes() && !autoSizesLayoutWidth() && usesSrcsetOrPicture())
         return;
 
     // First look for the best fit source from our <picture> parent if we have one.
@@ -399,7 +405,7 @@ void HTMLImageElement::selectImageSource(RelevantMutation relevantMutation)
             SizesAttributeParser sizesParser(attributeWithoutSynchronization(sizesAttr).string(), document.get());
             m_dynamicMediaQueryResults.appendVector(sizesParser.dynamicMediaQueryResults());
             auto sourceSize = sizesParser.effectiveSize();
-            if (sizesParser.isAuto() && isLazyLoadable()) {
+            if (sizesParser.isAuto() && LazyLoading::isInLazyState(*this)) {
                 if (auto layoutWidth = autoSizesLayoutWidth())
                     sourceSize = std::optional<float>(*layoutWidth);
             }
@@ -413,11 +419,6 @@ void HTMLImageElement::selectImageSource(RelevantMutation relevantMutation)
 
     if (!m_dynamicMediaQueryResults.isEmpty())
         document->addDynamicMediaQueryDependentImage(*this);
-}
-
-bool HTMLImageElement::hasLazyLoadableAttributeValue(StringView attributeValue)
-{
-    return equalLettersIgnoringASCIICase(attributeValue, "lazy"_s);
 }
 
 bool HTMLImageElement::hasAutoSizesAttributeValue(StringView attributeValue)
@@ -450,6 +451,10 @@ void HTMLImageElement::attributeChanged(const QualifiedName& name, const AtomStr
     case AttributeNames::altAttr:
         if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer()))
             renderImage->updateAltText();
+        if (isInSelectOrDataListSubtree()) {
+            if (RefPtr parent = parentElement())
+                parent->notifyDescendantsChanged();
+        }
         break;
     case AttributeNames::srcAttr:
     case AttributeNames::srcsetAttr:
@@ -469,7 +474,7 @@ void HTMLImageElement::attributeChanged(const QualifiedName& name, const AtomStr
         break;
     }
     case AttributeNames::loadingAttr:
-        if (!hasLazyLoadableAttributeValue(newValue))
+        if (!LazyLoading::hasLazyAttributeValue(newValue))
             loadDeferredImage();
         else if (!isConnected() && !m_imageLoader->image()) {
             // An eager-to-lazy transition before the element is connected may need to defer a
@@ -602,7 +607,7 @@ void HTMLImageElement::didAttachRenderers()
 
     // https://html.spec.whatwg.org/multipage/images.html#relevant-mutations
     // "If the element allows auto-sizes: the element starts [...] being rendered"
-    if (hasAutoSizes() && isLazyLoadable())
+    if (allowsAutoSizes())
         scheduleAutoSizesResolution();
 }
 
@@ -648,6 +653,11 @@ void HTMLImageElement::removingSteps(RemovalType removalType, ContainerNode& old
 
     HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
     FormAssociatedElement::elementRemovedFromAncestor(*this, removalType);
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    if (removalType.disconnectedFromDocument)
+        exitImmersiveIfNeeded();
+#endif
 }
 
 void HTMLImageElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
@@ -966,21 +976,31 @@ Image* HTMLImageElement::image() const
 
 bool HTMLImageElement::allowsAnimation() const
 {
-    if (RefPtr image = this->image())
-        return image->allowsAnimation().value_or(document().page() ? document().page()->imageAnimationEnabled() : false);
-    return false;
+    RefPtr image = this->image();
+    if (!image)
+        return false;
+
+    switch (image->animationOverride()) {
+    case ImageAnimationOverride::None:
+        return document().page() && document().page()->imageAnimationEnabled();
+    case ImageAnimationOverride::Play:
+        return true;
+    case ImageAnimationOverride::Pause:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
-void HTMLImageElement::setAllowsAnimation(std::optional<bool> allowsAnimation)
+void HTMLImageElement::setAnimationOverride(ImageAnimationOverride animationOverride)
 {
     if (RefPtr image = this->image()) {
-        image->setAllowsAnimation(allowsAnimation);
+        image->setAnimationOverride(animationOverride);
         if (CheckedPtr renderer = this->renderer())
             renderer->repaint();
 
         if (RefPtr page = document().page()) {
-            if (allowsAnimation.value_or(false))
+            if (animationOverride == ImageAnimationOverride::Play)
                 page->addIndividuallyPlayingAnimationElement(*this);
             else
                 page->removeIndividuallyPlayingAnimationElement(*this);
@@ -1105,11 +1125,10 @@ bool HTMLImageElement::isDeferred() const
     return m_imageLoader->isDeferred();
 }
 
-bool HTMLImageElement::isLazyLoadable() const
+// https://html.spec.whatwg.org/multipage/embedded-content.html#allows-auto-sizes
+bool HTMLImageElement::allowsAutoSizes() const
 {
-    if (!document().frame() || !protect(document().frame()->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
-        return false;
-    return hasLazyLoadableAttributeValue(attributeWithoutSynchronization(HTMLNames::loadingAttr));
+    return hasAutoSizes() && LazyLoading::isInLazyState(*this);
 }
 
 String HTMLImageElement::referrerPolicyForBindings() const
@@ -1197,5 +1216,66 @@ IntersectionObserverData* HTMLImageElement::intersectionObserverDataIfExists() c
 {
     return m_intersectionObserverData.get();
 }
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+
+void HTMLImageElement::suspend(ReasonForSuspension reason)
+{
+    if (reason == ReasonForSuspension::BackForwardCache)
+        exitImmersiveIfNeeded();
+}
+
+void HTMLImageElement::stop()
+{
+    exitImmersiveIfNeeded();
+}
+
+void HTMLImageElement::exitImmersiveIfNeeded()
+{
+    if (RefPtr documentImmersive = document().immersiveIfExists())
+        documentImmersive->exitRemovedImmersiveElementIfNeeded(this, [] { });
+}
+
+bool HTMLImageElement::isImmersiveEnabled() const
+{
+    return document().settings().imageElementImmersiveEnabled();
+}
+
+void HTMLImageElement::prepareImmersivePresentation(CompletionHandler<void(ExceptionOr<void>)>&& completion)
+{
+    // `src` can change while the consent prompt is up.
+    if (auto error = immersiveImageError())
+        return completion(WTF::move(*error));
+    completion({ });
+}
+
+void HTMLImageElement::presentImmersivePresentation(ChromeClient& client, CompletionHandler<void(bool)>&& completion)
+{
+    client.presentImmersiveImageElement(*this, WTF::move(completion));
+}
+
+std::optional<Exception> HTMLImageElement::immersiveImageError() const
+{
+    RefPtr image = this->image();
+    if (!image || !image->isPanorama())
+        return Exception { ExceptionCode::InvalidStateError, "requestImmersive() requires a panoramic image."_s };
+    return std::nullopt;
+}
+
+void HTMLImageElement::requestImmersive(DOMPromiseDeferred<void>&& promise)
+{
+    if (auto error = immersiveImageError())
+        return promise.reject(WTF::move(*error));
+
+    protect(document().immersive())->requestImmersive(this, [promise = WTF::move(promise)](ExceptionOr<void> result) mutable {
+        if (result.hasException()) {
+            promise.reject(result.releaseException());
+            return;
+        }
+        promise.resolve();
+    });
+}
+
+#endif
 
 }

@@ -44,11 +44,11 @@ bool isOriginClean(const CachedImage&, const SecurityOrigin&);
 #if ENABLE(VIDEO)
 bool isOriginClean(const HTMLVideoElement&, const SecurityOrigin&);
 #endif
-bool isOriginClean(const CanvasBase&, const SecurityOrigin&);
-bool isOriginClean(const ImageBitmap&, const SecurityOrigin&);
+NODELETE bool isOriginClean(const CanvasBase&, const SecurityOrigin&);
+NODELETE bool isOriginClean(const ImageBitmap&, const SecurityOrigin&);
 #if ENABLE(WEB_CODECS)
-bool isOriginClean(const WebCodecsVideoFrame&, const SecurityOrigin&);
+NODELETE bool isOriginClean(const WebCodecsVideoFrame&, const SecurityOrigin&);
 #endif
-bool isOriginClean(const CSSStyleImageValue&, const SecurityOrigin&);
+NODELETE bool isOriginClean(const CSSStyleImageValue&, const SecurityOrigin&);
 
 } // namespace WebCore

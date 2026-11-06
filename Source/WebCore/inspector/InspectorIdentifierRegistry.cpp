@@ -29,11 +29,11 @@
 #include "Document.h"
 #include "DocumentLoader.h"
 #include "FrameDestructionObserverInlines.h"
+#include "InspectorObjectIdentifier.h"
 #include "LocalFrameInlines.h"
 #include "NavigationIdentifier.h"
 #include "ProcessIdentifier.h"
 #include "RemoteFrame.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
@@ -52,6 +52,35 @@ static WebCore::ProcessIdentifier hostingProcessForFrame(const WebCore::Frame& f
     return WebCore::Process::identifier();
 }
 
+Protocol::Network::LoaderId IdentifierRegistry::loaderId(WebCore::DocumentLoader* loader)
+{
+    if (!loader)
+        return emptyString();
+
+    // Derive the id from the loader's navigationID, which is assigned at provisional-load start and
+    // stays fixed for the load. The Network stream computes this at the main resource's
+    // willSendRequest (before commit) and the Page stream at frameNavigated (after commit); anchoring
+    // on navigationID makes both arrive at the same string. It is qualified with the process that
+    // minted it, which may be the UIProcess or this process.
+    if (auto navigationID = loader->navigationID())
+        return makeString("loader-"_s, navigationID->processIdentifier().toUInt64(), '.', navigationID->object().toUInt64());
+
+    // Fallback only when no navigationID exists yet (early instrumentation / non-navigation loads):
+    // keep a stable per-loader id.
+    return m_loaderToIdentifier.ensure(loader, [] {
+        return WebCore::generateInspectorObjectIdentifierString();
+    }).iterator->value;
+}
+
+Protocol::Network::LoaderId IdentifierRegistry::takeLoader(WebCore::DocumentLoader& loader)
+{
+    return m_loaderToIdentifier.take(&loader);
+}
+
+String IdentifierRegistry::protocolFrameId(const WebCore::Frame& frame)
+{
+    return protocolFrameId(frame.frameID(), hostingProcessForFrame(frame));
+}
 
 LegacyIdentifierRegistry::LegacyIdentifierRegistry() = default;
 LegacyIdentifierRegistry::~LegacyIdentifierRegistry() = default;
@@ -66,22 +95,9 @@ Protocol::Network::FrameId LegacyIdentifierRegistry::frameId(const WebCore::Fram
     if (!frame)
         return emptyString();
     return m_frameToIdentifier.ensure(*frame, [this, frame] {
-        auto identifier = IdentifiersFactory::createIdentifier();
+        auto identifier = WebCore::generateInspectorObjectIdentifierString();
         m_identifierToFrame.set(identifier, frame);
         return identifier;
-    }).iterator->value;
-}
-
-Protocol::Network::LoaderId LegacyIdentifierRegistry::loaderId(WebCore::DocumentLoader* loader)
-{
-    if (!loader)
-        return emptyString();
-
-    if (auto navigationID = loader->navigationID())
-        return makeString("loader-"_s, navigationID->processIdentifier().toUInt64(), '.', navigationID->object().toUInt64());
-
-    return m_loaderToIdentifier.ensure(loader, [] {
-        return IdentifiersFactory::createIdentifier();
     }).iterator->value;
 }
 
@@ -101,11 +117,6 @@ Protocol::Network::FrameId LegacyIdentifierRegistry::takeFrame(const WebCore::Fr
     return identifier;
 }
 
-Protocol::Network::LoaderId LegacyIdentifierRegistry::takeLoader(WebCore::DocumentLoader& loader)
-{
-    return m_loaderToIdentifier.take(&loader);
-}
-
 // --- BackendIdentifierRegistry ---
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BackendIdentifierRegistry);
@@ -117,7 +128,7 @@ Protocol::Network::FrameId BackendIdentifierRegistry::frameId(const WebCore::Fra
 {
     if (!frame)
         return emptyString();
-    auto identifier = protocolFrameId(frame->frameID(), hostingProcessForFrame(*frame));
+    auto identifier = protocolFrameId(*frame);
     m_identifierToFrame.set(identifier, frame);
     return identifier;
 }
@@ -125,26 +136,6 @@ Protocol::Network::FrameId BackendIdentifierRegistry::frameId(const WebCore::Fra
 WebCore::Frame* BackendIdentifierRegistry::frameForId(const Protocol::Network::FrameId& frameId)
 {
     return frameId.isEmpty() ? nullptr : m_identifierToFrame.get(frameId);
-}
-
-Protocol::Network::LoaderId BackendIdentifierRegistry::loaderId(WebCore::DocumentLoader* loader)
-{
-    if (!loader)
-        return emptyString();
-
-    // Derive the id from the loader's navigationID, which is assigned at provisional-load start and
-    // stays fixed for the load. The Network stream computes this at the main resource's
-    // willSendRequest (before commit) and the Page stream at frameNavigated (after commit); anchoring
-    // on navigationID makes both arrive at the same string. It is qualified with the process that
-    // minted it, which may be the UIProcess or this process.
-    if (auto navigationID = loader->navigationID())
-        return makeString("loader-"_s, navigationID->processIdentifier().toUInt64(), '.', navigationID->object().toUInt64());
-
-    // Fallback only when no navigationID exists yet (early instrumentation / non-navigation loads):
-    // keep a stable per-loader id. This produces a legacy-format ID.
-    return m_loaderToIdentifier.ensure(loader, [] {
-        return IdentifiersFactory::createIdentifier();
-    }).iterator->value;
 }
 
 RefPtr<WebCore::LocalFrame> BackendIdentifierRegistry::assertFrame(Protocol::ErrorString& errorString, const Protocol::Network::FrameId& frameId)
@@ -157,14 +148,9 @@ RefPtr<WebCore::LocalFrame> BackendIdentifierRegistry::assertFrame(Protocol::Err
 
 Protocol::Network::FrameId BackendIdentifierRegistry::takeFrame(const WebCore::Frame& frame)
 {
-    auto identifier = protocolFrameId(frame.frameID(), hostingProcessForFrame(frame));
+    auto identifier = protocolFrameId(frame);
     m_identifierToFrame.remove(identifier);
     return identifier;
-}
-
-Protocol::Network::LoaderId BackendIdentifierRegistry::takeLoader(WebCore::DocumentLoader& loader)
-{
-    return m_loaderToIdentifier.take(&loader);
 }
 
 } // namespace Inspector

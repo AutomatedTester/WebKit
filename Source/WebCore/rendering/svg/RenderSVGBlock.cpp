@@ -23,6 +23,7 @@
 #include "RenderSVGBlock.h"
 
 #include "LegacyRenderSVGResource.h"
+#include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
@@ -86,7 +87,12 @@ Vector<FloatRect> RenderSVGBlock::localBorderBoxRects() const
 
 void RenderSVGBlock::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const
 {
-    quads.append(localToAbsoluteQuad(FloatRect { { }, borderBoxSize() }, MapCoordinatesMode::UseTransforms, wasFixed));
+    if (document().settings().layerBasedSVGEngineEnabled()) {
+        quads.append(localToAbsoluteQuad(FloatRect { { }, borderBoxSize() }, MapCoordinatesMode::UseTransforms, wasFixed));
+        return;
+    }
+
+    quads.append(localToAbsoluteQuad(strokeBoundingBox(), MapCoordinatesMode::UseTransforms, wasFixed));
 }
 
 void RenderSVGBlock::willBeDestroyed()

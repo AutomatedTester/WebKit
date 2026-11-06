@@ -110,10 +110,14 @@ imported/w3c/web-platform-tests/digital-credentials/ [ Skip ]
 fast/webcodecs/audio-data-copy-to-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-zero-frames-crash.html [ Skip ]
 fast/webcodecs/audio-data-copy-to-planar-frame-offset.html [ Skip ]
+fast/canvas/canvas-drawImage-video-frame-composite.html [ Skip ]
 
 # WebGPU is disabled
 http/tests/webgpu [ Skip ]
 fast/webgpu [ Skip ]
+
+# WebGL video-format tests: the baselines record macOS decoder and WebGL video upload behaviour.
+webgl/video-formats [ Skip ]
 inspector/canvas/console-record-webgpu.html [ Skip ]
 inspector/canvas/create-context-webgpu.html [ Skip ]
 inspector/canvas/recording-webgpu-frameCount.html [ Skip ]
@@ -364,6 +368,9 @@ fast/text/softbank-emoji.html [ Skip ]
 # This requires a specific font on Mac
 fast/text/hidpi-text-selection-gap-between-words.html [ Skip ]
 
+# text-spacing-trim does not use half-width fonts for punctuation.
+webkit.org/b/281333 fast/text/text-spacing-trim-width-cache.html [ Failure ]
+
 # This test relies on iOS-specific font fallback.
 fast/text/arabic-blocked-fonts.html [ Pass ImageOnlyFailure ]
 
@@ -398,6 +405,9 @@ fast/events/wheel/platform-wheelevent-paging-y-in-scrolling-page.html [ Skip ]
 fast/harness/platform-layer-tree-as-text.html [ Skip ]
 
 # OffscreenCanvas isn't supported yet
+fast/text/font-face/font-face-loaded-resolution-deferred-in-worker.html [ Skip ]
+fast/canvas/canvas-font-attributes-state.html [ Skip ]
+fast/canvas/canvas-reset-after-noninvertible-transform-offscreen.html [ Skip ]
 fast/canvas/offscreen-backing-store-attached.html [ Skip ]
 fast/canvas/offscreen-border.html [ Skip ]
 fast/canvas/offscreen-clipped.html [ Skip ]
@@ -412,6 +422,12 @@ fast/canvas/offscreen-visibility-change.html [ Skip ]
 fast/canvas/offscreencanvas-in-dedicated-worker-readback.html [ Skip ]
 fast/canvas/offscreencanvas-in-shared-worker-readback.html [ Skip ]
 fast/images/protected-image-queue.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-dedicated-worker.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-main-thread.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-service-worker-separate-process.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-service-worker.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-shared-worker-separate-process.html [ Skip ]
+http/tests/canvas/canvas-2d-accelerated-in-shared-worker.html [ Skip ]
 http/wpt/service-workers/offscreencanvas-in-separate-service-worker-process-cpu-fallback.https.html [ Skip ]
 http/wpt/service-workers/offscreencanvas-in-separate-service-worker-process.https.html [ Skip ]
 webgl/2.0.y/conformance/offscreencanvas/context-lost-restored.html [ Skip ]
@@ -419,6 +435,8 @@ webgl/2.0.y/conformance/offscreencanvas/context-lost.html [ Skip ]
 webgl/offscreen-webgl-errors-to-console.html [ Skip ]
 webgl/webgl-worker.html [ Skip ]
 webgl/webgl2-init-missing-fragment-output-components.html [ Skip ]
+fast/text/font-face/css-font-selector-opportunistic-load-reentrancy-crash.html [ Skip ]
+fast/text/font-face/font-cascade-fallback-walk-prune-crash.html [ Skip ]
 
 # Accelerated canvas isn't supported yet
 fast/canvas/canvas-will-read-frequently.html [ Skip ]
@@ -875,6 +893,9 @@ http/tests/resourceLoadStatistics/only-accept-first-party-cookies-with-third-par
 http/tests/resourceLoadStatistics/only-partitioned-third-party-cookies.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect.https.html [ Skip ]
 http/tests/resourceLoadStatistics/only-partitioned-cookies-after-redirect-fetch.https.html [ Skip ]
+
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration-and-fragment.html [ Skip ]
+http/tests/resourceLoadStatistics/log-cross-site-load-with-filtered-link-decoration.html [ Skip ]
 
 http/tests/cookies/multiple-cookies-iframes.https.html [ Skip ]
 http/tests/cookies/multiple-cookies.https.html [ Skip ]
@@ -4502,6 +4523,7 @@ fast/text/international/thai-line-breaks.html [ Failure Pass ]
 
 # Doesn't support variable fonts
 fast/text/variations [ Skip ]
+fast/text/variations/font-weight-gpu-process.html [ Pass ]
 
 fast/images/image-alt-text-vertical.html [ ImageOnlyFailure ]
 
@@ -4830,11 +4852,18 @@ imported/w3c/web-platform-tests/largest-contentful-paint/repeated-image.html [ P
 # Consistent image failures, in every run. These are all reftests, so they cannot be
 # rebaselined; corner-shape is not applied through the composited path on Windows.
 compositing/corner-shape-ancestor-clip.html [ ImageOnlyFailure ]
+compositing/corner-shape-ancestor-clip-nested-rect-clip.html [ ImageOnlyFailure ]
 compositing/corner-shape-mask-layer-offset.html [ ImageOnlyFailure ]
 http/tests/canvas/canvas-tainted-image-capture-video-frame.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-bevel-overflow-composite.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-notch-mixed.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-shape-superellipse-negative-100.html [ ImageOnlyFailure ]
+
+# Windows WK2 release crashes while parsing some invalid corner shorthand declarations.
+# Skip until the shared parser is corrected in 326108.
+webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-invalid.html [ Skip ]
+webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-top-invalid.html [ Skip ]
+webkit.org/b/327293 imported/w3c/web-platform-tests/css/css-borders/corner-shape/corner-top-left-invalid.html [ Skip ]
 
 # Consistent text failures, in every run
 compositing/geometry/composited-bounds-single-axis-clip-taller-than-document.html [ Failure ]
@@ -4973,6 +5002,11 @@ imported/w3c/web-platform-tests/largest-contentful-paint/same-origin-redirects.h
 imported/w3c/web-platform-tests/largest-contentful-paint/video-poster.html [ Pass Failure ]
 webgl/2.0.y/conformance/rendering/triangle.html [ Pass Failure ]
 
+# New failures on Win-Tests-EWS, 2026-10-21
+webkit.org/b/328270 http/tests/IndexedDB/transaction-abort-pending-requests-stop.html [ Failure ]
+webkit.org/b/328270 http/tests/IndexedDB/transaction-commit-pending-requests-stop.html [ Failure ]
+webkit.org/b/328271 fast/events/suspend-timers.html [ Skip ] # Timeout
+
 # GPU process crashes in WebGL tests. A webgl directory entry here overrides
 # the webgl entries of LayoutTests/TestExpectations, so these are restated below with Crash.
 webkit.org/b/326176 webgl [ Pass Crash ]
@@ -5001,3 +5035,6 @@ webkit.org/b/320901 webgl/1.0.x/conformance/textures/misc/tex-image-svg-image-no
 webkit.org/b/320901 webgl/2.0.y/conformance/glsl/misc/shader-with-double-underscore.html [ Failure Crash ]
 webkit.org/b/320901 webgl/2.0.y/conformance/textures/misc/tex-image-svg-image-no-natural-width-and-height.html [ Failure Crash ]
 webkit.org/b/320901 webgl/2.0.y/conformance2/rendering/blitframebuffer-test.html [ Failure Crash ]
+
+# Requires the GPU process to host the video layer.
+media/media-source/media-source-real-video-layer-size-after-leaving-viewport.html [ Skip ]

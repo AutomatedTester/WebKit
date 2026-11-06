@@ -26,7 +26,7 @@
 #include "config.h"
 #include "PlatformRawAudioDataCocoa.h"
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioSampleFormat.h"
 #include "CAAudioStreamDescription.h"
@@ -36,7 +36,6 @@
 #include "NotImplemented.h"
 #include "SharedBuffer.h"
 #include "WebAudioBufferList.h"
-#include "WebCodecsAudioDataAlgorithms.h"
 
 #include <CoreAudio/CoreAudioTypes.h>
 #include <wtf/MediaTime.h>
@@ -52,7 +51,7 @@ Ref<PlatformRawAudioData> PlatformRawAudioData::create(Ref<MediaSample>&& sample
     return PlatformRawAudioDataCocoa::create(downcast<MediaSampleAVFObjC>(WTF::move(sample)));
 }
 
-static AudioStreamDescription::PCMFormat LEGACY_NODELETE audioSampleFormatToPCMFormat(AudioSampleFormat format)
+NODELETE static AudioStreamDescription::PCMFormat audioSampleFormatToPCMFormat(AudioSampleFormat format)
 {
     switch (format) {
     case AudioSampleFormat::U8:
@@ -74,7 +73,7 @@ static AudioStreamDescription::PCMFormat LEGACY_NODELETE audioSampleFormatToPCMF
     }
 }
 
-static CAAudioStreamDescription::IsInterleaved LEGACY_NODELETE interleavedFormat(AudioSampleFormat format)
+NODELETE static CAAudioStreamDescription::IsInterleaved interleavedFormat(AudioSampleFormat format)
 {
     return isAudioSampleFormatInterleaved(format) ? CAAudioStreamDescription::IsInterleaved::Yes : CAAudioStreamDescription::IsInterleaved::No;
 }
@@ -99,7 +98,7 @@ static RetainPtr<CMSampleBufferRef> createSampleBuffer(const CAAudioStreamDescri
         // This is an out-parameter which is immediately adopted below.
         SUPPRESS_UNRETAINED_LOCAL CMBlockBufferRef rawTrimmedBuffer;
         if (auto error = PAL::CMBlockBufferCreateContiguous(kCFAllocatorDefault, blockBuffer, kCFAllocatorDefault, nullptr, 0, dataSize, 0, &rawTrimmedBuffer)) {
-            RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't trim the block buffer with error %d", error);
+            RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't trim the block buffer with error %d", static_cast<int>(error));
             return nullptr;
         }
         blockBuffer = adoptCF(rawTrimmedBuffer);
@@ -108,7 +107,7 @@ static RetainPtr<CMSampleBufferRef> createSampleBuffer(const CAAudioStreamDescri
     // This is an out-parameter which is immediately adopted below.
     SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef rawSampleBuffer;
     if (auto error = PAL::CMAudioSampleBufferCreateWithPacketDescriptions(kCFAllocatorDefault, blockBuffer, true, nullptr, nullptr, formatDescription, numberOfFrames, time, nullptr, &rawSampleBuffer)) {
-        RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't create a sample buffer with error %d", error);
+        RELEASE_LOG_ERROR(MediaStream, "PlatformRawAudioData::create createSampleBuffer couldn't create a sample buffer with error %d", static_cast<int>(error));
         return nullptr;
     }
     return adoptCF(rawSampleBuffer);
@@ -144,9 +143,32 @@ RefPtr<PlatformRawAudioData> PlatformRawAudioData::create(Ref<SharedBuffer>&& so
     return PlatformRawAudioDataCocoa::create(MediaSampleAVFObjC::create(sample, 0));
 }
 
+// Without a known layout, two channels are the front left and right, and other channels are discrete.
+static MediaChannelLayout channelLayoutForSample(const MediaSampleAVFObjC& sample)
+{
+    RetainPtr format = PAL::CMSampleBufferGetFormatDescription(RetainPtr { sample.sampleBuffer() });
+    const auto* asbd = format ? PAL::CMAudioFormatDescriptionGetStreamBasicDescription(format) : nullptr;
+    if (!asbd || !asbd->mChannelsPerFrame)
+        return { .kind = MediaChannelLayout::Kind::Discrete };
+    uint32_t numberOfChannels = asbd->mChannelsPerFrame;
+
+    size_t layoutSize = 0;
+    const auto* layout = PAL::CMAudioFormatDescriptionGetChannelLayout(format, &layoutSize);
+    if (layout && layoutSize >= offsetof(AudioChannelLayout, mChannelDescriptions)
+        && layoutSize >= offsetof(AudioChannelLayout, mChannelDescriptions) + sizeof(AudioChannelDescription) * static_cast<size_t>(layout->mNumberChannelDescriptions)) {
+        if (auto channelLayout = mediaChannelLayoutFromChannelLayout(*layout); channelLayout && channelLayout->isValid(numberOfChannels))
+            return *channelLayout;
+    }
+
+    if (numberOfChannels == 2)
+        return { .kind = MediaChannelLayout::Kind::Positional, .mask = webAudioChannelBit(WebAudioChannel::FrontLeft) | webAudioChannelBit(WebAudioChannel::FrontRight) };
+    return { .kind = MediaChannelLayout::Kind::Discrete };
+}
+
 PlatformRawAudioDataCocoa::PlatformRawAudioDataCocoa(Ref<MediaSampleAVFObjC>&& sample)
     : m_sample(WTF::move(sample))
     , m_description(asbd())
+    , m_channelLayout(channelLayoutForSample(m_sample))
 {
 }
 
@@ -314,4 +336,4 @@ CMSampleBufferRef PlatformRawAudioDataCocoa::sampleBuffer() const
 
 #undef GST_CAT_DEFAULT
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(AVFOUNDATION)

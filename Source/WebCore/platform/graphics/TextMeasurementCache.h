@@ -35,6 +35,7 @@
 #include <wtf/ZippedRange.h>
 #include <wtf/text/RapidHash.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/unicode/CharacterNames.h>
 
@@ -47,23 +48,35 @@ struct TextShapingContext {
     bool hasWordSpacingOrLetterSpacing { false };
     bool hasTextSpacing { false };
 
-    TextShapingContext(const FontCascade&);
+    NODELETE TextShapingContext(const FontCascade&);
 };
 
 namespace TextMeasurementCacheDefaults {
 static constexpr int minInterval = -3; // A cache hit pays for about 3 cache misses.
 static constexpr int maxInterval = 20; // Sampling at this interval has almost no overhead.
-static constexpr unsigned maxSize = 500000; // Just enough to guard against pathological growth.
-static constexpr unsigned maxTextLength = 64; // Maximum text length for SmallStringKey.
+static constexpr unsigned maxTextLength = 64; // Maximum text length that can be cached.
+static constexpr unsigned inlineKeyCapacity = 16; // Text this long or shorter is stored inline in SmallStringKey; longer text (up to maxTextLength) is stored out-of-line, keyed by String.
+static constexpr size_t maxBytes = 20 * 1024 * 1024; // ~20MiB of inline slots fit, not counting HashTable load-factor overhead. Rough budget above which the cache is cleared to avoid pathological growth.
+
+template<typename CachedType, unsigned InlineKeyCapacity>
+constexpr unsigned maxSizeForByteBudget(size_t bytes = maxBytes)
+{
+    // Approximate SmallStringKey's inline char16_t array plus its hash/length word and the cache payload.
+    constexpr size_t slotBytes = sizeof(char16_t) * InlineKeyCapacity + sizeof(unsigned) + sizeof(CachedType);
+    size_t entries = bytes / slotBytes;
+    return static_cast<unsigned>(entries ? entries : 1);
+}
 }
 
 template <typename CachedType,
     int InitialInterval = TextMeasurementCacheDefaults::maxInterval,
     int MinInterval = TextMeasurementCacheDefaults::minInterval,
     int MaxInterval = TextMeasurementCacheDefaults::maxInterval,
-    unsigned MaxSize = TextMeasurementCacheDefaults::maxSize,
-    unsigned MaxTextLength = TextMeasurementCacheDefaults::maxTextLength>
+    unsigned MaxTextLength = TextMeasurementCacheDefaults::maxTextLength,
+    unsigned InlineKeyCapacity = TextMeasurementCacheDefaults::inlineKeyCapacity,
+    unsigned MaxSize = TextMeasurementCacheDefaults::maxSizeForByteBudget<CachedType, InlineKeyCapacity>()>
 class TextMeasurementCache {
+    static_assert(InlineKeyCapacity >= 1 && InlineKeyCapacity <= MaxTextLength, "InlineKeyCapacity must be in [1, MaxTextLength]");
 private:
     // Used to optimize small strings as hash table keys. Avoids malloc'ing an out-of-line StringImpl.
     class SmallStringKey {
@@ -77,15 +90,17 @@ private:
         {
         }
 
-        ALWAYS_INLINE SmallStringKey(StringView string)
+        // Bits 0-21 hold the hash, bits 22-23 the shaping direction and bits 24-31 the length.
+        ALWAYS_INLINE SmallStringKey(StringView string, unsigned shapingDirection)
         {
             unsigned length = string.length();
             ASSERT(length <= s_capacity);
+            ASSERT(shapingDirection < 4);
             if (string.is8Bit())
                 copySmallCharacters(std::span { m_characters }, string.span8());
             else
                 copySmallCharacters(std::span { m_characters }, string.span16());
-            m_hashAndLength = RapidHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { m_characters }.first(length)) | (length << 24);
+            m_hashAndLength = (RapidHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { m_characters }.first(length)) & 0x003fffffU) | (shapingDirection << 22) | (length << 24);
         }
 
         const char16_t* characters() const LIFETIME_BOUND { return m_characters.data(); }
@@ -105,7 +120,7 @@ private:
         }
 
     private:
-        static constexpr unsigned s_capacity = MaxTextLength;
+        static constexpr unsigned s_capacity = InlineKeyCapacity;
         static constexpr unsigned s_deletedValueLength = s_capacity + 1;
 
         template<typename CharacterType>
@@ -123,6 +138,8 @@ private:
         unsigned m_hashAndLength { 0 };
     };
 
+    static_assert(sizeof(SmallStringKey) == sizeof(std::array<char16_t, InlineKeyCapacity>) + sizeof(unsigned), "Revisit maxSizeForByteBudget computation");
+
     struct SmallStringKeyHashTraits : SimpleClassHashTraits<SmallStringKey> {
         static constexpr bool emptyValueIsZero = true;
         static constexpr bool hasIsEmptyValueFunction = true;
@@ -131,13 +148,9 @@ private:
     };
 
 public:
-    TextMeasurementCache()
-        : m_interval(InitialInterval)
-        , m_countdown(InitialInterval)
-    {
-    }
+    TextMeasurementCache() = default;
 
-    CachedType* add(StringView text, CachedType&& entry)
+    CachedType* add(StringView text, CachedType&& entry, TextDirection direction = TextDirection::LTR, DirectionalOverride directionalOverride = DirectionalOverride::No)
     {
         if (!isMainThread())
             return nullptr;
@@ -156,7 +169,7 @@ public:
             return nullptr;
         }
 
-        return addSlowCase(text, WTF::move(entry));
+        return addSlowCase(text, WTF::move(entry), (direction == TextDirection::RTL ? 1 : 0) | (directionalOverride == DirectionalOverride::Yes ? 2 : 0));
     }
 
     CachedType* add(const TextRun& run, CachedType&& entry, TextShapingContext shapingContext)
@@ -177,21 +190,29 @@ public:
         if (shapingContext.hasTextSpacing && invalidateCacheForTextSpacing(run))
             return nullptr;
 
-        return add(run.text(), WTF::move(entry));
+        return add(run.text(), WTF::move(entry), run.direction(), run.directionalOverride() ? DirectionalOverride::Yes : DirectionalOverride::No);
     }
 
     void clear()
     {
-        ASSERT(isMainThread());
+        if (!isMainThread())
+            return;
+
         m_singleCharMap.clear();
         m_map.clear();
+        for (auto& map : m_outOfLineMaps)
+            map.clear();
     }
 
-    bool isEmpty() const { return m_singleCharMap.isEmpty() && m_map.isEmpty(); }
+    bool isEmpty() const { return m_singleCharMap.isEmpty() && m_map.isEmpty() && std::ranges::all_of(m_outOfLineMaps, [](auto& map) { return map.isEmpty(); }); }
+
+    static constexpr unsigned inlineKeyCapacity() { return InlineKeyCapacity; }
+    static constexpr unsigned maxTextLength() { return MaxTextLength; }
+    static constexpr unsigned maxSize() { return MaxSize; }
 
 private:
 
-    CachedType* addSlowCase(StringView text, CachedType&& entry)
+    CachedType* addSlowCase(StringView text, CachedType&& entry, unsigned shapingDirection)
     {
         if (MemoryPressureHandler::singleton().isUnderMemoryPressure())
             return nullptr;
@@ -203,11 +224,15 @@ private:
             // The map use 0 for empty key, thus we do +1 here to avoid conflicting against empty key.
             // This is fine since the key is uint32_t while character is char16_t. So +1 never causes overflow.
             uint32_t character = text[0];
-            auto addResult = m_singleCharMap.fastAdd(character + 1, WTF::move(entry));
+            auto addResult = m_singleCharMap.fastAdd((character + 1) | (shapingDirection << 17), WTF::move(entry));
+            isNewEntry = addResult.isNewEntry;
+            value = &addResult.iterator->value;
+        } else if (length <= InlineKeyCapacity) {
+            auto addResult = m_map.fastAdd(SmallStringKey { text, shapingDirection }, WTF::move(entry));
             isNewEntry = addResult.isNewEntry;
             value = &addResult.iterator->value;
         } else {
-            auto addResult = m_map.fastAdd(text, WTF::move(entry));
+            auto addResult = m_outOfLineMaps[shapingDirection].template add<StringViewHashTranslator>(text, WTF::move(entry));
             isNewEntry = addResult.isNewEntry;
             value = &addResult.iterator->value;
         }
@@ -223,12 +248,18 @@ private:
             ++m_interval;
         m_countdown = m_interval;
 
-        if ((m_singleCharMap.size() + m_map.size()) < MaxSize)
+        // This quick computation doesn't account for external strings owned by m_outOfLineMaps.
+        size_t outOfLineSize = 0;
+        for (auto& map : m_outOfLineMaps)
+            outOfLineSize += map.size();
+        if ((m_singleCharMap.size() + m_map.size() + outOfLineSize) < MaxSize)
             return value;
 
         // No need to be fancy: we're just trying to avoid pathological growth.
         m_singleCharMap.clear();
         m_map.clear();
+        for (auto& map : m_outOfLineMaps)
+            map.clear();
         return nullptr;
     }
 
@@ -251,12 +282,14 @@ private:
 
     using Map = HashMap<SmallStringKey, CachedType, DefaultHash<SmallStringKey>, SmallStringKeyHashTraits>;
     using SingleCharMap = HashMap<uint32_t, CachedType, DefaultHash<uint32_t>, HashTraits<uint32_t>>;
+    using OutOfLineMap = HashMap<String, CachedType>;
 
-    int m_interval;
-    int m_countdown;
-    SingleCharMap m_singleCharMap;
-    Map m_map;
-    bool m_hasSeenIdeograph;
+    int m_interval { InitialInterval };
+    int m_countdown { InitialInterval };
+    SingleCharMap m_singleCharMap { };
+    Map m_map { };
+    std::array<OutOfLineMap, 4> m_outOfLineMaps { };
+    bool m_hasSeenIdeograph { false };
 };
 
 } // namespace WebCore

@@ -71,15 +71,15 @@ private:
     bool errorOccurred() const final;
     bool hasDecodedImage() const final;
     NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
-    ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const override;
+    ImageRenditionOptions renditionOptionsForRenderer(const RenderElement&, ImageRenditionOptions) const override;
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;
     bool hasClient(RenderElement&) const final;
-    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const final;
-    RefPtr<NativeImage> nativeImage(const RenderElement&, ConcreteObjectSize, float resolutionScale, ImagePaintingOptions) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const NinePieceGeometry&) const final;
+    RefPtr<NativeImage> nativeImage(const RenderElement&, const ImageDrawDescriptor&, float resolutionScale) const final;
     bool currentFrameIsComplete(const RenderElement*) const final;
     std::optional<IntPoint> hotSpot() const final;
     float imageScaleFactor() const final;
@@ -90,10 +90,13 @@ private:
     bool drawsSVGImage() const final;
     WTF::String accessibilityDescription() const final;
     bool isAnimated() const final;
+    void startAnimation() final;
     void stopAnimation() final;
+    void clearAnimationOverride() final;
     void resetAnimation() final;
     DecodingMode decodingModeForImageDraw(const RenderBoxModelObject&, const PaintInfo&) const final;
     InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
+    FloatRect mapChangedRectToSource(const RenderElement&, ConcreteObjectSize, const FloatRect& changedRect) const final;
     const Image* selectedImage() const final { return m_selectedImage.get(); }
     Image* selectedImage() final { return m_selectedImage.get(); }
 

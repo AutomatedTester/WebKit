@@ -45,7 +45,7 @@ public:
     explicit RTCRtpTransform(Internal&&);
     ~RTCRtpTransform();
 
-    bool isAttached() const;
+    NODELETE bool isAttached() const;
     void attachToReceiver(RTCRtpReceiver&, RTCRtpTransform*);
     void attachToSender(RTCRtpSender&, RTCRtpTransform*);
     void detachFromReceiver(RTCRtpReceiver&);
@@ -64,7 +64,7 @@ private:
     const Internal m_transform;
 };
 
-bool operator==(const RTCRtpTransform&, const RTCRtpTransform&);
+NODELETE bool operator==(const RTCRtpTransform&, const RTCRtpTransform&);
 
 } // namespace WebCore
 

@@ -84,7 +84,7 @@ public:
     }
 
 #if ENABLE(WEBASSEMBLY)
-    void LEGACY_NODELETE prepareWasmCallOperation(GPRReg instanceGPR);
+    NODELETE void prepareWasmCallOperation(GPRReg instanceGPR);
 #endif
 
     void checkStackPointerAlignment()
@@ -570,34 +570,6 @@ public:
         return branchTest64(NonZero, tempGPR, TrustedImm32(static_cast<int32_t>(~1)));
     }
 
-#if USE(BIGINT32)
-    Jump branchIfBigInt32(GPRReg gpr, GPRReg tempGPR, TagRegistersMode mode = HaveTagRegisters)
-    {
-        ASSERT(tempGPR != InvalidGPRReg);
-        if (mode == HaveTagRegisters && gpr != tempGPR) {
-            static_assert(JSValue::BigInt32Mask == JSValue::NumberTag + JSValue::BigInt32Tag);
-            add64(TrustedImm32(JSValue::BigInt32Tag), GPRInfo::numberTagRegister, tempGPR);
-            and64(gpr, tempGPR);
-            return branch64(Equal, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-        }
-
-        and64(TrustedImm64(JSValue::BigInt32Mask), gpr, tempGPR);
-        return branch64(Equal, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-    }
-    Jump branchIfNotBigInt32(GPRReg gpr, GPRReg tempGPR, TagRegistersMode mode = HaveTagRegisters)
-    {
-        ASSERT(tempGPR != InvalidGPRReg);
-        if (mode == HaveTagRegisters && gpr != tempGPR) {
-            static_assert(JSValue::BigInt32Mask == JSValue::NumberTag + JSValue::BigInt32Tag);
-            add64(TrustedImm32(JSValue::BigInt32Tag), GPRInfo::numberTagRegister, tempGPR);
-            and64(gpr, tempGPR);
-            return branch64(NotEqual, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-        }
-        and64(TrustedImm64(JSValue::BigInt32Mask), gpr, tempGPR);
-        return branch64(NotEqual, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-    }
-#endif // USE(BIGINT32)
-
     // FIXME: rename these to make it clear that they require their input to be a cell.
     Jump branchIfObject(GPRReg cellGPR)
     {
@@ -1045,6 +1017,11 @@ public:
     
     void purifyNaN(FPRReg, FPRReg);
 
+    // The divisor must come from powerOfTwoDivisorForDoubleMod(). The IgnoringSignOfZero variant produces +0 where
+    // fmod produces -0, leaving it to the caller to copy the dividend's sign bit into the result.
+    void emitDoubleModByPowerOfTwo(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR);
+    void emitDoubleModByPowerOfTwoIgnoringSignOfZero(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR);
+
     // These methods convert between doubles, and doubles boxed and JSValues.
     GPRReg boxDouble(FPRReg fpr, GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
@@ -1155,24 +1132,6 @@ public:
 
         doneCases.link(this);
     }
-
-#if USE(BIGINT32)
-    void unboxBigInt32(GPRReg src, GPRReg dest)
-    {
-#if CPU(ARM64)
-        urshift64(src, trustedImm32ForShift(Imm32(16)), dest);
-#else
-        move(src, dest);
-        urshift64(trustedImm32ForShift(Imm32(16)), dest);
-#endif
-    }
-
-    void boxBigInt32(GPRReg gpr)
-    {
-        lshift64(trustedImm32ForShift(Imm32(16)), gpr);
-        or64(TrustedImm32(JSValue::BigInt32Tag), gpr);
-    }
-#endif
 
     void unboxNativeCallee(GPRReg boxedGPR, GPRReg calleeGPR)
     {
@@ -1430,8 +1389,6 @@ public:
         //     return object
         // } else if (is boolean) {
         //     return boolean
-        // } else if (is bigint32) {
-        //     return bigint
         // } else {
         //     return undefined
         // }
@@ -1481,12 +1438,6 @@ public:
         functor(TypeofType::Boolean, false);
         notBoolean.link(this);
 
-#if USE(BIGINT32)
-        Jump notBigInt32 = branchIfNotBigInt32(valueGPR, tempGPR);
-        functor(TypeofType::BigInt, false);
-        notBigInt32.link(this);
-#endif
-        
         functor(TypeofType::Undefined, true);
     }
     

@@ -45,7 +45,7 @@ enum class LoadWillContinueInAnotherProcess : bool;
 
 class LoadableSpeculationRules final : public RefCounted<LoadableSpeculationRules>, public CachedResourceClient {
 public:
-    static Ref<LoadableSpeculationRules> create(Document&, const URL&);
+    NODELETE static Ref<LoadableSpeculationRules> create(Document&, const URL&);
     ~LoadableSpeculationRules();
 
     // CachedResourceClient.

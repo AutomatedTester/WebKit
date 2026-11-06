@@ -48,6 +48,34 @@ class JSONGeneratorTest(unittest.TestCase):
         self._FAILS_count = 0
         self._fixable_count = 0
 
+    def test_convert_trie_to_flat_paths(self):
+        paths = {'fast/dom/a.html': {'results': [0, 1, 2, 3, 4]}, 'fast/b.html': {'results': [5, 6, 7, 8, 9]}, 'c.html': {'results': [1]}}
+        trie = {}
+        for path, value in paths.items():
+            json_results_generator.add_path_to_trie(path, value, trie)
+        self.assertEqual(json_results_generator.convert_trie_to_flat_paths(trie), paths)
+
+    def test_convert_trie_to_flat_paths_keeps_results_holding_a_dict(self):
+        trie = {'fast': {'images': {
+            'a.html': {'expected': 'PASS', 'actual': 'IMAGE', 'image_difference': {'max_difference': 2, 'total_pixels': 9}},
+            'b.html': {'expected': 'PASS', 'actual': 'PASS'},
+        }}}
+        self.assertEqual(json_results_generator.convert_trie_to_flat_paths(trie), {
+            'fast/images/a.html': {'expected': 'PASS', 'actual': 'IMAGE', 'image_difference': {'max_difference': 2, 'total_pixels': 9}},
+            'fast/images/b.html': {'expected': 'PASS', 'actual': 'PASS'},
+        })
+
+    def test_convert_trie_to_flat_paths_reads_api_test_results(self):
+        paths = {
+            'TestWebKitAPI.WKWebView.LoadRequest': {'time': 366},
+            'TestWebKitAPI.WKWebView.Reload': {'expected': 'PASS', 'actual': 'FAIL', 'time': 1204},
+            'TestIPC.ArgumentCoderTest/Encoder.DecodeArray': {'time': 12},
+        }
+        trie = {}
+        for path, value in paths.items():
+            json_results_generator.add_path_to_trie(path, value, trie)
+        self.assertEqual(json_results_generator.convert_trie_to_flat_paths(trie), paths)
+
     def test_load_jsons(self):
         json = '["contents"]'
         self.assertEqual(json_results_generator.load_jsons(json_results_generator._JSON_PREFIX + json + json_results_generator._JSON_SUFFIX), ["contents"])

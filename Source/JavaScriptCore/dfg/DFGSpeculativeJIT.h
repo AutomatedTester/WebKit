@@ -107,7 +107,7 @@ public:
         explicit TrustedImmPtr(T* value)
             : m_value(value)
         {
-            static_assert(!std::is_base_of<JSCell, T>::value, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
+            static_assert(!std::derived_from<T, JSCell>, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
         }
 
         explicit TrustedImmPtr(RegisteredStructure structure)
@@ -299,9 +299,6 @@ public:
     FPRReg fillSpeculateDouble(Edge);
     GPRReg fillSpeculateCell(Edge);
     GPRReg fillSpeculateBoolean(Edge);
-#if USE(BIGINT32)
-    GPRReg fillSpeculateBigInt32(Edge);
-#endif
     GeneratedOperandType checkGeneratedTypeForToInt32(Node*);
 
     void addSlowPathGenerator(std::unique_ptr<SlowPathGenerator>);
@@ -318,7 +315,7 @@ public:
 
     void checkArgumentTypes();
 
-    void LEGACY_NODELETE clearGenerationInfo();
+    NODELETE void clearGenerationInfo();
 
     // These methods are used when generating 'unexpected'
     // calls out from JIT code to C++ helper routines -
@@ -1237,9 +1234,6 @@ public:
     bool compilePeepHoleBranch(Node*, RelationalCondition, DoubleCondition, S_JITOperation_GJJ);
     void compilePeepHoleInt32Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
     void compilePeepHoleInt52Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
-#if USE(BIGINT32)
-    void compilePeepHoleBigInt32Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
-#endif
     void compilePeepHoleBooleanBranch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
     void compilePeepHoleDoubleBranch(Node*, Node* branchNode, JITCompiler::DoubleCondition);
     void compilePeepHoleObjectEquality(Node*, Node* branchNode);
@@ -1325,6 +1319,7 @@ public:
     void compileNewSet(Node*);
     void compileNewWeakMap(Node*);
     void compileNewWeakSet(Node*);
+    void compileNewProxyObject(Node*);
     void compileNewRegExpUntyped(Node*);
 
     void emitNewTypedArrayWithSizeInRegister(Node*, TypedArrayType, RegisteredStructure, GPRReg sizeGPR);
@@ -1335,9 +1330,6 @@ public:
 
     void compileInt32Compare(Node*, RelationalCondition);
     void compileInt52Compare(Node*, RelationalCondition);
-#if USE(BIGINT32)
-    void compileBigInt32Compare(Node*, RelationalCondition);
-#endif
     void compileBooleanCompare(Node*, RelationalCondition);
     void compileDoubleCompare(Node*, DoubleCondition);
     void compileStringCompare(Node*, RelationalCondition);
@@ -1347,6 +1339,7 @@ public:
 
     void compileSameValue(Node*);
     
+    void compileAllocatePropertyStorageWithIndexingHeader(Node*);
     void compileAllocatePropertyStorage(Node*);
     void compileReallocatePropertyStorage(Node*);
     void compileNukeStructureAndSetButterfly(Node*);
@@ -1430,6 +1423,7 @@ public:
     void compileGetTypedArrayLengthAsInt52(Node*);
 #endif
     void compileDataViewGetByteLength(Node*);
+    void compileTypedArraySet(Node*);
 #if USE(LARGE_TYPED_ARRAYS)
     void compileDataViewGetByteLengthAsInt52(Node*);
 #endif
@@ -1452,7 +1446,7 @@ public:
     void compileBitwiseNot(Node*);
 
     template<typename SnippetGenerator, J_JITOperation_GJJ slowPathFunction>
-    void emitUntypedOrAnyBigIntBitOp(Node*);
+    void emitUntypedBitOp(Node*);
     void compileBitwiseOp(Node*);
     void compileValueBitwiseOp(Node*);
 
@@ -1487,6 +1481,7 @@ public:
     void compileArithF16Round(Node*);
     void compileValueMod(Node*);
     void compileArithMod(Node*);
+    bool compileArithModDoubleByPowerOfTwo(Node*);
     void compileArithPow(Node*);
     void compileValuePow(Node*);
     void compileArithRounding(Node*);
@@ -1538,8 +1533,12 @@ public:
     void compileNewBoundFunction(Node*);
     void compileNewRegExp(Node*);
     void compileForwardVarargs(Node*);
+    void emitLoadVarargsFromContiguousStorage(LoadVarargsData*, Address sourceStart, GPRReg lengthGPR, GPRReg tempGPR);
     void compileVarargsLength(Node*);
     void compileLoadVarargs(Node*);
+    void compileVarargsLengthWithSpread(Node*);
+    void compileLoadVarargsWithSpread(Node*);
+    EncodedJSValue* fillSpreadArgumentsBuffer(Node*, unsigned base, unsigned numArgs);
     void compileCreateActivation(Node*);
     void compileCreateDirectArguments(Node*);
     void compileGetFromArguments(Node*);
@@ -1620,7 +1619,7 @@ public:
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 
-    void LEGACY_NODELETE compileExtractFromTuple(Node*);
+    NODELETE void compileExtractFromTuple(Node*);
     void compileStringIteratorNext(Node*);
     void compileEnumeratorNextUpdateIndexAndMode(Node*);
     void compileEnumeratorNextUpdatePropertyName(Node*);
@@ -1823,10 +1822,6 @@ public:
     void convertAnyInt(Edge, GPRReg resultGPR, bool canIgnoreNegativeZero);
     void speculateAnyInt(Edge);
     void speculateDoubleRepAnyInt(Edge);
-#if USE(BIGINT32)
-    void speculateBigInt32(Edge);
-    void speculateAnyBigInt(Edge);
-#endif // USE(BIGINT32)
     void speculateNumber(Edge);
     void speculateRealNumber(Edge);
     void speculateDoubleRepReal(Edge);
@@ -2189,7 +2184,7 @@ public:
         return *this;
     }
 
-    void LEGACY_NODELETE adopt(GPRTemporary&);
+    NODELETE void adopt(GPRTemporary&);
 
     ~GPRTemporary()
     {
@@ -2732,56 +2727,6 @@ private:
     Edge m_edge;
     GPRReg m_gprOrInvalid;
 };
-
-#if USE(BIGINT32)
-class SpeculateBigInt32Operand {
-    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(SpeculateBigInt32Operand);
-public:
-    explicit SpeculateBigInt32Operand(SpeculativeJIT* jit, Edge edge, OperandSpeculationMode mode = AutomaticOperandSpeculation)
-        : m_jit(jit)
-        , m_edge(edge)
-        , m_gprOrInvalid(InvalidGPRReg)
-    {
-        ASSERT(m_jit);
-        ASSERT_UNUSED(mode, mode == ManualOperandSpeculation || edge.useKind() == BigInt32Use);
-        if (jit->isFilled(node()))
-            gpr();
-    }
-
-    ~SpeculateBigInt32Operand()
-    {
-        ASSERT(m_gprOrInvalid != InvalidGPRReg);
-        m_jit->unlock(m_gprOrInvalid);
-    }
-
-    Edge edge() const
-    {
-        return m_edge;
-    }
-
-    Node* node() const
-    {
-        return edge().node();
-    }
-
-    GPRReg gpr()
-    {
-        if (m_gprOrInvalid == InvalidGPRReg)
-            m_gprOrInvalid = m_jit->fillSpeculateBigInt32(edge());
-        return m_gprOrInvalid;
-    }
-
-    void use()
-    {
-        m_jit->use(node());
-    }
-
-private:
-    SpeculativeJIT* m_jit;
-    Edge m_edge;
-    GPRReg m_gprOrInvalid;
-};
-#endif // USE(BIGINT32)
 
 #define DFG_TYPE_CHECK_WITH_EXIT_KIND(exitKind, source, edge, typesPassedThrough, jumpToFail) do { \
         JSValueSource _dtc_source = (source);                           \

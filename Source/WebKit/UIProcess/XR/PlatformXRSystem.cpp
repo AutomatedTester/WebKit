@@ -211,7 +211,7 @@ void PlatformXRSystem::requestPermissionOnSessionFeatures(IPC::Connection& conne
     });
 }
 
-void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connection, std::optional<WebCore::WebGPU::TextureFormat> colorFormat, std::optional<WebCore::WebGPU::TextureFormat> depthStencilFormat)
+void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connection, std::optional<::WebGPU::TextureFormat> colorFormat, std::optional<::WebGPU::TextureFormat> depthStencilFormat)
 {
     ASSERT(RunLoop::isMain());
     MESSAGE_CHECK(m_immersiveSessionMode, connection);
@@ -226,6 +226,8 @@ void PlatformXRSystem::initializeTrackingAndRendering(IPC::Connection& connectio
     auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
     if (!xrCoordinator)
         return;
+
+    m_immersiveSessionProcess = WebProcessProxy::fromConnection(connection).get();
 
     setImmersiveSessionState(ImmersiveSessionState::SessionRunning, [](bool) mutable { });
 
@@ -299,6 +301,22 @@ void PlatformXRSystem::submitFrame(IPC::Connection& connection)
 #endif
     }
 }
+
+#if ENABLE(WEBXR_LAYERS)
+void PlatformXRSystem::deleteLayer(IPC::Connection&, PlatformXR::LayerHandle handle)
+{
+    ASSERT(RunLoop::isMain());
+    if (m_immersiveSessionState != ImmersiveSessionState::SessionRunning)
+        return;
+
+    RefPtr page = m_page;
+    if (!page)
+        return;
+
+    if (auto* xrCoordinator = PlatformXRSystem::xrCoordinator())
+        xrCoordinator->deleteLayer(*page, handle);
+}
+#endif
 
 #if ENABLE(WEBXR_HIT_TEST)
 void PlatformXRSystem::requestHitTestSource(const PlatformXR::HitTestOptions& hitTestOptions, CompletionHandler<void(std::expected<PlatformXR::HitTestSource, WebCore::ExceptionData>)>&& passedCompletionHandler)
@@ -382,7 +400,7 @@ void PlatformXRSystem::sessionDidEnd(XRDeviceIdentifier deviceIdentifier)
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidEnd(deviceIdentifier), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidEnd(deviceIdentifier));
         protectedThis->m_immersiveSessionActivity = { };
         // If this is called when the session is running, the ending of the session is triggered by the system side
         // and we should set the state to SessionEndingFromSystem. We expect the web process to send a
@@ -403,7 +421,7 @@ void PlatformXRSystem::sessionDidUpdateVisibilityState(XRDeviceIdentifier device
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidUpdateVisibilityState(deviceIdentifier, visibilityState), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidUpdateVisibilityState(deviceIdentifier, visibilityState));
     });
 }
 
@@ -418,13 +436,28 @@ void PlatformXRSystem::sessionDidInitializeRendering(XRDeviceIdentifier deviceId
         if (!page)
             return;
 
-        protect(page->legacyMainFrameProcess())->send(Messages::PlatformXRSystemProxy::SessionDidInitializeRendering(deviceIdentifier, width, height, arrayLength), page->webPageIDInMainFrameProcess());
+        protectedThis->sendToImmersiveSessionProcess(Messages::PlatformXRSystemProxy::SessionDidInitializeRendering(deviceIdentifier, width, height, arrayLength));
     });
+}
+
+template<typename Message>
+void PlatformXRSystem::sendToImmersiveSessionProcess(Message&& message)
+{
+    RefPtr page = m_page;
+    if (!page)
+        return;
+
+    RefPtr process = m_immersiveSessionProcess;
+    if (!process)
+        return;
+    process->send(std::forward<Message>(message), page->webPageIDInProcess(*process));
 }
 
 void PlatformXRSystem::setImmersiveSessionState(ImmersiveSessionState state, CompletionHandler<void(bool)>&& completion)
 {
     m_immersiveSessionState = state;
+    if (state == ImmersiveSessionState::Idle)
+        m_immersiveSessionProcess = nullptr;
 #if PLATFORM(COCOA)
     RefPtr page = m_page.get();
     if (!page || page->isClosed()) {

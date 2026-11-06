@@ -499,11 +499,11 @@ void DeriveRenderingInfo(Renderer *renderer,
             // corresponding attachment is invalidated.
             const bool resolveDepth =
                 angleFormat.depthBits != 0 &&
-                (desc.hasDepthResolveAttachment() || desc.isRenderToTexture()) &&
+                (desc.hasDepthResolveAttachment() || isRenderToTextureThroughExtension) &&
                 !(desc.isRenderToTexture() && ops[attachmentCount].isInvalidated);
             const bool resolveStencil =
                 angleFormat.stencilBits != 0 &&
-                (desc.hasStencilResolveAttachment() || desc.isRenderToTexture()) &&
+                (desc.hasStencilResolveAttachment() || isRenderToTextureThroughExtension) &&
                 !(desc.isRenderToTexture() && ops[attachmentCount].isStencilInvalidated);
 
             const ImageAccess imageAccess =
@@ -3554,7 +3554,9 @@ VkResult GraphicsPipelineDesc::initializePipeline(ErrorContext *context,
 
             createInfo.stageCount         = static_cast<uint32_t>(shadersState.shaderStages.size());
             createInfo.pStages            = shadersState.shaderStages.data();
-            createInfo.pTessellationState = &shadersState.tessellationState;
+            createInfo.pTessellationState  = (shadersState.tessellationState.sType != 0)
+                                                 ? &shadersState.tessellationState
+                                                 : nullptr;
             createInfo.pViewportState     = &shadersState.viewportState;
             createInfo.pRasterizationState = &shadersState.rasterState;
             createInfo.pDepthStencilState  = &shadersState.depthStencilState;
@@ -6181,9 +6183,8 @@ void WriteDescriptorDescs::updateTransformFeedbackWrite(
 void WriteDescriptorDescs::updateDynamicDescriptorsCount()
 {
     mDynamicDescriptorSetCount = 0;
-    for (uint32_t index = 0; index < mDescs.size(); ++index)
+    for (const WriteDescriptorDesc &writeDesc : mDescs)
     {
-        const WriteDescriptorDesc &writeDesc = mDescs[index];
         if (IsDynamicDescriptor(static_cast<VkDescriptorType>(writeDesc.descriptorType)))
         {
             mDynamicDescriptorSetCount += writeDesc.descriptorCount;

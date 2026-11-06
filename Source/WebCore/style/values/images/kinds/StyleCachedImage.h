@@ -40,6 +40,7 @@ class Document;
 class LegacyRenderSVGResourceContainer;
 class RenderElement;
 class RenderSVGResourceContainer;
+class SVGSVGElement;
 class TreeScope;
 
 namespace Style {
@@ -53,7 +54,7 @@ enum class SVGReferencingMode : uint8_t {
 class CachedImage final : public Image {
     WTF_MAKE_TZONE_ALLOCATED(CachedImage);
 public:
-    static Ref<CachedImage> create(URL&&, Ref<CSSImageValue>&&, float scaleFactor = 1);
+    NODELETE static Ref<CachedImage> create(URL&&, Ref<CSSImageValue>&&, float scaleFactor = 1);
     static Ref<CachedImage> create(const URL&, const Ref<CSSImageValue>&, float scaleFactor = 1);
     static Ref<CachedImage> create(WebCore::CachedImage&, WTF::URL&& authoredURL, OptionSet<SVGReferencingMode>, float scaleFactor = 1);
     static Ref<CachedImage> copyOverridingScaleFactor(CachedImage&, float scaleFactor);
@@ -62,7 +63,7 @@ public:
     bool operator==(const Image&) const final;
     bool equals(const CachedImage&) const;
 
-    WebCore::CachedImage* LEGACY_NODELETE cachedImage() const final;
+    NODELETE WebCore::CachedImage* cachedImage() const final;
 
     WrappedImagePtr data() const final { return m_cachedImage.get(); }
 
@@ -75,17 +76,17 @@ public:
     bool isLoaded(const RenderElement*) const final;
     bool errorOccurred() const final;
     NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
-    ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const final;
+    ImageRenditionOptions renditionOptionsForRenderer(const RenderElement&, ImageRenditionOptions) const final;
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;
     bool hasClient(RenderElement&) const final;
     bool hasImage() const final;
     bool hasDecodedImage() const final;
-    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
-    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const final;
-    RefPtr<NativeImage> nativeImage(const RenderElement&, ConcreteObjectSize, float resolutionScale, ImagePaintingOptions) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& source, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, const ImageDrawDescriptor&, const NinePieceGeometry&) const final;
+    RefPtr<NativeImage> nativeImage(const RenderElement&, const ImageDrawDescriptor&, float resolutionScale) const final;
     bool currentFrameIsComplete(const RenderElement*) const final;
     std::optional<IntPoint> hotSpot() const final;
     float imageScaleFactor() const final;
@@ -96,10 +97,13 @@ public:
     bool drawsSVGImage() const final;
     WTF::String accessibilityDescription() const final;
     bool isAnimated() const final;
+    void startAnimation() final;
     void stopAnimation() final;
+    void clearAnimationOverride() final;
     void resetAnimation() final;
     DecodingMode decodingModeForImageDraw(const RenderBoxModelObject&, const PaintInfo&) const final;
     InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const void* layer, const LayoutSize&) const final;
+    FloatRect mapChangedRectToSource(const RenderElement&, ConcreteObjectSize, const FloatRect& changedRect) const final;
     bool usesDataProtocol() const final;
 
     URL url() const final;
@@ -109,9 +113,10 @@ private:
     CachedImage(URL&&, Ref<CSSImageValue>&&, float, OptionSet<SVGReferencingMode>);
 
     RefPtr<WebCore::Image> resolvedImage() const;
-    ConcreteObjectSize concreteSizeToDrawAt(const WebCore::Image&, const RenderElement&, ConcreteObjectSize) const;
+    WebCore::ImageOrientation usedOrientation(WebCore::ImageOrientation) const;
+    ConcreteObjectSize concreteSizeToDrawAt(const WebCore::Image&, const RenderElement&, ConcreteObjectSize, WebCore::ImageOrientation) const;
     NaturalDimensions tileNaturalDimensions(const WebCore::Image&) const;
-    Vector<CSS::ParamFunction> urlLinkParameters(const CSSParserContext&, StringView fragment) const;
+    Vector<CSS::ParamFunction> urlLinkParameters(const CSSParserContext&, StringView fragmentDirective) const;
 
     struct ReferencedSVGResource {
         SingleThreadWeakPtr<RenderSVGResourceContainer> resource;
@@ -120,13 +125,14 @@ private:
         explicit operator bool() const { return resource || legacyResource; }
     };
     ReferencedSVGResource referencedSVGResource(const RenderElement&) const;
+    RefPtr<SVGSVGElement> svgImageRootElement(const RenderElement&) const;
     LegacyRenderSVGResourceContainer* uncheckedRenderSVGResource(TreeScope&, const AtomString& fragment) const;
     LegacyRenderSVGResourceContainer* uncheckedRenderSVGResource(const RenderElement*) const;
     LegacyRenderSVGResourceContainer* legacyRenderSVGResource(const RenderElement*) const;
     RenderSVGResourceContainer* renderSVGResource(const RenderElement*) const;
     bool isRenderSVGResource(const RenderElement*) const;
-    ImageDrawResult drawSVGResource(GraphicsContext&, const ReferencedSVGResource&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions) const;
-    ImageDrawResult drawSVGResourceAsPattern(GraphicsContext&, const ReferencedSVGResource&, const FloatSize&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) const;
+    ImageDrawResult drawSVGResource(GraphicsContext&, const ReferencedSVGResource&, const ImageDrawDescriptor&, const FloatRect& destination, const FloatRect& source) const;
+    ImageDrawResult drawSVGResourceAsPattern(GraphicsContext&, const ReferencedSVGResource&, const ImageDrawDescriptor&, const FloatSize&, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing) const;
 
     URL m_url;
     const Ref<CSSImageValue> m_cssValue;

@@ -268,6 +268,20 @@ void RemoteGraphicsContextProxy::clipPath(const Path& path, WindRule rule)
     send(Messages::RemoteGraphicsContext::ClipPath(path, rule));
 }
 
+void RemoteGraphicsContextProxy::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule rule)
+{
+    sendPendingDrawsIfNecessary();
+    updateStateForClipTransformedPath(pathTransform, path);
+    if (RefPtr impl = path.asImpl(); impl && !impl->isTransient()) {
+        if (auto identifier = recordResourceUse(*impl)) {
+            send(Messages::RemoteGraphicsContext::ClipTransformedCachedPath(pathTransform, *identifier, rule));
+            return;
+        }
+    }
+
+    send(Messages::RemoteGraphicsContext::ClipTransformedPath(pathTransform, path, rule));
+}
+
 void RemoteGraphicsContextProxy::resetClip()
 {
     sendPendingDrawsIfNecessary();
@@ -331,7 +345,7 @@ void RemoteGraphicsContextProxy::drawDisplayList(const DisplayList::DisplayList&
     send(Messages::RemoteGraphicsContext::DrawDisplayList(*identifier));
 }
 
-void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -344,7 +358,7 @@ void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const
     send(Messages::RemoteGraphicsContext::DrawImageBuffer(imageBuffer.renderingResourceIdentifier(), destRect, srcRect, options));
 }
 
-void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
     auto headroom = options.headroom();
@@ -356,7 +370,7 @@ void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const
     }
     m_maxPaintedEDRHeadroom = std::max(m_maxPaintedEDRHeadroom, headroom.headroom);
     m_maxRequestedEDRHeadroom = std::max(m_maxRequestedEDRHeadroom, image.headroom().headroom);
-    ImagePaintingOptions clampedOptions(options, headroom);
+    RasterDrawingOptions clampedOptions(options, headroom);
 #endif
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -390,7 +404,7 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
     send(Messages::RemoteGraphicsContext::DrawSystemImage(systemImage, destinationRect));
 }
 
-void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -399,7 +413,7 @@ void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const Flo
     send(Messages::RemoteGraphicsContext::DrawPatternNativeImage(image.renderingResourceIdentifier(), destRect, tileRect, patternTransform, phase, spacing, options));
 }
 
-void RemoteGraphicsContextProxy::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -458,6 +472,17 @@ void RemoteGraphicsContextProxy::drawDotsForDocumentMarker(const FloatRect& rect
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
     send(Messages::RemoteGraphicsContext::DrawDotsForDocumentMarker(rect, style));
+}
+
+void RemoteGraphicsContextProxy::drawMeshGradient(MeshGradient& gradient, const FloatRect& destination)
+{
+    auto identifier = recordResourceUse(gradient);
+    if (!identifier)
+        return;
+
+    sendPendingDrawsIfNecessary();
+    appendStateChangeItemIfNecessary();
+    send(Messages::RemoteGraphicsContext::DrawMeshGradient(*identifier, destination));
 }
 
 void RemoteGraphicsContextProxy::drawEllipse(const FloatRect& rect)
@@ -583,7 +608,7 @@ void RemoteGraphicsContextProxy::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -726,6 +751,7 @@ void RemoteGraphicsContextProxy::beginPage(const FloatRect& pageRect)
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
     send(Messages::RemoteGraphicsContext::BeginPage(pageRect));
+    updateStateForBeginPage();
 }
 
 void RemoteGraphicsContextProxy::endPage()
@@ -822,6 +848,17 @@ std::optional<RemoteGradientIdentifier> RemoteGraphicsContextProxy::recordResour
     }
 
     return renderingBackend->remoteResourceCacheProxy().recordGradientUse(gradient);
+}
+
+std::optional<RemoteMeshGradientIdentifier> RemoteGraphicsContextProxy::recordResourceUse(MeshGradient& gradient)
+{
+    RefPtr renderingBackend = m_renderingBackend.get();
+    if (!renderingBackend) [[unlikely]] {
+        ASSERT_NOT_REACHED();
+        return std::nullopt;
+    }
+
+    return renderingBackend->remoteResourceCacheProxy().recordMeshGradientUse(gradient);
 }
 
 std::optional<RemotePathImplIdentifier> RemoteGraphicsContextProxy::recordResourceUse(const WebCore::PathImpl& path)

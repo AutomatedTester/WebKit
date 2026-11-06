@@ -40,13 +40,13 @@ OBJC_CLASS WebAVPlayerViewControllerDelegate;
 
 namespace WebCore {
 
-class PlaybackSessionInterfaceIOS;
+class PlaybackSessionInterfaceCocoa;
 
 class VideoPresentationInterfaceAVKitLegacy final : public VideoPresentationInterfaceIOS {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(VideoPresentationInterfaceAVKitLegacy, WEBCORE_EXPORT);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(VideoPresentationInterfaceAVKitLegacy);
 public:
-    WEBCORE_EXPORT static Ref<VideoPresentationInterfaceAVKitLegacy> create(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT static Ref<VideoPresentationInterfaceAVKitLegacy> create(PlaybackSessionInterfaceCocoa&);
     WEBCORE_EXPORT ~VideoPresentationInterfaceAVKitLegacy();
 
     WEBCORE_EXPORT void hasVideoChanged(bool) final;
@@ -68,8 +68,14 @@ public:
     // VideoFullscreenCaptions:
     WEBCORE_EXPORT void setupCaptionsLayer(CALayer *parent, const WebCore::FloatSize&) final;
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    WEBCORE_EXPORT void callToActionChanged(std::optional<CallToActionLabel>) final;
+
+    void didTapCallToAction();
+#endif
+
 private:
-    WEBCORE_EXPORT VideoPresentationInterfaceAVKitLegacy(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT VideoPresentationInterfaceAVKitLegacy(PlaybackSessionInterfaceCocoa&);
 
     WebAVPlayerLayer *fullscreenPlayerLayer() const;
 
@@ -89,6 +95,9 @@ private:
 
     const RetainPtr<WebAVPlayerViewControllerDelegate> m_playerViewControllerDelegate;
     RetainPtr<WebAVPlayerViewController> m_playerViewController;
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    std::optional<CallToActionLabel> m_callToActionLabel;
+#endif
 };
 
 } // namespace WebCore

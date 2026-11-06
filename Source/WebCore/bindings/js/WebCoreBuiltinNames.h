@@ -49,6 +49,7 @@ namespace WebCore {
     macro(AnimationEffect) \
     macro(AnimationPlaybackEvent) \
     macro(AnimationTimeline) \
+    macro(ApplePayReferenceSession) \
     macro(ApplePaySession) \
     macro(ApplePaySetup) \
     macro(ApplePaySetupFeature) \
@@ -68,6 +69,7 @@ namespace WebCore {
     macro(AudioProcessingEvent) \
     macro(AudioScheduledSourceNode) \
     macro(AudioSession) \
+    macro(AudioSinkInfo) \
     macro(AudioWorklet) \
     macro(AudioWorkletGlobalScope) \
     macro(AudioWorkletNode) \
@@ -483,6 +485,7 @@ namespace WebCore {
     macro(WakeLock) \
     macro(WakeLockSentinel) \
     macro(WaveShaperNode) \
+    macro(WebAuthnOperationException) \
     macro(WebGL2RenderingContext) \
     macro(WebGLActiveInfo) \
     macro(WebGLBuffer) \
@@ -546,6 +549,8 @@ namespace WebCore {
     macro(XRJointSpace) \
     macro(XRLayer) \
     macro(XRLayerEvent) \
+    macro(XRPlane) \
+    macro(XRPlaneSet) \
     macro(XRPose) \
     macro(XRProjectionLayer) \
     macro(XRQuadLayer) \

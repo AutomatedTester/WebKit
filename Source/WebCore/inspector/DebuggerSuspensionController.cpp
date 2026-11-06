@@ -27,13 +27,19 @@
 #include "DebuggerSuspensionController.h"
 
 #include "ActiveDOMObject.h"
+#include "CommonVM.h"
 #include "Document.h"
+#include "DocumentPage.h"
 #include "FrameDestructionObserverInlines.h"
+#include "InspectorBackendClient.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "Page.h"
 #include "PageInspectorController.h"
 #include "ScriptController.h"
+#include "Settings.h"
+#include <JavaScriptCore/VM.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -41,6 +47,30 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DebuggerSuspensionController);
 
 static bool s_isFrameDebuggerPaused;
+static bool s_isWaitingForIdleAfterContinue;
+
+// The paused frame may be detached by the time the pause ends, so remember its page and identifier for the end-of-pause notification.
+struct PausedFrame {
+    WeakPtr<Page> page;
+    FrameIdentifier frameID;
+};
+
+NODELETE static std::optional<PausedFrame>& pausedFrame()
+{
+    static NeverDestroyed<std::optional<PausedFrame>> frame;
+    return frame;
+}
+
+static void reportFrameDebuggerDidContinue(std::optional<PausedFrame>&& frame)
+{
+    if (!frame)
+        return;
+    RefPtr page = frame->page;
+    if (!page)
+        return;
+    if (auto* client = page->inspectorController().inspectorBackendClient())
+        client->frameDebuggerDidContinue(frame->frameID);
+}
 
 DebuggerSuspensionController::DebuggerSuspensionController(Page& page)
     : m_page(page)
@@ -49,18 +79,63 @@ DebuggerSuspensionController::DebuggerSuspensionController(Page& page)
 
 DebuggerSuspensionController::~DebuggerSuspensionController() = default;
 
-void DebuggerSuspensionController::frameDebuggerDidPause()
+void DebuggerSuspensionController::frameDebuggerDidPause(LocalFrame& frame)
 {
     ASSERT(!s_isFrameDebuggerPaused);
     s_isFrameDebuggerPaused = true;
     updateHeldDocumentsInAllPages();
+
+    auto previous = std::exchange(pausedFrame(), std::nullopt);
+
+    RefPtr page = frame.page();
+    if (page && page->settings().siteIsolationGlobalDebuggerPauseEnabled()) {
+        pausedFrame() = PausedFrame { page.get(), frame.frameID() };
+        if (auto* client = page->inspectorController().inspectorBackendClient())
+            client->frameDebuggerDidPause(frame.frameID());
+    }
+
+    // A previous pause whose end is still waiting for VM idle is over only if another frame paused; a step pauses the same frame again.
+    if (previous && (!pausedFrame() || pausedFrame()->frameID != previous->frameID))
+        reportFrameDebuggerDidContinue(WTF::move(previous));
 }
 
 void DebuggerSuspensionController::frameDebuggerDidContinue()
 {
     ASSERT(s_isFrameDebuggerPaused);
     s_isFrameDebuggerPaused = false;
+    bool wasWaitingForIdle = std::exchange(s_isWaitingForIdleAfterContinue, true);
     updateHeldDocumentsInAllPages();
+    if (wasWaitingForIdle)
+        return;
+
+    // Session holds wait for VM idle, or they would drop the events that the continuing code dispatches.
+    // A step pauses again before the VM goes idle.
+    commonVM().whenIdle([] {
+        ASSERT(!s_isFrameDebuggerPaused);
+        s_isWaitingForIdleAfterContinue = false;
+        updateHeldDocumentsInAllPages();
+        reportFrameDebuggerDidContinue(std::exchange(pausedFrame(), std::nullopt));
+    });
+}
+
+bool DebuggerSuspensionController::isFrameDebuggerPaused()
+{
+    return s_isFrameDebuggerPaused;
+}
+
+bool DebuggerSuspensionController::addSessionHold(DebuggerPauseSessionIdentifier sessionID)
+{
+    if (!m_sessionHolds.add(sessionID).isNewEntry)
+        return false;
+    updateHeldDocuments();
+    return true;
+}
+
+void DebuggerSuspensionController::removeSessionHold(DebuggerPauseSessionIdentifier sessionID)
+{
+    if (!m_sessionHolds.remove(sessionID))
+        return;
+    updateHeldDocuments();
 }
 
 void DebuggerSuspensionController::updateHeldDocumentsInAllPages()
@@ -78,7 +153,7 @@ void DebuggerSuspensionController::documentDidBecomeCurrent(Document& document)
 
 bool DebuggerSuspensionController::shouldHoldDocuments() const
 {
-    return s_isFrameDebuggerPaused;
+    return s_isFrameDebuggerPaused || (!m_sessionHolds.isEmpty() && !s_isWaitingForIdleAfterContinue);
 }
 
 void DebuggerSuspensionController::updateHeldDocuments()

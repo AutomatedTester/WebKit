@@ -46,6 +46,10 @@ class ThreadSafeDisplayMtl : public ThreadSafeDisplayImpl
     ThreadSafeDisplayMtl()           = default;
     ~ThreadSafeDisplayMtl() override = default;
 
+    egl::Error makeCurrent(egl::Surface *drawSurface,
+                           egl::Surface *readSurface,
+                           gl::Context *context) override;
+
     EGLSyncImpl *createSync() override;
 
   private:
@@ -112,11 +116,6 @@ class DisplayMtl : public DisplayImpl, public ThreadSafeDisplayMtl
     gl::Version getMaxSupportedESVersion() const override;
     gl::Version getMaxConformantESVersion() const override;
 
-    egl::Error makeCurrent(egl::Display *display,
-                           egl::Surface *drawSurface,
-                           egl::Surface *readSurface,
-                           gl::Context *context) override;
-
     void initializeFrontendFeatures(angle::FrontendFeatures *features) const override;
 
     void populateFeatureList(angle::FeatureList *features) override;
@@ -148,6 +147,7 @@ class DisplayMtl : public DisplayImpl, public ThreadSafeDisplayMtl
     bool supportsMacGPUFamily(uint8_t macFamily) const;
     bool supportsDepth24Stencil8PixelFormat() const;
     bool supports32BitFloatFiltering() const;
+    bool supportsShaderBarycentricCoordinates() const;
     bool supportsBCTextureCompression() const;
     bool supportsVariableRasterizationRate() const;
     bool isAMD() const;

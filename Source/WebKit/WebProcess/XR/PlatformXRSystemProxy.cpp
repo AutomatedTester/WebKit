@@ -80,8 +80,8 @@ void PlatformXRSystemProxy::requestPermissionOnSessionFeatures(const WebCore::Se
 
 void PlatformXRSystemProxy::initializeTrackingAndRendering(std::optional<WebCore::XRCanvasConfiguration>&& optionalInit)
 {
-    std::optional<WebCore::WebGPU::TextureFormat> colorFormat;
-    std::optional<WebCore::WebGPU::TextureFormat> depthStencilFormat;
+    std::optional<::WebGPU::TextureFormat> colorFormat;
+    std::optional<::WebGPU::TextureFormat> depthStencilFormat;
     if (optionalInit) {
         colorFormat = optionalInit->colorFormat;
         depthStencilFormat = optionalInit->depthStencilFormat;
@@ -128,6 +128,11 @@ std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLay
         return std::nullopt;
     auto [layerInfo] = result.takeReply();
     return layerInfo;
+}
+
+void PlatformXRSystemProxy::deleteLayer(PlatformXR::LayerHandle handle)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteLayer(handle));
 }
 #endif
 

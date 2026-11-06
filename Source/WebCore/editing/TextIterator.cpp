@@ -56,6 +56,7 @@
 #include "ImageOverlay.h"
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "LocalFrame.h"
+#include "LocalFrameView.h"
 #include "NodeTraversal.h"
 #include "Range.h"
 #include "RenderBoxInlines.h"
@@ -119,7 +120,7 @@ public:
     // Result is the size in characters of what was found.
     // And <startOffset> is the number of characters back to the start of what was found.
     size_t search(size_t& startOffset);
-    bool atBreak() const;
+    NODELETE bool atBreak() const;
 
 #if !UCONFIG_NO_COLLATION
 
@@ -196,7 +197,7 @@ bool BitStack::top() const
 // --------
 
 // This function is like Range::pastLastNode, except for the fact that it can climb up out of shadow trees.
-static RefPtr<Node> LEGACY_NODELETE nextInPreOrderCrossingShadowBoundaries(Node& rangeEndContainer, int rangeEndOffset)
+NODELETE static RefPtr<Node> nextInPreOrderCrossingShadowBoundaries(Node& rangeEndContainer, int rangeEndOffset)
 {
     if (rangeEndOffset >= 0 && !rangeEndContainer.isCharacterDataNode()) {
         if (auto* next = rangeEndContainer.traverseToChildAt(rangeEndOffset))
@@ -232,7 +233,7 @@ static inline bool fullyClipsContents(const Node& node, TextIteratorBehaviors be
     return box->contentBoxSize().isEmpty();
 }
 
-static inline bool LEGACY_NODELETE ignoresContainerClip(const Node& node)
+NODELETE static inline bool ignoresContainerClip(const Node& node)
 {
     auto* renderer = node.renderer();
     if (!renderer || renderer->isRenderTextOrLineBreak())
@@ -264,16 +265,19 @@ static void setUpFullyClippedStack(BitStack& stack, Node& node, TextIteratorBeha
 
 static bool isClippedByFrameAncestor(const Document& document, TextIteratorBehaviors behaviors)
 {
-    if (!behaviors.contains(TextIteratorBehavior::ClipsToFrameAncestors))
-        return false;
+    if (RefPtr owner = document.ownerElement())
+        return isFrameOwnerFullyClipped(*owner, behaviors);
 
-    for (RefPtr owner = document.ownerElement(); owner; owner = owner->document().ownerElement()) {
-        BitStack ownerClipStack;
-        setUpFullyClippedStack(ownerClipStack, *owner, behaviors);
-        if (ownerClipStack.top())
-            return true;
-    }
-    return false;
+    // With site isolation, the owner of a root frame is in another process.
+    RefPtr view = document.view();
+    return view && view->ownerIsFullyClippedInParentFrameProcess();
+}
+
+bool isFrameOwnerFullyClipped(HTMLFrameOwnerElement& owner, TextIteratorBehaviors behaviors)
+{
+    BitStack ownerClipStack;
+    setUpFullyClippedStack(ownerClipStack, owner, behaviors);
+    return ownerClipStack.top() || isClippedByFrameAncestor(protect(owner.document()), behaviors);
 }
 
 // FIXME: editingIgnoresContent and isRendererReplacedElement try to do the same job.
@@ -355,7 +359,7 @@ void TextIteratorCopyableText::appendToStringBuilder(StringBuilder& builder) con
 
 // --------
 
-static Node* LEGACY_NODELETE firstNode(const BoundaryPoint& point)
+NODELETE static Node* firstNode(const BoundaryPoint& point)
 {
     if (point.container->isCharacterDataNode())
         return point.container.ptr();
@@ -388,7 +392,7 @@ TextIterator::TextIterator(const SimpleRange& range, TextIteratorBehaviors behav
 void TextIterator::init()
 {
     RefPtr currentNode = m_currentNode;
-    if (isClippedByFrameAncestor(protect(currentNode->document()), m_behaviors))
+    if (m_behaviors.contains(TextIteratorBehavior::ClipsToFrameAncestors) && isClippedByFrameAncestor(protect(currentNode->document()), m_behaviors))
         return;
 
     setUpFullyClippedStack(m_fullyClippedStack, *currentNode, m_behaviors);
@@ -426,14 +430,14 @@ static inline Node* nextNode(TextIteratorBehaviors options, Node& node)
     return NodeTraversal::next(node);
 }
 
-static inline bool LEGACY_NODELETE isDescendantOf(TextIteratorBehaviors options, Node& node, Node& possibleAncestor)
+NODELETE static inline bool isDescendantOf(TextIteratorBehaviors options, Node& node, Node& possibleAncestor)
 {
     if (options.contains(TextIteratorBehavior::TraversesFlatTree)) [[unlikely]]
         return node.isShadowIncludingDescendantOf(&possibleAncestor);
     return node.isDescendantOf(&possibleAncestor);
 }
 
-static inline Node* LEGACY_NODELETE parentNodeOrShadowHost(TextIteratorBehaviors options, Node& node)
+NODELETE static inline Node* parentNodeOrShadowHost(TextIteratorBehaviors options, Node& node)
 {
     if (options.contains(TextIteratorBehavior::TraversesFlatTree)) [[unlikely]]
         return parentInComposedTreeIgnoringUserAgentShadow(node);
@@ -441,7 +445,7 @@ static inline Node* LEGACY_NODELETE parentNodeOrShadowHost(TextIteratorBehaviors
     return node.parentOrShadowHostNode();
 }
 
-static inline bool LEGACY_NODELETE hasDisplayContents(Node& node)
+NODELETE static inline bool hasDisplayContents(Node& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     return element && element->hasDisplayContents();
@@ -590,7 +594,7 @@ void TextIterator::advance()
     }
 }
 
-static bool LEGACY_NODELETE hasVisibleTextNode(RenderText& renderer)
+NODELETE static bool hasVisibleTextNode(RenderText& renderer)
 {
     if (renderer.style().visibility() == Visibility::Visible)
         return true;
@@ -774,7 +778,7 @@ void TextIterator::revertToRemainingTextRun()
     m_offset = 0;
 }
 
-static inline RenderText* firstRenderTextInFirstLetter(RenderBoxModelObject* firstLetter)
+NODELETE static inline RenderText* firstRenderTextInFirstLetter(RenderBoxModelObject* firstLetter)
 {
     if (!firstLetter)
         return nullptr;
@@ -804,7 +808,7 @@ bool TextIterator::handleReplacedElement()
     if (m_fullyClippedStack.top())
         return false;
 
-    // Note that RenderInlines can get passed in as replaced elements.
+    // Note that inline boxes can get passed in as replaced elements.
     CheckedPtr renderer = dynamicDowncast<RenderElement>(m_currentNode->renderer());
     if (!renderer) {
         ASSERT_NOT_REACHED();
@@ -926,7 +930,7 @@ static bool shouldEmitTabBeforeNode(Node& node)
     return table && (table->cellBefore(cell.get()) || table->cellAbove(cell.get()));
 }
 
-static bool LEGACY_NODELETE shouldEmitNewlineForNode(Node* node, bool emitsOriginalText)
+NODELETE static bool shouldEmitNewlineForNode(Node* node, bool emitsOriginalText)
 {
     auto* renderer = node->renderer();
     if (!(renderer ? renderer->isBR() : node->hasTagName(brTag)))
@@ -934,14 +938,14 @@ static bool LEGACY_NODELETE shouldEmitNewlineForNode(Node* node, bool emitsOrigi
     return emitsOriginalText || !(node->isInShadowTree() && is<HTMLInputElement>(*node->shadowHost()));
 }
 
-static bool LEGACY_NODELETE shouldEmitReplacementInsteadOfNode(const Node& node)
+NODELETE static bool shouldEmitReplacementInsteadOfNode(const Node& node)
 {
     // Placeholders should eventually disappear, so treating them as a line break doesn't make sense
     // as when they are removed the text after it is combined with the text before it.
     return is<TextPlaceholderElement>(node);
 }
 
-static bool isBlockLevelReplacedElement(Node& node)
+NODELETE static bool isBlockLevelReplacedElement(Node& node)
 {
     auto* renderer = node.renderer();
     return renderer && !renderer->isInline() && is<RenderReplaced>(*renderer)
@@ -1005,7 +1009,7 @@ bool shouldEmitNewlinesBeforeAndAfterNode(Node& node, bool emitsNewlinesPerInner
         && !renderer->isBody();
 }
 
-static bool shouldEmitNewlineAfterNode(Node& node, bool emitsCharactersBetweenAllVisiblePositions = false, bool emitsNewlinesPerInnerTextSpec = false)
+NODELETE static bool shouldEmitNewlineAfterNode(Node& node, bool emitsCharactersBetweenAllVisiblePositions = false, bool emitsNewlinesPerInnerTextSpec = false)
 {
     // FIXME: It should be better but slower to create a VisiblePosition here.
     if (!shouldEmitNewlinesBeforeAndAfterNode(node, emitsNewlinesPerInnerTextSpec))
@@ -1022,7 +1026,7 @@ static bool shouldEmitNewlineAfterNode(Node& node, bool emitsCharactersBetweenAl
     return false;
 }
 
-static bool LEGACY_NODELETE shouldEmitNewlineBeforeNode(Node& node, bool emitsNewlinesPerInnerTextSpec = false)
+NODELETE static bool shouldEmitNewlineBeforeNode(Node& node, bool emitsNewlinesPerInnerTextSpec = false)
 {
     return shouldEmitNewlinesBeforeAndAfterNode(node, emitsNewlinesPerInnerTextSpec);
 }
@@ -1901,7 +1905,7 @@ inline size_t SearchBuffer::append(StringView text)
     return usableLength;
 }
 
-inline bool LEGACY_NODELETE SearchBuffer::needsMoreContext() const
+NODELETE inline bool SearchBuffer::needsMoreContext() const
 {
     return m_needsMoreContext;
 }
@@ -1946,7 +1950,7 @@ inline bool SearchBuffer::atBreak() const
     return m_atBreak;
 }
 
-inline void LEGACY_NODELETE SearchBuffer::reachedBreak()
+NODELETE inline void SearchBuffer::reachedBreak()
 {
     m_atBreak = true;
 }
@@ -2142,7 +2146,7 @@ static inline bool isInsideReplacedElement(TextIterator& iterator, TextIteratorB
     return node && isRendererReplacedElement(protect(node->renderer()), behaviors);
 }
 
-constexpr uint64_t LEGACY_NODELETE clampedAdd(uint64_t a, uint64_t b)
+NODELETE constexpr uint64_t clampedAdd(uint64_t a, uint64_t b)
 {
     auto sum = a + b;
     return sum >= a ? sum : std::numeric_limits<uint64_t>::max();

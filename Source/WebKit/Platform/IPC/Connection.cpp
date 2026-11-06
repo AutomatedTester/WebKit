@@ -120,7 +120,7 @@ private:
     {
     }
     static Lock syncMessageStateMapLock;
-    static HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& LEGACY_NODELETE syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
+    NODELETE static HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
     {
         static NeverDestroyed<HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>> map;
         return map;
@@ -321,7 +321,7 @@ Ref<Connection> Connection::createClientConnection(Identifier&& identifier, Thre
     return adoptRef(*new Connection(WTF::move(identifier), false, receiveQueueQOS));
 }
 
-static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& LEGACY_NODELETE connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
+NODELETE static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
 {
     static NeverDestroyed<HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>> map;
     return map;
@@ -331,6 +331,7 @@ Connection::Connection(Identifier&& identifier, bool isServer, Thread::QOS recei
     : m_uniqueID(UniqueID::generate())
     , m_isServer(isServer)
     , m_connectionQueue(WorkQueue::create("com.apple.IPC.ReceiveQueue"_s, receiveQueueQOS))
+    , m_connectionQueueQOS(receiveQueueQOS)
 {
     {
         Locker locker { s_connectionMapLock };
@@ -453,8 +454,11 @@ void Connection::dispatchMessageReceiverMessage(MessageReceiverType& messageRece
             std::unique_ptr remainingReplyEncoder = replyEncoder.moveToUniquePtr();
             if (remainingReplyEncoder)
                 sendMessageImpl(makeUniqueRef<Encoder>(MessageName::CancelSyncMessageReply, decoder->syncRequestID().toUInt64()), { });
-        } else
+        } else {
             messageReceiver.didReceiveMessage(*this, decoder.get());
+            if (decoder->isAsyncWithReplyMessage() && !decoder->wasHandled())
+                sendAsyncReplyCancel(decoder->asyncReplyID());
+        }
 
         didReceiveInvalidMessage = dispatchScope.didReceiveInvalidMessage() || !decoder->isValid();
     }
@@ -485,7 +489,7 @@ void Connection::setDidCloseOnConnectionWorkQueueCallback(DidCloseOnConnectionWo
 
 void Connection::setOutgoingMessageQueueIsGrowingLargeCallback(OutgoingMessageQueueIsGrowingLargeCallback&& callback)
 {
-    Locker locker { m_outgoingMessagesLock };
+    Locker locker { m_sendLock };
     m_outgoingMessageQueueIsGrowingLargeCallback = Box<OutgoingMessageQueueIsGrowingLargeCallback>::create(WTF::move(callback));
 }
 
@@ -510,13 +514,13 @@ bool Connection::platformPrepareForOpen()
 
 Error Connection::flushSentMessages(Timeout timeout)
 {
-    Locker locker { m_outgoingMessagesLock };
+    Locker locker { m_sendLock };
     do {
         if (!isValid())
             return Error::InvalidConnection;
-        if (m_outgoingMessages.isEmpty())
+        if (!hasUnsentMessages())
             return Error::NoError;
-        m_outgoingMessagesEmptyCondition.waitUntil(m_outgoingMessagesLock, timeout.deadline());
+        m_outgoingMessagesEmptyCondition.waitUntil(m_sendLock, timeout.deadline());
     } while (!timeout.didTimeOut());
     return Error::Timeout;
 }
@@ -529,7 +533,7 @@ void Connection::invalidate()
     assertIsCurrent(dispatcher());
     m_client = nullptr;
     {
-        Locker locker { m_outgoingMessagesLock };
+        Locker locker { m_sendLock };
         m_outgoingMessageQueueIsGrowingLargeCallback = nullptr;
     }
     {
@@ -541,6 +545,7 @@ void Connection::invalidate()
 
     m_connectionQueue->dispatch([protectedThis = Ref { *this }]() mutable {
         protectedThis->platformInvalidate();
+        protectedThis->clearOutgoingMessages();
     });
 }
 
@@ -553,6 +558,23 @@ auto Connection::createSyncMessageEncoder(MessageName messageName, uint64_t dest
     encoder.get() << syncRequestID;
 
     return { WTF::move(encoder), syncRequestID };
+}
+
+static std::atomic<bool> s_sendOnCallingThreadEnabled { false };
+
+void Connection::enableSendOnCallingThread()
+{
+    s_sendOnCallingThreadEnabled.store(true, std::memory_order_relaxed);
+}
+
+bool Connection::sendOnCallingThreadEnabled()
+{
+    return s_sendOnCallingThreadEnabled.load(std::memory_order_relaxed);
+}
+
+void Connection::setSendOnCallingThreadEnabledForTesting(bool enabled)
+{
+    s_sendOnCallingThreadEnabled.store(enabled, std::memory_order_relaxed);
 }
 
 #if ENABLE(CORE_IPC_SIGNPOSTS)
@@ -643,6 +665,10 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
     else if (sendOptions.contains(SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply))
         encoder->setShouldDispatchMessageWhenWaitingForSyncReply(ShouldDispatchWhenWaitingForSyncReply::YesDuringUnboundedIPC);
 
+    auto message = platformCreateOutgoingMessage(WTF::move(encoder));
+    if (!message)
+        return Error::FailedToEncodeMessageArguments;
+
     bool shouldDispatchMessageSend;
     size_t outgoingMessagesCount;
     bool shouldNotifyOfQueueGrowingLarge;
@@ -650,16 +676,22 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
     unsigned maxOutgoingMessageNameCount = 0;
     ASCIILiteral maxOutgoingMessageName;
     {
-        Locker locker { m_outgoingMessagesLock };
+        Locker locker { m_sendLock };
+#if PLATFORM(COCOA)
+        if (canSendOnCallingThread(qos) && trySendOnCallingThread(*message))
+            return Error::NoError;
+#endif
+        if (m_receiverIsGone)
+            return Error::InvalidConnection;
         shouldDispatchMessageSend = m_outgoingMessages.isEmpty();
-        m_outgoingMessages.append(WTF::move(encoder));
+        m_outgoingMessages.append(WTF::move(*message));
         outgoingMessagesCount = m_outgoingMessages.size();
         shouldNotifyOfQueueGrowingLarge = m_outgoingMessageQueueIsGrowingLargeCallback && outgoingMessagesCount > largeOutgoingMessageQueueCountThreshold && (MonotonicTime::now() - m_lastOutgoingMessageQueueIsGrowingLargeCallbackCallTime) >= largeOutgoingMessageQueueTimeThreshold;
         if (shouldNotifyOfQueueGrowingLarge) {
             outgoingMessageQueueIsGrowingLargeCallback = m_outgoingMessageQueueIsGrowingLargeCallback;
             HashCountedSet<ASCIILiteral> outgoingMessageNameCounts;
-            for (auto& encoder : m_outgoingMessages) {
-                auto name = description(encoder->messageName());
+            for (auto& message : m_outgoingMessages) {
+                auto name = description(message->messageName());
                 auto result = outgoingMessageNameCounts.add(name);
                 auto count = result.iterator->value;
                 if (count > maxOutgoingMessageNameCount) {
@@ -697,10 +729,10 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
 
 Error Connection::sendMessageWithAsyncReply(UniqueRef<Encoder>&& encoder, AsyncReplyHandler replyHandler, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> qos)
 {
+    ASSERT(messageIsAsyncWithReply(encoder->messageName()));
     ASSERT(replyHandler.replyID);
     ASSERT(replyHandler.completionHandler);
     auto replyID = *replyHandler.replyID;
-    encoder.get() << replyID;
 
 #if ENABLE(CORE_IPC_SIGNPOSTS)
     if (signpostsEnabled()) [[unlikely]] {
@@ -733,10 +765,10 @@ Error Connection::sendMessageWithAsyncReply(UniqueRef<Encoder>&& encoder, AsyncR
 
 Error Connection::sendMessageWithAsyncReplyWithDispatcher(UniqueRef<Encoder>&& encoder, AsyncReplyHandlerWithDispatcher&& replyHandler, OptionSet<SendOption> sendOptions, std::optional<Thread::QOS> qos)
 {
+    ASSERT(messageIsAsyncWithReply(encoder->messageName()));
     ASSERT(replyHandler.replyID);
     ASSERT(replyHandler.completionHandler);
     auto replyID = *replyHandler.replyID;
-    encoder.get() << replyID;
     addAsyncReplyHandlerWithDispatcher(WTF::move(replyHandler));
     auto error = sendMessage(WTF::move(encoder), sendOptions, qos);
     if (error == Error::NoError)
@@ -752,9 +784,24 @@ Error Connection::sendSyncReply(UniqueRef<Encoder>&& encoder)
     return sendMessageImpl(WTF::move(encoder), { });
 }
 
+void Connection::sendAsyncReplyCancel(AsyncReplyID replyID)
+{
+    sendMessageImpl(makeUniqueRef<Encoder>(MessageName::CancelAsyncReply, replyID.toUInt64()), { });
+}
+
 Timeout Connection::timeoutRespectingIgnoreTimeoutsForTesting(Timeout timeout) const
 {
     return m_ignoreTimeoutsForTesting ? Timeout::infinity() : timeout;
+}
+
+// Waiting for an async reply completes also when the reply is cancelled.
+static bool isWaitedForMessage(MessageName messageName, uint64_t destinationID, const Decoder& message)
+{
+    if (message.destinationID() != destinationID)
+        return false;
+    if (message.messageName() == messageName)
+        return true;
+    return message.messageName() == MessageName::CancelAsyncReply && messageIsReplyToAsyncWithReply(messageName);
 }
 
 auto Connection::waitForMessage(MessageName messageName, uint64_t destinationID, Timeout timeout, OptionSet<WaitForOption> waitForOptions) -> DecoderOrError
@@ -803,7 +850,7 @@ auto Connection::waitForMessage(MessageName messageName, uint64_t destinationID,
             for (auto it = m_incomingMessages.begin(), end = m_incomingMessages.end(); it != end; ++it) {
                 UniqueRef<Decoder>& message = *it;
 
-                if (message->messageName() == messageName && message->destinationID() == destinationID) {
+                if (isWaitedForMessage(messageName, destinationID, message)) {
                     UniqueRef<Decoder> returnedMessage = WTF::move(message);
 
                     m_incomingMessages.remove(it);
@@ -930,7 +977,7 @@ auto Connection::sendSyncMessage(SyncRequestID syncRequestID, UniqueRef<Encoder>
 
     // Since sync IPC is blocking the current thread, make sure we use the same priority for the IPC sending thread
     // as the current thread.
-    auto sendError = sendMessageImpl(WTF::move(encoder), sendOptions, Thread::currentThreadQOS());
+    auto sendError = sendMessageImpl(WTF::move(encoder), sendOptions, Thread::currentThreadQOS().value_or(Thread::QOS::Default));
     if (sendError != Error::NoError) {
         didFailToSendSyncMessage(sendError);
         return makeUnexpected(sendError);
@@ -1084,8 +1131,12 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
     if (!syncState)
         return;
 
-    if (message->isAsyncReplyMessage()) {
-        // Disallow async replies with invalid destinationIDs to be sent
+    // A CancelAsyncReply for a dispatcher-registered reply handler must be handled here so the
+    // cancellation runs on the registered dispatcher. Handlers registered without a dispatcher are
+    // cancelled later in dispatchMessage().
+    bool isAsyncReplyCancel = message->messageName() == MessageName::CancelAsyncReply;
+    if (message->isAsyncReplyMessage() || isAsyncReplyCancel) {
+        // Disallow async replies and async reply cancels with invalid destinationIDs to be sent
         if (!AtomicObjectIdentifier<AsyncReplyIDType>::isValidIdentifier(message->destinationID())) {
             // Drop our SyncMessageState reference while still holding m_incomingMessagesLock. Otherwise the
             // ~SyncMessageState triggered by this last deref would run without the lock and could race with
@@ -1109,10 +1160,14 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
             incomingMessagesLocker.unlockEarly();
             waitForMessagesLocker.unlockEarly();
 
-            replyHandlerWithDispatcher(this, message.moveToUniquePtr());
+            // Invoking with a null decoder runs the handler with the default ("cancelled") reply arguments.
+            if (isAsyncReplyCancel)
+                replyHandlerWithDispatcher(this, nullptr);
+            else
+                replyHandlerWithDispatcher(this, message.moveToUniquePtr());
             return;
         }
-        // Fallback to default case, error handling will be performed in sendMessage().
+        // Fallback to default case, error handling will be performed in dispatchMessage().
     }
 
     if (message->isSyncMessage()) {
@@ -1126,7 +1181,7 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
 
     // Check if we're waiting for this message, or if we need to interrupt waiting due to an incoming sync message.
     if (m_waitingForMessage && !m_waitingForMessage->decoder) {
-        if (m_waitingForMessage->messageName == message->messageName() && m_waitingForMessage->destinationID == message->destinationID()) {
+        if (isWaitedForMessage(m_waitingForMessage->messageName, m_waitingForMessage->destinationID, message)) {
             m_waitingForMessage->decoder = message.moveToUniquePtr();
             ASSERT(m_waitingForMessage->decoder);
             m_waitForMessageCondition.notifyOne();
@@ -1246,11 +1301,7 @@ void Connection::connectionDidClose()
     }
     m_waitForMessageCondition.notifyAll();
 
-    {
-        Locker locker { m_outgoingMessagesLock };
-        m_outgoingMessages.clear();
-        m_outgoingMessagesEmptyCondition.notifyAll();
-    }
+    clearOutgoingMessages();
 
     if (m_didCloseOnConnectionWorkQueueCallback)
         m_didCloseOnConnectionWorkQueueCallback(this);
@@ -1258,32 +1309,108 @@ void Connection::connectionDidClose()
     dispatchDidCloseAndInvalidate();
 }
 
-bool Connection::canSendOutgoingMessages() const
+#if PLATFORM(COCOA)
+
+bool Connection::canSendOnCallingThread(std::optional<Thread::QOS> qos) const
 {
-    return m_isConnected && platformCanSendOutgoingMessages();
+    if (!sendOnCallingThreadEnabled())
+        return false;
+
+    // Never send at a lower QoS than the connection queue or the requested one, or from a thread without a QoS class.
+    // Lower Thread::QOS values are higher QoS classes.
+    auto requiredQOS = std::min(m_connectionQueueQOS, qos.value_or(m_connectionQueueQOS));
+    auto currentQOS = Thread::currentThreadQOS();
+    return currentQOS && *currentQOS <= requiredQOS;
 }
+
+bool Connection::trySendOnCallingThread(OutgoingMessage& message)
+{
+    if (!m_outgoingMessages.isEmpty() || !platformCanSendOutgoingMessages())
+        return false;
+
+    switch (platformSendOutgoingMessage(message)) {
+    case PlatformSendResult::Done:
+        break;
+    case PlatformSendResult::ReceiverIsFull:
+        m_outgoingMessages.append(WTF::move(message));
+        break;
+    case PlatformSendResult::ReceiverIsGone:
+        markReceiverGone();
+        break;
+    }
+    return true;
+}
+
+#endif // PLATFORM(COCOA)
 
 void Connection::sendOutgoingMessages()
 {
-    if (!canSendOutgoingMessages())
-        return;
+    assertIsCurrent(m_connectionQueue.get());
 
-    while (true) {
-        std::unique_ptr<Encoder> message;
-
-        {
-            Locker locker { m_outgoingMessagesLock };
-            if (m_outgoingMessages.isEmpty()) {
-                m_outgoingMessagesEmptyCondition.notifyAll();
-                break;
-            }
-            message = m_outgoingMessages.takeFirst().moveToUniquePtr();
-        }
-        ASSERT(message);
-
-        if (!sendOutgoingMessage(makeUniqueRefFromNonNullUniquePtr(WTF::move(message))))
+    Locker locker { m_sendLock };
+    while (platformCanSendOutgoingMessages() && !m_outgoingMessages.isEmpty()) {
+        // Drops m_sendLock while it sends, so that other threads can queue messages in the meantime.
+        auto result = sendFirstOutgoingMessage(locker);
+        if (result == PlatformSendResult::ReceiverIsFull)
             break;
+        if (result == PlatformSendResult::ReceiverIsGone)
+            markReceiverGone();
     }
+
+#if !PLATFORM(COCOA)
+    m_sendInProgress = platformHasMessageInFlight();
+#endif
+    if (!hasUnsentMessages())
+        m_outgoingMessagesEmptyCondition.notifyAll();
+}
+
+#if !PLATFORM(COCOA)
+auto Connection::sendFirstOutgoingMessage(Locker<SendLock>& locker) -> PlatformSendResult
+{
+    // Only the connection queue sends, so the message can be sent without m_sendLock.
+    auto message = m_outgoingMessages.takeFirst();
+    m_sendInProgress = true;
+    auto result = [&] {
+        DropLockForScope unlocker { locker };
+        return platformSendOutgoingMessage(message);
+    }();
+    m_sendInProgress = platformHasMessageInFlight();
+    if (result == PlatformSendResult::ReceiverIsFull)
+        m_outgoingMessages.prepend(WTF::move(message));
+    return result;
+}
+#endif
+
+bool Connection::hasUnsentMessages() const
+{
+#if !PLATFORM(COCOA)
+    if (m_sendInProgress)
+        return true;
+#endif
+    return !m_outgoingMessages.isEmpty() || m_receiverIsGone;
+}
+
+void Connection::markReceiverGone()
+{
+    // No message can be sent anymore, so drop them all. This releases the send rights that they carry.
+    // For example, a queued InitializeConnection message carries the send right to this connection's
+    // receive port, and this connection only gets the no-senders notification that closes it once that
+    // send right is released.
+    m_receiverIsGone = true;
+    m_outgoingMessages.clear();
+}
+
+void Connection::clearOutgoingMessages()
+{
+    // Declared before the locker, so that the dropped messages are destroyed after m_sendLock is
+    // released. Destroying a message makes syscalls.
+    Deque<OutgoingMessage> droppedMessages;
+    Locker locker { m_sendLock };
+    droppedMessages = std::exchange(m_outgoingMessages, { });
+#if !PLATFORM(COCOA)
+    m_sendInProgress = false;
+#endif
+    m_outgoingMessagesEmptyCondition.notifyAll();
 }
 
 void Connection::dispatchSyncMessage(Decoder& decoder)
@@ -1425,6 +1552,12 @@ void Connection::dispatchMessage(Decoder& decoder)
         return;
     }
 
+    if (decoder.messageName() == MessageName::CancelAsyncReply) {
+        if (auto handler = takeAsyncReplyHandler(AtomicObjectIdentifier<AsyncReplyIDType>(decoder.destinationID())))
+            handler(this, nullptr);
+        return;
+    }
+
 #if ENABLE(IPC_TESTING_API)
     if (isMainRunLoop()) {
         bool hasDeadObservers = false;
@@ -1440,6 +1573,9 @@ void Connection::dispatchMessage(Decoder& decoder)
 #endif
 
     client->didReceiveMessage(*this, decoder);
+
+    if (decoder.isAsyncWithReplyMessage() && !decoder.wasHandled())
+        sendAsyncReplyCancel(decoder.asyncReplyID());
 
 #if ENABLE(IPC_TESTING_API)
     // If we haven't registered an error yet, check whether we found one
@@ -1732,6 +1868,7 @@ ASCIILiteral errorAsString(Error error)
     case Error::AttemptingToWaitInsideSyncMessageHandling: return "AttemptingToWaitInsideSyncMessageHandling"_s;
     case Error::SyncMessageInterruptedWait: return "SyncMessageInterruptedWait"_s;
     case Error::SyncMessageCancelled: return "SyncMessageCancelled"_s;
+    case Error::AsyncReplyCancelled: return "AsyncReplyCancelled"_s;
     case Error::CantWaitForSyncReplies: return "CantWaitForSyncReplies"_s;
     case Error::FailedToEncodeMessageArguments: return "FailedToEncodeMessageArguments"_s;
     case Error::FailedToDecodeReplyArguments: return "FailedToDecodeReplyArguments"_s;

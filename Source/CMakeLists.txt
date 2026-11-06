@@ -24,9 +24,8 @@ endif ()
 
 add_subdirectory(JavaScriptCore)
 
-if (ENABLE_WEBGPU)
-    add_subdirectory(WebGPU)
-endif ()
+# Every port installs the WebGPU C++ API header, which WebCore uses even when WebGPU is disabled.
+add_subdirectory(WebGPU)
 
 if (ENABLE_WEBGL OR USE_ANGLE_EGL)
     add_subdirectory(ThirdParty/ANGLE)
@@ -91,6 +90,10 @@ endif ()
 
 if (ENABLE_WEBDRIVER)
     add_subdirectory(WebDriver)
+endif ()
+
+if (USE_APPLE_INTERNAL_SDK)
+    WEBKITADDITIONS_ADD_SUBDIRECTORIES()
 endif ()
 
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()

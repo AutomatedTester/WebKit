@@ -167,7 +167,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
             // Since we're looking for strings we only need to check if we know we're not looking at an allocation with an IndexingHeader.
             // FIXME: If we wanted to make this more performant we could have a JSString HeapCell::Kind or embed the JSType in the MarkedBlock::Handle.
             if (auto* string = dynamicDowncast<const JSString>(std::bit_cast<const JSCell*>(pointer)))
-                m_heap.m_discoveredAccessedStringsFromGCOwnedDataScope.add(string);
+                m_heap.noteStringFoundOnStack(string);
             return true;
         }
         return false;
@@ -187,7 +187,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking.
-    if (candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
+    if (mayHaveIndexingHeader(cellKind) && candidate->candidateAtomNumber(alignedPointer) > 0 && pointer <= alignedPointer + sizeof(IndexingHeader))
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
@@ -227,8 +227,8 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
 
 class DummyMarkHook {
 public:
-    void LEGACY_NODELETE mark(void*) { }
-    void LEGACY_NODELETE markKnownJSCell(JSCell*) { }
+    NODELETE void mark(void*) { }
+    NODELETE void markKnownJSCell(JSCell*) { }
 };
 
 void ConservativeRoots::add(void* begin, void* end)

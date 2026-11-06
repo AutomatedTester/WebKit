@@ -89,13 +89,14 @@ std::optional<WebCore::Cursor> Cursor::selectImageCursor(const RenderObject* ren
         if (!visibleContentRect.contains(cursorRect))
             continue;
 
-        ImagePaintingOptions options {
+        ImageDrawDescriptor descriptor {
+            concreteCursorSize,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
             AXCustomColorModeController::shouldInvertSVGImage(*renderElement, styleImage.get()) ? InvertContent::Yes : InvertContent::No,
 #endif
         };
 
-        RefPtr nativeImage = styleImage->nativeImage(*renderElement, concreteCursorSize, deviceScaleFactor, options);
+        RefPtr nativeImage = styleImage->nativeImage(*renderElement, descriptor, deviceScaleFactor);
         if (!nativeImage || nativeImage->size().isEmpty())
             continue;
 
@@ -150,7 +151,7 @@ auto CSSValueConversion<Cursor>::operator()(BuilderState& state, const CSSValue&
         return CursorImageAndHotSpot { styleImage.releaseNonNull(), WTF::move(hotSpot) };
     });
 
-    return { WTF::move(images), toStyleFromCSSValue<CursorType>(state, list->item(list->size() - 1)) };
+    return { WTF::move(images), toStyleFromCSSValue<CursorType>(state, protect(list->item(list->size() - 1))) };
 }
 
 Ref<CSSValue> CSSValueCreation<CursorImageAndHotSpot>::operator()(CSSValuePool&, const Style::ComputedStyle& style, const CursorImageAndHotSpot& value)

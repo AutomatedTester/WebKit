@@ -128,7 +128,6 @@
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLineBreak.h"
 #include "RenderListBox.h"
@@ -191,20 +190,20 @@ static bool isSecureFieldOrContainedBySecureField(AccessibilityObject& object)
 
 #endif // PLATFORM(COCOA)
 
-static bool LEGACY_NODELETE rendererNeedsDeferredUpdate(const RenderObject& renderer)
+NODELETE static bool rendererNeedsDeferredUpdate(const RenderObject& renderer)
 {
     AX_ASSERT(!renderer.beingDestroyed());
     auto& document = renderer.document();
     return renderer.needsLayout() || document.needsStyleRecalc() || document.inRenderTreeUpdate() || (document.view() && document.view()->layoutContext().isInRenderTreeLayout());
 }
 
-static bool LEGACY_NODELETE nodeRendererIsValid(Node& node)
+NODELETE static bool nodeRendererIsValid(Node& node)
 {
     auto* renderer = node.renderer();
     return renderer && !renderer->beingDestroyed();
 }
 
-static bool LEGACY_NODELETE nodeAndRendererAreValid(Node* node)
+NODELETE static bool nodeAndRendererAreValid(Node* node)
 {
     return node ? nodeRendererIsValid(*node) : false;
 }
@@ -229,7 +228,7 @@ void AccessibilityReplacedText::postTextStateChangeNotification(AXObjectCache* c
         return;
 
     VisiblePosition position = selection.start();
-    auto node = highestEditableRoot(position.deepEquivalent(), HasEditableAXRole);
+    auto node = highestEditableRoot(position.deepEquivalent(), EditableType::AXRole);
     if (m_replacedText.length())
         cache->postTextReplacementNotification(node.get(), AXTextEditType::Delete, m_replacedText, type, text, position);
     else
@@ -247,7 +246,7 @@ std::atomic<bool> AXObjectCache::gAccessibilityDOMIdentifiersEnabled = false;
 std::atomic<bool> AXObjectCache::gShouldRepostNotificationsForTests = false;
 #endif
 
-static AXObjectCache::SyncModeToOtherProcessesCallback& syncModeToOtherProcessesCallback()
+NODELETE static AXObjectCache::SyncModeToOtherProcessesCallback& syncModeToOtherProcessesCallback()
 {
     static NeverDestroyed<AXObjectCache::SyncModeToOtherProcessesCallback> callback;
     return callback.get();
@@ -972,6 +971,15 @@ IntPoint AXObjectCache::mapScreenPointToPagePoint(const IntPoint& screenRelative
     RefPtr frame = m_document ? protect(m_document)->frame() : nullptr;
     RefPtr frameView = frame ? frame->view() : nullptr;
 
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // In a cross-site iframe's process, the root view is the main frame's, so converting through it
+    // lands in main-frame coordinates. Use this frame's own screen position instead.
+    if (frame && !frame->isMainFrame()) {
+        if (auto contentPoint = mapScreenPointToContentPointUsingFrameGeometry(screenRelativePoint))
+            return *contentPoint;
+    }
+#endif
+
     // Try to use cached accessibility position to avoid sync IPC (macOS only).
     IntPoint convertedPoint;
     if (auto localResult = page->chrome().client().screenToRootViewUsingCachedPosition(screenRelativePoint, frameView ? frameView->size() : IntSize()))
@@ -986,6 +994,40 @@ IntPoint AXObjectCache::mapScreenPointToPagePoint(const IntPoint& screenRelative
     convertedPoint.move(-obscuredContentInsets.left(), -obscuredContentInsets.top());
     return convertedPoint;
 }
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+// The inverse of AccessibilityObject::convertFrameToSpace() for screen space.
+std::optional<IntPoint> AXObjectCache::mapScreenPointToContentPointUsingFrameGeometry(const IntPoint& screenPoint) const
+{
+    if (!m_frameGeometry)
+        return std::nullopt;
+
+    auto inverseScreenTransform = m_frameGeometry->screenTransform.inverse();
+    if (!inverseScreenTransform)
+        return std::nullopt;
+
+    // screenPosition has the scroll position at the time it was taken baked in, so correct for
+    // any scrolling since then.
+    IntPoint currentScroll;
+    if (RefPtr frame = m_document ? protect(m_document)->frame() : nullptr) {
+        if (CheckedPtr frameView = frame->view())
+            currentScroll = frameView->documentScrollPositionRelativeToViewOrigin();
+    }
+    auto scrollDelta = m_frameGeometry->screenTransform.mapPoint(FloatPoint(m_frameViewOriginScrollPosition));
+    scrollDelta.moveBy(-m_frameGeometry->screenTransform.mapPoint(FloatPoint(currentScroll)));
+
+    auto screenPosition = m_frameGeometry->screenPosition;
+#if PLATFORM(MAC)
+    // macOS screen coordinates have a bottom-left origin.
+    screenPosition.move(roundToInt(scrollDelta.x()), -roundToInt(scrollDelta.y()));
+    FloatPoint offset { static_cast<float>(screenPoint.x() - screenPosition.x()), static_cast<float>(screenPosition.y() - screenPoint.y()) };
+#else
+    screenPosition.move(roundToInt(scrollDelta.x()), roundToInt(scrollDelta.y()));
+    FloatPoint offset { static_cast<float>(screenPoint.x() - screenPosition.x()), static_cast<float>(screenPoint.y() - screenPosition.y()) };
+#endif
+    return roundedIntPoint(inverseScreenTransform->mapPoint(offset));
+}
+#endif
 
 RefPtr<Page> AXObjectCache::page() const
 {
@@ -2155,11 +2197,9 @@ void AXObjectCache::childrenChanged(AccessibilityObject* object)
 
     // Adding or removing rows from a table can cause it to change from layout table to AX data table and vice versa, so queue up recomputation of that for the parent table.
     if (RefPtr tableElement = dynamicDowncast<HTMLTableElement>(object->element())) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
+        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableElement.get()));
     } else if (RefPtr tableSectionElement = dynamicDowncast<HTMLTableSectionElement>(object->element())) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
+        deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tableSectionElement->findParentTable().get()));
     }
 
     if (!m_performCacheUpdateTimer.isActive())
@@ -2212,8 +2252,7 @@ void AXObjectCache::notificationPostTimerFired()
     m_pendingLayoutCompleteObjectIDs.clear();
 
     // Filter out the notifications that are not going to be posted to platform clients.
-    Vector<std::pair<Ref<AccessibilityObject>, AXNotificationWithData>> notificationsToPost;
-    notificationsToPost.reserveInitialCapacity(notifications.size());
+    Vector<std::pair<Ref<AccessibilityObject>, AXNotificationWithData>> notificationsToPost(ReserveCapacityTag { }, notifications.size());
     for (auto& note : notifications) {
         Ref noteObject = note.first;
         if (noteObject->isDetached() || !noteObject->axObjectCache())
@@ -2293,7 +2332,7 @@ void AXObjectCache::enqueueNotificationToPost(Ref<AccessibilityObject>&& object,
         m_notificationPostTimer.startOneShot(0_s);
 }
 
-static std::optional<Seconds>& announcementTranslationTimeoutOverrideForTesting()
+NODELETE static std::optional<Seconds>& announcementTranslationTimeoutOverrideForTesting()
 {
     static NeverDestroyed<std::optional<Seconds>> override;
     return override;
@@ -2652,9 +2691,9 @@ void AXObjectCache::onAnnouncedText(const String& text)
         m_formActivityMonitor->onAnnouncedText(text);
 }
 
-void AXObjectCache::postPossibleFormValidationErrorNotification(AccessibilityObject& object, Vector<String>&& unannouncedText, unsigned errorFieldCount, bool targetIsSubmitter)
+void AXObjectCache::postPossibleFormValidationErrorNotification(AccessibilityObject& object, Vector<String>&& unannouncedText, unsigned errorFieldCount, bool targetIsSubmitter, Element* container)
 {
-    enqueueNotificationToPost(Ref { object }, AXNotificationWithData(AXNotification::PossibleFormValidationError, PossibleFormValidationErrorData { WTF::move(unannouncedText), errorFieldCount, targetIsSubmitter }));
+    enqueueNotificationToPost(Ref { object }, AXNotificationWithData(AXNotification::PossibleFormValidationError, PossibleFormValidationErrorData { WTF::move(unannouncedText), errorFieldCount, targetIsSubmitter, container }));
 }
 #endif
 
@@ -3098,6 +3137,9 @@ void AXObjectCache::onRemoteFrameGainedFocus(RemoteFrame& remoteFrame)
     if (!page)
         return;
 
+    if (m_deferredRemoteFrameFocus && m_deferredRemoteFrameFocus->remoteFrame == &remoteFrame)
+        return;
+
     RefPtr localFrame = page->focusController().focusedOrMainFrame();
     RefPtr oldFocusedElement = localFrame ? localFrame->document()->focusedElement() : nullptr;
 
@@ -3137,7 +3179,7 @@ void AXObjectCache::handleRemoteFrameGainedFocus(RemoteFrame& remoteFrame, Eleme
     recomputeIsIgnored(oldFocusedElement);
 }
 
-static bool LEGACY_NODELETE isContentVisibilityHidden(const Style::ComputedStyle& style)
+NODELETE static bool isContentVisibilityHidden(const Style::ComputedStyle& style)
 {
     return style.usedContentVisibility() == ContentVisibility::Hidden;
 }
@@ -3553,10 +3595,10 @@ public:
     void add(Node&);
     void addSubtree(Node&, unsigned& nodesLeftToVisit);
 
-    unsigned textFieldCount() const { return m_textFieldCount; }
-    bool hasButton() const { return m_hasButton; }
+    NODELETE unsigned textFieldCount() const { return m_textFieldCount; }
+    NODELETE bool hasButton() const { return m_hasButton; }
     // Enough that every ancestor qualifies whatever else it holds, so counting can stop.
-    bool hasEnough() const { return m_textFieldCount >= minimumTextFieldsForFormLikeContainer && m_hasButton; }
+    NODELETE bool hasEnough() const { return m_textFieldCount >= minimumTextFieldsForFormLikeContainer && m_hasButton; }
 
 private:
     unsigned m_textFieldCount { 0 };
@@ -4527,8 +4569,7 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
             // do a cheap dynamicDowncast check for an HTMLTablePartElement rather than calling AccessibilityNodeObject::parentTable().
             // (ARIA tables are inherently always exposed).
             if (auto* tablePartElement = dynamicDowncast<HTMLTablePartElement>(element)) {
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
+                deferRecomputeTableIsExposed(const_cast<HTMLTableElement*>(tablePartElement->findParentTable().get()));
             }
         } else if (RefPtr object = getOrCreate(element); object && object->isTableCell()) {
             if (RefPtr parentTable = dynamicDowncast<AccessibilityNodeObject>(object->parentTable())) {
@@ -4547,6 +4588,17 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
 
     if (isRelationAttribute(attrName))
         updateRelations(*element, attrName);
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    if (attrName == aria_labelAttr || attrName == titleAttr) {
+        // The hosted frame's web area is named by its <iframe>, which may be in another process.
+        if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            RefPtr contentFrame = frameOwner->contentFrame();
+            if (RefPtr frameHost = dynamicDowncast<AccessibilityScrollView>(get(contentFrame ? contentFrame->virtualView() : nullptr)))
+                frameHost->updateHostedFrameInheritedState();
+        }
+    }
+#endif
 
     if (attrName == hrefAttr) {
         // An anchor's role depends on whether it is a link (Element::isLink(), i.e. whether it has an
@@ -4873,7 +4925,7 @@ void AXObjectCache::updateCachedTextOfAssociatedObjects(AccessibilityObject& obj
 #endif
 }
 
-static bool LEGACY_NODELETE hasAnyARIALabelling(Element& element)
+NODELETE static bool hasAnyARIALabelling(Element& element)
 {
     return element.hasAttributeWithoutSynchronization(aria_labelAttr)
         || element.hasAttributeWithoutSynchronization(aria_labelledbyAttr)
@@ -5634,8 +5686,7 @@ std::optional<TextMarkerData> AXObjectCache::textMarkerDataForVisiblePosition(co
         }
         AX_ASSERT(domOffset >= differenceBetweenDomAndRenderedOffsets);
         unsigned renderedOffset = domOffset - differenceBetweenDomAndRenderedOffsets;
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
+        return createFromRendererAndOffset(const_cast<RenderText&>(*renderText), renderedOffset);
     }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
@@ -5800,7 +5851,7 @@ char32_t AXObjectCache::characterBefore(const CharacterOffset& characterOffset)
     return characterForCharacterOffset(characterOffset);
 }
 
-static bool LEGACY_NODELETE characterOffsetNodeIsBR(const CharacterOffset& characterOffset)
+NODELETE static bool characterOffsetNodeIsBR(const CharacterOffset& characterOffset)
 {
     if (characterOffset.isNull())
         return false;
@@ -6077,8 +6128,7 @@ LayoutRect AXObjectCache::localCaretRectForCharacterOffset(RenderObject*& render
 
     auto boxAndOffset = makeContainerOffsetPosition(range->start).inlineBoxAndOffset(Affinity::Downstream);
     if (boxAndOffset.box) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
+        renderer = const_cast<RenderObject*>(&boxAndOffset.box->renderer());
     }
 
     if (CheckedPtr renderLineBreak = dynamicDowncast<RenderLineBreak>(renderer); renderLineBreak && InlineIterator::boxFor(*renderLineBreak) != boxAndOffset.box)
@@ -6349,6 +6399,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 
     AXLOGDeferredCollection("RendererChangedList"_s, m_deferredRendererChangedList);
     Vector<Ref<Element>> elementsNeedingNewObjects;
+    Vector<Ref<Element>> unrenderedListBoxItems;
     for (Ref object : m_deferredRendererChangedList) {
         // An object keeps its class when the renderer of its element changes, for instance when a select
         // switches appearance, so replace it when the new renderer calls for another class.
@@ -6359,6 +6410,8 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
             elementsNeedingNewObjects.append(element.releaseNonNull());
             continue;
         }
+        if (element && !renderer && object->isAccessibilityListBoxOptionInstance())
+            unrenderedListBoxItems.append(element.releaseNonNull());
         object->updateRole();
         object->recomputeIsIgnored();
     }
@@ -6379,6 +6432,27 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
         // Move assistive technology to the new object if the old one had focus.
         if (protect(element->document())->focusedElement() == element.ptr() && !m_deferredFocusedNodeChange)
             m_deferredFocusedNodeChange = { nullptr, element.ptr() };
+    }
+
+    for (Ref listItem : unrenderedListBoxItems) {
+        bool removedObjects = false;
+        for (Ref descendant : composedTreeDescendants(listItem)) {
+            if (descendant->renderer() || isAnyOf<HTMLOptionElement, HTMLOptGroupElement>(descendant))
+                continue;
+            RefPtr descendantObject = get(descendant);
+            if (!descendantObject)
+                continue;
+            if (m_relations.contains(descendantObject->objectID()) || m_relationTargets.contains(descendantObject->objectID()))
+                markRelationsDirty();
+            remove(descendant);
+            removedObjects = true;
+        }
+        RefPtr object = get(listItem);
+        if (!object)
+            continue;
+        if (removedObjects)
+            childrenChanged(object.get());
+        postNotification(object.get(), nullptr, AXNotification::TextUnderElementChanged);
     }
 
     AXLOGDeferredCollection("RecomputeActiveSummaryList"_s, m_deferredRecomputeActiveSummaryList);
@@ -6989,7 +7063,7 @@ void AXObjectCache::startUpdateTreeSnapshotTimer()
         m_updateTreeSnapshotTimer.startOneShot(updateTreeSnapshotTimerDuration);
 }
 
-void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) const
+void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect, const AffineTransform* localToPaintRect) const
 {
     if (std::optional axID = getAXID(const_cast<RenderObject&>(renderer))) {
         auto paintRectOrigin = paintRect.location();
@@ -7023,6 +7097,19 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
             // clip-path boxes. Multi-line inlines compute their path on-demand from
             // text runs (see AXIsolatedObject::elementPath).
             if (auto* renderBox = dynamicDowncast<RenderBox>(renderer)) {
+                // The path is computed in local coordinates. Map it like the box was painted, if we know how,
+                // which accounts for transforms (e.g. scale and rotation) without walking the box's ancestors.
+                // Otherwise, scale it like the box and position it at the paint rect's origin, which has
+                // already gone through contentsToRootView and matches the relativeFrame coordinate system.
+                auto mapPathToPaintRect = [&](Path& path) {
+                    if (localToPaintRect) {
+                        path.transform(*localToPaintRect);
+                        return;
+                    }
+                    path.transform(localToAbsoluteLinearTransform(*renderBox));
+                    path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                };
+
                 if (renderBox->hasClipPath()) {
                     WTF::switchOn(renderBox->style().clipPath(),
                         [&](const Style::BasicShapePath& clipPath) {
@@ -7031,7 +7118,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                             // FIXME: Remove suppression once rdar://189998444 is fixed.
                             SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(WTF::move(borderRect));
                             auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
-                            path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                            mapPathToPaintRect(path);
                             m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));
                         },
                         [](const auto&) { }
@@ -7041,10 +7128,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
                     borderRect.inflate(shapePathInflationPx);
                     auto borderShape = BorderShape::shapeForBorderRect(renderBox->usedStyle(), WTF::move(borderRect));
                     auto path = borderShape.pathForOuterShape(renderer.document().deviceScaleFactor());
-                    // borderBoxRect() is in local coordinates starting at (0, 0). Use the paint
-                    // rect's origin to position the path, since it's already gone through
-                    // contentsToRootView and matches the relativeFrame coordinate system.
-                    path.transform(AffineTransform().translate(paintRectOrigin.x(), paintRectOrigin.y()));
+                    mapPathToPaintRect(path);
                     m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));
                 }
             }
@@ -7455,14 +7539,14 @@ AXRelation AXObjectCache::attributeToRelationType(const QualifiedName& attribute
     return AXRelation::None;
 }
 
-static bool LEGACY_NODELETE validRelation(void* origin, void* target, AXRelation relation)
+NODELETE static bool validRelation(void* origin, void* target, AXRelation relation)
 {
     if (!origin || !target || relation == AXRelation::None)
         return false;
     return origin != target || relation == AXRelation::LabeledBy;
 }
 
-static bool LEGACY_NODELETE validRelation(Element& origin, Element& target, AXRelation relation)
+NODELETE static bool validRelation(Element& origin, Element& target, AXRelation relation)
 {
     if (relation == AXRelation::None)
         return false;
@@ -7488,7 +7572,7 @@ bool AXObjectCache::addRelation(Element& origin, Element& target, AXRelation rel
     return addRelation(RefPtr { getOrCreate(origin, IsPartOfRelation::Yes) }.get(), RefPtr { getOrCreate(target, IsPartOfRelation::Yes) }.get(), relation);
 }
 
-static bool LEGACY_NODELETE canHaveRelations(Element& element)
+NODELETE static bool canHaveRelations(Element& element)
 {
     auto elementName = element.elementName();
     return !(elementName == ElementName::HTML_meta || elementName == ElementName::HTML_head || elementName == ElementName::HTML_script || elementName == ElementName::HTML_html || elementName == ElementName::HTML_style);
@@ -7972,6 +8056,21 @@ Vector<Ref<Element>> AXObjectCache::fieldsForErrorPairing(Element& container)
             fields.append(element.releaseNonNull());
     }
     return fields;
+}
+
+Vector<Ref<AccessibilityObject>> AXObjectCache::formFieldObjects(Element& container)
+{
+    auto fields = fieldsForErrorPairing(container);
+    std::ranges::sort(fields, [](const Ref<Element>& a, const Ref<Element>& b) {
+        return is_lt(treeOrder<ComposedTree>(a.get(), b.get()));
+    });
+
+    Vector<Ref<AccessibilityObject>> objects(ReserveCapacityTag { }, fields.size());
+    for (Ref field : fields) {
+        if (RefPtr object = getOrCreate(field.get()); object && !object->isIgnored())
+            objects.append(object.releaseNonNull());
+    }
+    return objects;
 }
 
 void AXObjectCache::addDetectedFormErrors(Vector<DetectedFormErrorPairing>&& detectedErrors)

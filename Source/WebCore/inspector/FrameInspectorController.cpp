@@ -44,12 +44,16 @@
 #include "FrameInlines.h"
 #include "FrameRuntimeAgent.h"
 #include "FrameWorkerAgent.h"
+#include "InspectorBackendClient.h"
 #include "InspectorInstrumentation.h"
 #include "InspectorWebAgentBase.h"
 #include "InstrumentingAgents.h"
 #include "JSDOMBindingSecurity.h"
 #include "JSDOMWindow.h"
 #include "JSExecState.h"
+#include "LocalFrameInlines.h"
+#include "Node.h"
+#include "NodeDocument.h"
 #include "PageInspectorController.h"
 #include "Settings.h"
 #include "WebInjectedScriptHost.h"
@@ -82,7 +86,7 @@ FrameInspectorController::FrameInspectorController(LocalFrame& frame, PageInspec
     , m_executionStopwatch(Stopwatch::create())
 {
     if (frame.settings().siteIsolationEnabled())
-        createConsoleAgent();
+        siteIsolationFirstEnabled();
 }
 
 FrameInspectorController::~FrameInspectorController()
@@ -159,6 +163,8 @@ FrameAgentContext FrameInspectorController::frameAgentContext()
 void FrameInspectorController::siteIsolationFirstEnabled()
 {
     createConsoleAgent();
+    m_executionStopwatch->startAtMonotonicEpoch();
+    m_executionStopwatchIsShared = true;
 }
 
 void FrameInspectorController::createConsoleAgent()
@@ -180,15 +186,12 @@ void FrameInspectorController::createLazyAgents()
 
     m_didCreateLazyAgents = true;
 
-    RefPtr frame = m_frame.get();
-    if (!frame)
-        return;
-
+    Ref frame = m_frame;
     if (!frame->settings().siteIsolationEnabled())
         return;
 
     // Create debugger before agents that depend on it.
-    lazyInitialize(m_debugger, makeUnique<FrameDebugger>(*frame));
+    lazyInitialize(m_debugger, makeUnique<FrameDebugger>(frame.get()));
 
     if (CheckedPtr scriptProfilerAgent = m_instrumentingAgents->persistentScriptProfilerAgent())
         scriptProfilerAgent->installProfilingClientIfTracking(*m_debugger);
@@ -230,6 +233,20 @@ void FrameInspectorController::connectFrontend(Inspector::FrontendChannel& front
         m_injectedScriptManager->addClient();
         m_agents.didCreateFrontendAndBackend();
     }
+
+    // The node may belong to a document the frame has since navigated away from.
+    if (RefPtr node = std::exchange(m_pendingNodeToInspect, nullptr); node && m_domAgent && &node->document() == m_frame->document())
+        CheckedRef { *m_domAgent }->inspect(*node);
+}
+
+void FrameInspectorController::inspect(Node& node)
+{
+    if (m_frontendRouter->hasFrontends() && m_domAgent) {
+        CheckedRef { *m_domAgent }->inspect(node);
+        return;
+    }
+
+    m_pendingNodeToInspect = WeakPtr<Node, WeakPtrImplWithEventTargetData> { node };
 }
 
 void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& frontendChannel)
@@ -239,14 +256,21 @@ void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& fr
 
     bool disconnectedLastFrontend = !m_frontendRouter->hasFrontends();
     if (disconnectedLastFrontend) {
+        m_pendingNodeToInspect = nullptr;
         m_agents.willDestroyFrontendAndBackend(DisconnectReason::InspectorDestroyed);
         m_injectedScriptManager->removeClient();
         InspectorInstrumentation::unregisterInstrumentingAgents(m_instrumentingAgents.get());
     }
 }
 
-void FrameInspectorController::inspectedFrameDestroyed()
+void FrameInspectorController::inspectedFrameDestroyed(LocalFrame& frame)
 {
+    m_pendingNodeToInspect = nullptr;
+
+    // Runs even without frontends: the page-level backend can have proxies registered on our InstrumentingAgents.
+    if (auto* client = overlayOwnerBackendClient())
+        client->inspectedFrameDestroyed(frame);
+
     if (!m_frontendRouter->hasFrontends())
         return;
 

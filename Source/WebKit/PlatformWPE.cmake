@@ -352,6 +352,7 @@ list(APPEND WebKitResources "        <file alias='css/wpe-theme.css'>wpe-theme.c
   "        <file alias='images/panIcon'>panIcon.png</file>\n"
   "        <file alias='images/textAreaResizeCorner@2x'>textAreaResizeCorner@2x.png</file>\n"
   "        <file alias='images/textAreaResizeCorner'>textAreaResizeCorner.png</file>\n"
+  "        <file alias='quirks/QuirkTable.json'>QuirkTable.json</file>\n"
 )
 
 if (ENABLE_WEB_AUDIO)
@@ -373,6 +374,7 @@ GLIB_COMPILE_RESOURCES(
     OUTPUT        ${WebKit_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.c
     SOURCE_XML    ${WebKit_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.xml
     RESOURCE_DIRS ${CMAKE_SOURCE_DIR}/Source/WebCore/Resources
+                  ${CMAKE_SOURCE_DIR}/Source/WebCore/page
                   ${CMAKE_SOURCE_DIR}/Source/WebCore/platform/audio/resources
                   ${CMAKE_SOURCE_DIR}/Source/WebKit/Resources/wpe
 )
@@ -678,7 +680,6 @@ GI_INTROSPECT(WPEJavaScriptCore ${WPE_API_VERSION} jsc/jsc.h
         ${JavaScriptCoreGLib_DERIVED_SOURCES_DIR}/jsc/JSCWeakValue.h
         ${JavaScriptCoreGLib_DERIVED_SOURCES_DIR}/jsc/jsc.h
         ${JAVASCRIPTCORE_DIR}/API/glib
-    NO_IMPLICIT_SOURCES
 )
 GI_DOCGEN(WPEJavaScriptCore "${JAVASCRIPTCORE_DIR}/API/glib/docs/jsc.toml.in")
 
@@ -729,7 +730,6 @@ GI_INTROSPECT(WPEWebKit ${WPE_API_VERSION} wpe/webkit.h
         Shared/API/glib
         UIProcess/API/glib
         UIProcess/API/wpe/WebKitImageWPE.cpp
-    NO_IMPLICIT_SOURCES
 )
 GI_DOCGEN(WPEWebKit wpe/wpewebkit.toml.in
     CONTENT_TEMPLATES
@@ -767,6 +767,5 @@ GI_INTROSPECT(WPEWebProcessExtension ${WPE_API_VERSION} wpe/webkit-web-process-e
         Shared/API/glib/WebKitURIRequest.cpp
         Shared/API/glib/WebKitURIResponse.cpp
         WebProcess/InjectedBundle/API/glib
-    NO_IMPLICIT_SOURCES
 )
 GI_DOCGEN(WPEWebProcessExtension wpe/wpe-web-process-extension.toml.in)

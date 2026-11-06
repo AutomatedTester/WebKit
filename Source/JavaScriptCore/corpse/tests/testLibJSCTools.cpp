@@ -27,7 +27,7 @@
 
 #include <wtf/DataLog.h>
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include "CorpseAddressTest.h"
 #include "CorpseByteParserTest.h"
@@ -152,11 +152,8 @@ int main(int argc, char** argv)
 
 int main(int, char**)
 {
-    // The corpse support is built on Mach task APIs, so there is nothing to test
-    // on other platforms. Simulators and MacCatalyst are also not supported.
-    // Report success so that a run here is not a failure.
     printf("Not supported platform for testLibJSCTools\n");
     return 0;
 }
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

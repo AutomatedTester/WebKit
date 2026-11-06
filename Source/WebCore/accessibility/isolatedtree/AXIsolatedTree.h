@@ -312,7 +312,6 @@ enum class AXProperty : uint16_t {
     ValueDescription,
     ValueForRange,
     VerticalScrollBar,
-    VisibleChildren,
     VisibleRows,
     WebAreaTitle
 };
@@ -461,7 +460,7 @@ public:
 #endif
 
     AXIsolatedObject* rootNode() { AX_ASSERT(!isMainThread()); return objectForID(m_rootNodeID); }
-    std::optional<AXID> pendingRootNodeID();
+    NODELETE std::optional<AXID> pendingRootNodeID();
     RefPtr<AXIsolatedObject> rootWebArea();
     std::optional<AXID> focusedNodeID();
     WEBCORE_EXPORT RefPtr<AXIsolatedObject> focusedNode();
@@ -504,12 +503,12 @@ public:
     void updateRootScreenRelativePosition();
     void overrideNodeProperties(AXID, AXPropertyVector&&);
 
-    double LEGACY_NODELETE loadingProgress();
-    void LEGACY_NODELETE updateLoadingProgress(double);
+    NODELETE double loadingProgress();
+    NODELETE void updateLoadingProgress(double);
 
 #if ENABLE(WRITING_TOOLS)
     bool writingToolsAvailable() const { return m_writingToolsAvailable; }
-    void setWritingToolsAvailable(bool);
+    NODELETE void setWritingToolsAvailable(bool);
 #endif // ENABLE(WRITING_TOOLS)
 
     void addUnconnectedNode(Ref<AccessibilityObject>);
@@ -595,8 +594,8 @@ public:
     constexpr ProcessID processID() const { return m_processID; }
     constexpr bool isMainFrame() const { return m_isMainFrame; }
     constexpr bool siteIsolationEnabled() const { return m_siteIsolationEnabled; }
-    void setPageActivityState(OptionSet<ActivityState>);
-    WEBCORE_EXPORT OptionSet<ActivityState> pageActivityState() const;
+    NODELETE void setPageActivityState(OptionSet<ActivityState>);
+    NODELETE WEBCORE_EXPORT OptionSet<ActivityState> pageActivityState() const;
 
     AXTextMarkerRange selectedTextMarkerRange() { return m_selectedTextMarkerRange; }
     void setSelectedTextMarkerRange(AXTextMarkerRange&&);
@@ -637,7 +636,7 @@ private:
     static std::atomic<bool> s_anyTreeNeedsTearDown;
 
     // rdar://161259641 (Figure out a way to enforce WTF_REQUIRES_LOCK when we might need to access it while already holding the lock)
-    static HashMap<FrameIdentifier, Ref<AXIsolatedTree>>& LEGACY_NODELETE treeFrameCache(); // WTF_REQUIRES_LOCK(s_storeLock);
+    NODELETE static HashMap<FrameIdentifier, Ref<AXIsolatedTree>>& treeFrameCache(); // WTF_REQUIRES_LOCK(s_storeLock);
 
     void createEmptyContent(AccessibilityObject&);
     constexpr bool isUpdatingSubtree() const { return m_rootOfSubtreeBeingUpdated; }
@@ -675,6 +674,9 @@ private:
         // as focusedNodeID, or the clear would look like "not written" and be dropped by merge().
         Markable<AXID> rootNodeID;
         Vector<NodeChange> appends;
+#if ASSERT_ENABLED
+        Vector<AXID> unconnectedNodeIDs;
+#endif
         Vector<AXPropertyChange> propertyChanges;
         Vector<NodeAndParentID> subtreeRemovals;
         Vector<std::pair<AXID, Vector<AXID>>> childrenUpdates;
@@ -726,7 +728,7 @@ private:
 
     // Eagerly applies the committed changes on the AX thread so we don't have to do it prior to
     // serving a client request, providing improved responsiveness.
-    void dispatchEagerApplyIfNeeded(ShouldEagerlyApply);
+    NODELETE void dispatchEagerApplyIfNeeded(ShouldEagerlyApply);
 
     PendingChanges takeCommittedChangesLocked() WTF_REQUIRES_LOCK(m_changeLogLock);
     void applyCommittedChanges(PendingChanges&&);
@@ -793,6 +795,9 @@ private:
 
     // Only accessed on AX thread.
     HashMap<AXID, Ref<AXIsolatedObject>> m_readerThreadNodeMap;
+#if ASSERT_ENABLED
+    HashSet<AXID> m_readerThreadUnconnectedNodes;
+#endif
     Markable<AXID> m_rootNodeID;
 
     // Written to by main thread under lock, accessed and applied by AX thread.
@@ -888,7 +893,7 @@ private:
 };
 
 IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>&, Ref<AXIsolatedTree>);
-std::optional<AXPropertyFlag> LEGACY_NODELETE convertToPropertyFlag(AXProperty);
+NODELETE std::optional<AXPropertyFlag> convertToPropertyFlag(AXProperty);
 
 inline AXObjectCache* AXIsolatedTree::axObjectCache() const
 {
@@ -901,8 +906,7 @@ inline Vector<Ref<AXCoreObject>> AXIsolatedTree::objectsForIDs(const U& axIDs)
 {
     AX_ASSERT(!isMainThread());
 
-    Vector<Ref<AXCoreObject>> result;
-    result.reserveInitialCapacity(axIDs.size());
+    Vector<Ref<AXCoreObject>> result(ReserveCapacityTag { }, axIDs.size());
     for (const auto& axID : axIDs) {
         if (RefPtr object = objectForID(axID))
             result.append(object.releaseNonNull());

@@ -184,7 +184,6 @@
 #endif
 
 #if PLATFORM(MAC)
-#include "TiledCoreAnimationScrollingCoordinator.h"
 #endif
 
 #if USE(COORDINATED_GRAPHICS)
@@ -347,6 +346,12 @@ void WebChromeClient::focusedElementDidChangeReadOnly(Element& element)
         page->focusedElementDidChangeReadOnly(element);
 }
 
+void WebChromeClient::focusedElementDidChangeType(Element& element)
+{
+    if (RefPtr page = m_page.get())
+        page->focusedElementDidChangeType(element);
+}
+
 #endif
 
 #if PLATFORM(COCOA)
@@ -377,13 +382,11 @@ void WebChromeClient::takeFocus(FocusDirection direction)
         page->send(Messages::WebPageProxy::TakeFocus(direction));
 }
 
-void WebChromeClient::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions options, BroadcastFocusedElement broadcast)
+void WebChromeClient::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions)
 {
     RefPtr coreFrame =  element ? element->document().frame() : frame;
     RefPtr webFrame = coreFrame ? WebFrame::fromCoreFrame(*coreFrame) : nullptr;
     RefPtr page = m_page.get();
-    if (page && broadcast == BroadcastFocusedElement::Yes)
-        protect(WebProcess::singleton().parentProcessConnection())->send(Messages::WebPageProxy::FocusedElementChanged(webFrame ? std::make_optional(webFrame->frameID()) : std::nullopt, options), page->identifier());
 
     RefPtr inputElement = dynamicDowncast<HTMLInputElement>(element);
     if (!inputElement || !inputElement->isText())
@@ -441,11 +444,13 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         openedMainFrameName,
+        navigationAction.openedByScriptDomain(), /* openedByScriptDomain */
         std::nullopt, /* targetBackForwardItemIdentifier */
         std::nullopt, /* sourceBackForwardItemIdentifier */
         WebCore::LockHistory::No,
         WebCore::LockBackForwardList::No,
         WebCore::NavigationHistoryBehavior::Auto,
+        WebCore::ReplaceIfNotCompletelyLoaded::No,
         { }, /* clientRedirectSourceForHistory */
         frame.effectiveSandboxFlags(),
         frame.document()->referrerPolicy(),
@@ -611,7 +616,7 @@ void WebChromeClient::rootFrameRemoved(const WebCore::LocalFrame& frame)
         drawingArea->removeRootFrame(frame.frameID());
 }
 
-static bool LEGACY_NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
+NODELETE static bool shouldSuppressJavaScriptDialogs(LocalFrame& frame)
 {
     if (frame.opener() && frame.loader().stateMachine().isDisplayingInitialEmptyDocument() && frame.loader().provisionalDocumentLoader())
         return true;
@@ -1218,6 +1223,21 @@ WebCore::DisplayRefreshMonitorFactory* WebChromeClient::displayRefreshMonitorFac
 }
 
 #if ENABLE(GPU_PROCESS)
+#if HAVE(IOSURFACE)
+bool WebChromeClient::useIOSurfaceWebKitBehavior() const
+{
+#if USE(APPLE_INTERNAL_SDK)
+    RefPtr page = m_page.get();
+    if (!page)
+        return false;
+    auto preferences = page->sharedPreferencesForWebProcess();
+    return preferences && preferences->useIOSurfaceWebKitBehavior;
+#else
+    return false;
+#endif
+}
+#endif
+
 RefPtr<ImageBuffer> WebChromeClient::createImageBuffer(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(purpose)) {
@@ -1294,20 +1314,23 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
     WebProcess::singleton().initializePlatformDisplayIfNeeded();
     WebProcess::singleton().initializeVulkanIfNeeded();
 #endif
-#if ENABLE(GPU_PROCESS)
-    if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
-        RefPtr page = m_page.get();
-        if (!page)
-            return nullptr;
-        return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
-    }
+#if ENABLE(GPU_PROCESS) && !PLATFORM(COCOA)
+    if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
+        return WebCore::createWebProcessGraphicsContextGL(attributes);
 #endif
+#if ENABLE(GPU_PROCESS)
+    RefPtr page = m_page.get();
+    if (!page)
+        return nullptr;
+    return RemoteGraphicsContextGLProxy::create(attributes, page.releaseNonNull());
+#else
     return WebCore::createWebProcessGraphicsContextGL(attributes);
+#endif
 }
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> WebChromeClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> WebChromeClient::createGPUForWebGPU() const
 {
 #if ENABLE(GPU_PROCESS)
     RefPtr page = m_page.get();
@@ -1315,7 +1338,7 @@ RefPtr<WebCore::WebGPU::GPU> WebChromeClient::createGPUForWebGPU() const
         return nullptr;
     return RemoteGPUProxy::create(WebGPU::DowncastConvertToBackingContext::create(), ModelDowncastConvertToBackingContext::create(), page.releaseNonNull());
 #else
-    return WebCore::WebGPU::create([](WebCore::WebGPU::WorkItem&& workItem) {
+    return WebCore::createWebGPUIntegration([](Function<void()>&& workItem) {
         callOnMainRunLoop(WTF::move(workItem));
     }, nullptr);
 #endif
@@ -1452,6 +1475,12 @@ void WebChromeClient::renderingUpdateFramesPerSecondChanged()
         drawingArea->renderingUpdateFramesPerSecondChanged();
 }
 
+void WebChromeClient::syncLocalFrameInfoToRemote()
+{
+    if (RefPtr page = m_page.get())
+        page->broadcastFrameGeometryUpdatesIfNeeded();
+}
+
 unsigned WebChromeClient::remoteImagesCountForTesting() const
 {
     RefPtr page = m_page.get();
@@ -1566,14 +1595,7 @@ RefPtr<WebCore::ScrollingCoordinator> WebChromeClient::createScrollingCoordinato
         return nullptr;
 
     ASSERT_UNUSED(corePage, page->corePage() == &corePage);
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    switch (protect(page->drawingArea())->type()) {
-    case DrawingAreaType::TiledCoreAnimation:
-        return TiledCoreAnimationScrollingCoordinator::create(page.get());
-    case DrawingAreaType::RemoteLayerTree:
-        return RemoteScrollingCoordinator::create(page.get());
-    }
-#elif PLATFORM(COCOA)
+#if PLATFORM(COCOA)
     return RemoteScrollingCoordinator::create(page.get());
 #elif USE(COORDINATED_GRAPHICS)
     return ScrollingCoordinatorCoordinated::create(page.get());
@@ -1600,26 +1622,10 @@ void WebChromeClient::ensureScrollbarsController(Page& corePage, ScrollableArea&
     }
 
 #if PLATFORM(MAC)
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    switch (protect(page->drawingArea())->type()) {
-    case DrawingAreaType::RemoteLayerTree: {
-        if (!area.usesCompositedScrolling() && (!currentScrollbarsController || is<RemoteScrollbarsController>(currentScrollbarsController)))
-            area.setScrollbarsController(ScrollbarsController::create(area));
-        else if (area.usesCompositedScrolling() && (!currentScrollbarsController || !is<RemoteScrollbarsController>(currentScrollbarsController)))
-            area.setScrollbarsController(makeUnique<RemoteScrollbarsController>(area, corePage.scrollingCoordinator()));
-        return;
-    }
-    default: {
-        if (!currentScrollbarsController)
-            area.setScrollbarsController(ScrollbarsController::create(area));
-    }
-    }
-#else
     if (!area.usesCompositedScrolling() && (!currentScrollbarsController || is<RemoteScrollbarsController>(currentScrollbarsController)))
         area.setScrollbarsController(ScrollbarsController::create(area));
     else if (area.usesCompositedScrolling() && (!currentScrollbarsController || !is<RemoteScrollbarsController>(currentScrollbarsController)))
         area.setScrollbarsController(makeUnique<RemoteScrollbarsController>(area, corePage.scrollingCoordinator()));
-#endif
 #elif USE(COORDINATED_GRAPHICS_ASYNC_SCROLLBAR)
     if (area.usesCompositedScrolling()) {
         if (!currentScrollbarsController || !is<ScrollbarsControllerCoordinated>(currentScrollbarsController))
@@ -2027,6 +2033,12 @@ void WebChromeClient::continueAccessibilitySearchFromChildFrame(FrameIdentifier 
     else
         callback({ });
 }
+
+void WebChromeClient::relayAccessibilitySelectedTextChangeToMainFrame(FrameIdentifier frameID, AXRemoteFrameSelectedTextChange&& change)
+{
+    if (RefPtr page = m_page)
+        page->send(Messages::WebPageProxy::RelayAccessibilitySelectedTextChangeToMainFrame(frameID, WTF::move(change)));
+}
 #endif
 
 void WebChromeClient::isPlayingMediaDidChange(MediaProducerMediaStateFlags state)
@@ -2086,16 +2098,16 @@ bool WebChromeClient::hasRelevantSelectionServices(bool isTextOnly) const
     return (isTextOnly && WebProcess::singleton().hasSelectionServices()) || WebProcess::singleton().hasRichContentServices();
 }
 
-void WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, Image& image, HTMLImageElement& element)
+bool WebChromeClient::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLImageElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handleImageServiceClick(frameID, point, image, element);
+    RefPtr page = m_page.get();
+    return page && page->handleImageServiceClick(frameID, point, element);
 }
 
-void WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
+bool WebChromeClient::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
 {
-    if (RefPtr page = m_page.get())
-        page->handlePDFServiceClick(frameID, point, element);
+    RefPtr page = m_page.get();
+    return page && page->handlePDFServiceClick(frameID, point, element);
 }
 
 #endif
@@ -2517,10 +2529,7 @@ void WebChromeClient::beginSystemPreview(const URL& url, const SecurityOriginDat
 
 bool WebChromeClient::isUsingUISideCompositing() const
 {
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    RefPtr page = m_page.get();
-    return page && protect(page->drawingArea())->type() == DrawingAreaType::RemoteLayerTree;
-#elif PLATFORM(COCOA)
+#if PLATFORM(COCOA)
     return true;
 #else
     return false;
@@ -2760,7 +2769,7 @@ void WebChromeClient::showCaptionDisplaySettings(HTMLMediaElement& element, cons
 void WebChromeClient::didFinishContentChangeObserving(WebCore::LocalFrame& frame, WebCore::ContentChange observedContentChange)
 {
     if (RefPtr page = m_page.get())
-        page->didFinishContentChangeObserving(frame.frameID(), observedContentChange);
+        page->didFinishContentChangeObserving(frame.rootFrame().frameID(), observedContentChange);
 }
 #endif
 

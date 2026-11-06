@@ -28,48 +28,56 @@
 
 #import "APIConversions.h"
 #import "Device.h"
+#ifndef RC_REMOVE_SEC_ACCEL_3
+#import "PipelineLayout.h"
+#endif
 #import "Texture.h"
 #import <ranges>
 #import <wtf/TZoneMallocInlines.h>
 
 namespace WebGPU::Metal {
 
-static uint64_t LEGACY_NODELETE makeKey(uint32_t firstInteger, auto secondValue)
+NODELETE static uint64_t makeKey(uint32_t firstInteger, auto secondValue)
 {
     return firstInteger | (static_cast<uint64_t>(secondValue) << 32);
 }
 
-static MTLArgumentDescriptor *createArgumentDescriptor(const BindGroupLayout::BufferBindingLayout& buffer, WGPUShaderStage visibility)
+static MTLArgumentDescriptor *createArgumentDescriptor(const BindGroupLayout::BufferBindingLayout& buffer, OptionSet<WebGPU::ShaderStage> visibility)
 {
     auto descriptor = [MTLArgumentDescriptor new];
     auto bufferType = buffer.type;
-    if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float3x2)) {
+    if (bufferType == BindGroupLayout::BufferBindingType::Float3x2) {
         descriptor.dataType = MTLDataTypeFloat3x2;
-        bufferType = WGPUBufferBindingType_Uniform;
-    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float4x3)) {
+        bufferType = BindGroupLayout::BufferBindingType::Uniform;
+    } else if (bufferType == BindGroupLayout::BufferBindingType::Float4x3) {
         descriptor.dataType = MTLDataTypeFloat4x3;
-        bufferType = WGPUBufferBindingType_Uniform;
-    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float3x3)) {
-        descriptor.dataType = MTLDataTypeFloat3x3;
-        bufferType = WGPUBufferBindingType_Uniform;
-    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_UInt2)) {
+        bufferType = BindGroupLayout::BufferBindingType::Uniform;
+    } else if (bufferType == BindGroupLayout::BufferBindingType::Float3x4) {
+        descriptor.dataType = MTLDataTypeFloat3x4;
+        bufferType = BindGroupLayout::BufferBindingType::Uniform;
+    } else if (bufferType == BindGroupLayout::BufferBindingType::UInt2) {
         descriptor.dataType = MTLDataTypeUInt2;
-        bufferType = WGPUBufferBindingType_Uniform;
+        bufferType = BindGroupLayout::BufferBindingType::Uniform;
     } else
         descriptor.dataType = MTLDataTypePointer;
 
     switch (bufferType) {
-    case WGPUBufferBindingType_Uniform:
-    case WGPUBufferBindingType_ReadOnlyStorage:
+    case BindGroupLayout::BufferBindingType::Uniform:
+    case BindGroupLayout::BufferBindingType::ReadOnlyStorage:
         descriptor.access = BindGroupLayout::BindingAccessReadOnly;
         break;
-    case WGPUBufferBindingType_Storage: {
-        if (visibility & WGPUShaderStage_Vertex)
+    case BindGroupLayout::BufferBindingType::Storage: {
+        if (visibility & WebGPU::ShaderStage::Vertex)
             return nil;
         descriptor.access = BindGroupLayout::BindingAccessReadWrite;
         break;
-    } case WGPUBufferBindingType_Undefined:
-    case WGPUBufferBindingType_Force32:
+    }
+    case BindGroupLayout::BufferBindingType::ArrayLength:
+        break;
+    case BindGroupLayout::BufferBindingType::Float3x2:
+    case BindGroupLayout::BufferBindingType::Float4x3:
+    case BindGroupLayout::BufferBindingType::Float3x4:
+    case BindGroupLayout::BufferBindingType::UInt2:
         ASSERT_NOT_REACHED();
         return nil;
     }
@@ -97,19 +105,19 @@ static MTLArgumentDescriptor *createTextureArgumentDescriptor()
 static MTLArgumentDescriptor *createArgumentDescriptor(const BindGroupLayout::TextureBindingLayout& texture)
 {
     if (texture.multisampled) {
-        if (texture.viewDimension != WGPUTextureViewDimension_2D || texture.sampleType == WGPUTextureSampleType_Float)
+        if (texture.viewDimension != WebGPU::TextureViewDimension::_2d || texture.sampleType == WebGPU::TextureSampleType::Float)
             return nil;
     }
 
     return createTextureArgumentDescriptor();
 }
 
-static MTLArgumentDescriptor *createArgumentDescriptor(const BindGroupLayout::StorageTextureBindingLayout& storageTexture, const Device& device, WGPUShaderStage visibility)
+static MTLArgumentDescriptor *createArgumentDescriptor(const BindGroupLayout::StorageTextureBindingLayout& storageTexture, const Device& device, OptionSet<WebGPU::ShaderStage> visibility)
 {
-    if ((visibility & WGPUShaderStage_Vertex) && storageTexture.access != WGPUStorageTextureAccess_ReadOnly)
+    if ((visibility & WebGPU::ShaderStage::Vertex) && storageTexture.access != WebGPU::StorageTextureAccess::ReadOnly)
         return nil;
 
-    if (storageTexture.viewDimension == WGPUTextureViewDimension_Cube || storageTexture.viewDimension == WGPUTextureViewDimension_CubeArray)
+    if (storageTexture.viewDimension == WebGPU::TextureViewDimension::Cube || storageTexture.viewDimension == WebGPU::TextureViewDimension::CubeArray)
         return nil;
 
     if (!Texture::hasStorageBindingCapability(storageTexture.format, device, storageTexture.access))
@@ -128,10 +136,10 @@ static void addDescriptor(NSMutableArray<MTLArgumentDescriptor *> *arguments, MT
     [arguments addObject:stageDescriptor];
 }
 
-static bool LEGACY_NODELETE containsStage(WGPUShaderStage stageBitfield, auto stage)
+NODELETE static bool containsStage(OptionSet<WebGPU::ShaderStage> stageBitfield, auto stage)
 {
-    static_assert(1 == WGPUShaderStage_Vertex && 2 == WGPUShaderStage_Fragment && 4 == WGPUShaderStage_Compute, "Expect WGPUShaderStage to be a bitfield");
-    return stageBitfield & (1 << static_cast<uint32_t>(stage));
+    static_assert(1 == static_cast<uint8_t>(WebGPU::ShaderStage::Vertex) && 2 == static_cast<uint8_t>(WebGPU::ShaderStage::Fragment) && 4 == static_cast<uint8_t>(WebGPU::ShaderStage::Compute), "Expect the bit of a stage to be 1 << ShaderStage");
+    return stageBitfield.toRaw() & (1 << static_cast<uint32_t>(stage));
 }
 
 static void reportErrorInCreateBindGroupLayout(NSString* errorMessage, bool isAutoGenerated, Device& device)
@@ -145,13 +153,13 @@ static const BindGroupLayout::BufferBindingLayout* bufferBindingLayout(const Res
     return std::get_if<BindGroupLayout::BufferBindingLayout>(&entry.bindingLayout);
 }
 
-static bool LEGACY_NODELETE isArrayLength(const ResolvedBindGroupLayoutEntry& entry)
+NODELETE static bool isArrayLength(const ResolvedBindGroupLayoutEntry& entry)
 {
     auto* buffer = bufferBindingLayout(entry);
-    return buffer && buffer->type == static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_ArrayLength);
+    return buffer && buffer->type == BindGroupLayout::BufferBindingType::ArrayLength;
 }
 
-static bool LEGACY_NODELETE hasDynamicOffset(const ResolvedBindGroupLayoutEntry& entry)
+NODELETE static bool hasDynamicOffset(const ResolvedBindGroupLayoutEntry& entry)
 {
     auto* buffer = bufferBindingLayout(entry);
     return buffer && buffer->hasDynamicOffset;
@@ -171,35 +179,34 @@ static std::optional<BindGroupLayout::Entry::BindingLayout> bindingLayout(const 
 
     if (auto& buffer = entry.buffer) {
         return BindGroupLayout::BufferBindingLayout {
-            .type = toAPI(buffer->type),
+            .type = BindGroupLayout::bufferBindingType(buffer->type),
             .hasDynamicOffset = buffer->hasDynamicOffset,
             .minBindingSize = buffer->minBindingSize,
         };
     }
     if (auto& sampler = entry.sampler)
-        return BindGroupLayout::SamplerBindingLayout { .type = toAPI(sampler->type) };
+        return BindGroupLayout::SamplerBindingLayout { .type = sampler->type };
     if (auto& texture = entry.texture) {
         return BindGroupLayout::TextureBindingLayout {
-            .sampleType = toAPI(texture->sampleType),
-            .viewDimension = toAPI(texture->viewDimension),
+            .sampleType = texture->sampleType,
+            .viewDimension = texture->viewDimension,
             .multisampled = texture->multisampled,
         };
     }
     auto& storageTexture = *entry.storageTexture;
     return BindGroupLayout::StorageTextureBindingLayout {
-        .access = toAPI(storageTexture.access),
-        .format = toAPI(storageTexture.format),
-        .viewDimension = toAPI(storageTexture.viewDimension),
+        .access = storageTexture.access,
+        .format = storageTexture.format,
+        .viewDimension = storageTexture.viewDimension,
     };
 }
 
-Ref<BindGroupLayout> Device::createBindGroupLayout(const WebGPU::BindGroupLayoutDescriptor& descriptor)
+RefPtr<WebGPU::BindGroupLayout> Device::createBindGroupLayout(const WebGPU::BindGroupLayoutDescriptor& descriptor)
 {
     if (!isValid())
         return BindGroupLayout::createInvalid(*this);
 
-    Vector<ResolvedBindGroupLayoutEntry> entries;
-    entries.reserveInitialCapacity(descriptor.entries.size());
+    Vector<ResolvedBindGroupLayoutEntry> entries(ReserveCapacityTag { }, descriptor.entries.size());
     for (auto& entry : descriptor.entries) {
         auto entryBindingLayout = bindingLayout(entry);
         if (!entryBindingLayout) {
@@ -209,7 +216,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WebGPU::BindGroupLayout
         entries.append({
             .binding = entry.binding,
             .metalBinding = { entry.binding, entry.binding, entry.binding },
-            .visibility = toAPI(entry.visibility),
+            .visibility = entry.visibility,
             .bindingLayout = WTF::move(*entryBindingLayout),
         });
     }
@@ -251,7 +258,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const String& label, Vector<R
     std::array<size_t, stageCount> sizeOfDynamicOffsets { };
     std::array<uint32_t, stageCount> bindingOffset { };
     std::array<uint32_t, stageCount> bufferCounts { };
-    std::array<HashMap<uint32_t, std::pair<std::array<uint32_t, stageCount>, WGPUShaderStage>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>, stageCount> slotForEntry;
+    std::array<HashMap<uint32_t, std::pair<std::array<uint32_t, stageCount>, OptionSet<WebGPU::ShaderStage>>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>, stageCount> slotForEntry;
     const auto maxBindingIndex = limits().maxBindingsPerBindGroup;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usedBindingSlots;
     uint32_t dynamicUniformBuffers = 0;
@@ -268,11 +275,11 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const String& label, Vector<R
 
         auto* entryBufferLayout = bufferBindingLayout(entry);
         if (hasDynamicOffset(entry)) {
-            if (entryBufferLayout->type == WGPUBufferBindingType_Uniform && ++dynamicUniformBuffers > deviceLimits.maxDynamicUniformBuffersPerPipelineLayout) {
+            if (entryBufferLayout->type == BindGroupLayout::BufferBindingType::Uniform && ++dynamicUniformBuffers > deviceLimits.maxDynamicUniformBuffersPerPipelineLayout) {
                 reportErrorInCreateBindGroupLayout([NSString stringWithFormat:@"Too many dynamic uniform buffers: used(%u), limit(%u)", dynamicUniformBuffers, deviceLimits.maxDynamicUniformBuffersPerPipelineLayout], isAutoGenerated, *this);
                 return BindGroupLayout::createInvalid(*this);
             }
-            if ((entryBufferLayout->type == WGPUBufferBindingType_Storage || entryBufferLayout->type == WGPUBufferBindingType_ReadOnlyStorage) && ++dynamicStorageBuffers > deviceLimits.maxDynamicStorageBuffersPerPipelineLayout) {
+            if ((entryBufferLayout->type == BindGroupLayout::BufferBindingType::Storage || entryBufferLayout->type == BindGroupLayout::BufferBindingType::ReadOnlyStorage) && ++dynamicStorageBuffers > deviceLimits.maxDynamicStorageBuffersPerPipelineLayout) {
                 reportErrorInCreateBindGroupLayout([NSString stringWithFormat:@"Too many dynamic storage buffers: used(%u), limit(%u)", dynamicStorageBuffers, deviceLimits.maxDynamicStorageBuffersPerPipelineLayout], isAutoGenerated, *this);
                 return BindGroupLayout::createInvalid(*this);
             }
@@ -306,13 +313,13 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const String& label, Vector<R
             isExternalTexture = true;
             descriptors[0] = createTextureArgumentDescriptor();
             descriptors[1] = createTextureArgumentDescriptor();
-            BindGroupLayout::BufferBindingLayout bufferLayout { .type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float3x2) };
+            BindGroupLayout::BufferBindingLayout bufferLayout { .type = BindGroupLayout::BufferBindingType::Float3x2 };
             descriptors[2] = createArgumentDescriptor(bufferLayout, entry.visibility);
-            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float4x3);
+            bufferLayout.type = BindGroupLayout::BufferBindingType::Float4x3;
             descriptors[3] = createArgumentDescriptor(bufferLayout, entry.visibility);
-            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float3x3);
+            bufferLayout.type = BindGroupLayout::BufferBindingType::Float3x4;
             descriptors[4] = createArgumentDescriptor(bufferLayout, entry.visibility);
-            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_UInt2);
+            bufferLayout.type = BindGroupLayout::BufferBindingType::UInt2;
             descriptors[5] = createArgumentDescriptor(bufferLayout, entry.visibility);
         });
 
@@ -344,13 +351,13 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const String& label, Vector<R
                     if (entryBufferLayout) {
                         ++bufferCounts[stage];
                         bufferSizeArgumentBufferIndices[renderStage] = bufferCounts[stage];
-                        if (entryBufferLayout->type == WGPUBufferBindingType_Uniform) {
+                        if (entryBufferLayout->type == BindGroupLayout::BufferBindingType::Uniform) {
                             if (++uniformBuffersPerStage[shaderStage] > deviceLimits.maxUniformBuffersPerShaderStage) {
                                 reportErrorInCreateBindGroupLayout([NSString stringWithFormat:@"Uniform buffers count(%u) exceeded max count per stage(%u)", uniformBuffersPerStage[shaderStage], deviceLimits.maxUniformBuffersPerShaderStage], isAutoGenerated, *this);
                                 return BindGroupLayout::createInvalid(*this);
                             }
                         }
-                        if (entryBufferLayout->type == WGPUBufferBindingType_Storage || entryBufferLayout->type == WGPUBufferBindingType_ReadOnlyStorage) {
+                        if (entryBufferLayout->type == BindGroupLayout::BufferBindingType::Storage || entryBufferLayout->type == BindGroupLayout::BufferBindingType::ReadOnlyStorage) {
                             uint32_t maxStorageBuffers = deviceLimits.maxStorageBuffersPerShaderStage;
                             if (shaderStage == ShaderStage::Vertex)
                                 maxStorageBuffers = deviceLimits.maxStorageBuffersInVertexStage;
@@ -486,7 +493,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const String& label, Vector<R
     }
 
     if (m_bindGroupLayoutId == std::numeric_limits<decltype(m_bindGroupLayoutId)>::max()) {
-        loseTheDevice(WGPUDeviceLostReason_Undefined);
+        loseTheDevice(WebGPU::DeviceLostReason::Unknown);
         return BindGroupLayout::createInvalid(*this);
     }
 
@@ -516,36 +523,36 @@ NSString* BindGroupLayout::errorValidatingDynamicOffsets(std::span<const uint32_
         if (dynamicOffsetPlusBindingSize.hasOverflowed() || dynamicOffsetPlusBindingSize.value() > buffer->bufferSize)
             return [NSString stringWithFormat:@"dynamicBuffer(%zu): dynamicOffset(%u) + buffer->bindingSize(%llu) > buffer->bufferSize(%llu)", i, dynamicOffset, buffer->bindingSize, buffer->bufferSize];
 
-        auto alignment = buffer->type == WGPUBufferBindingType_Uniform ? minUniformBufferOffsetAlignment : minStorageBufferOffsetAlignment;
+        auto alignment = buffer->type == BindGroupLayout::BufferBindingType::Uniform ? minUniformBufferOffsetAlignment : minStorageBufferOffsetAlignment;
         if (dynamicOffset % alignment)
-            return [NSString stringWithFormat:@"dynamicBuffer(%zu): dynamicOffset(%u) is not divisible by the %s buffer alignment(%u)", i, dynamicOffset, buffer->type == WGPUBufferBindingType_Uniform ? "uniform" : "storage", alignment];
+            return [NSString stringWithFormat:@"dynamicBuffer(%zu): dynamicOffset(%u) is not divisible by the %s buffer alignment(%u)", i, dynamicOffset, buffer->type == BindGroupLayout::BufferBindingType::Uniform ? "uniform" : "storage", alignment];
     }
 
     return nil;
 }
 
-static bool LEGACY_NODELETE isEqual(const BindGroupLayout::BufferBindingLayout& entry, const BindGroupLayout::BufferBindingLayout& otherEntry)
+NODELETE static bool isEqual(const BindGroupLayout::BufferBindingLayout& entry, const BindGroupLayout::BufferBindingLayout& otherEntry)
 {
-    if (entry.type > WGPUBufferBindingType_ReadOnlyStorage || otherEntry.type > WGPUBufferBindingType_ReadOnlyStorage)
-        return true;
+    if (entry.type > BindGroupLayout::BufferBindingType::ReadOnlyStorage || otherEntry.type > BindGroupLayout::BufferBindingType::ReadOnlyStorage)
+        return entry.type == otherEntry.type;
 
     return entry.type == otherEntry.type && entry.hasDynamicOffset == otherEntry.hasDynamicOffset && entry.minBindingSize == otherEntry.minBindingSize && entry.bufferSizeForBinding == otherEntry.bufferSizeForBinding;
 }
-static bool LEGACY_NODELETE isEqual(const BindGroupLayout::SamplerBindingLayout& entry, const BindGroupLayout::SamplerBindingLayout& otherEntry)
+NODELETE static bool isEqual(const BindGroupLayout::SamplerBindingLayout& entry, const BindGroupLayout::SamplerBindingLayout& otherEntry)
 {
     return entry.type == otherEntry.type;
 }
-static bool LEGACY_NODELETE isEqual(const BindGroupLayout::TextureBindingLayout& entry, const BindGroupLayout::TextureBindingLayout& otherEntry)
+NODELETE static bool isEqual(const BindGroupLayout::TextureBindingLayout& entry, const BindGroupLayout::TextureBindingLayout& otherEntry)
 {
     return entry.multisampled == otherEntry.multisampled && entry.sampleType == otherEntry.sampleType && entry.viewDimension == otherEntry.viewDimension;
 }
-static bool LEGACY_NODELETE isEqual(const BindGroupLayout::StorageTextureBindingLayout& entry, const BindGroupLayout::StorageTextureBindingLayout& otherEntry)
+NODELETE static bool isEqual(const BindGroupLayout::StorageTextureBindingLayout& entry, const BindGroupLayout::StorageTextureBindingLayout& otherEntry)
 {
     return entry.format == otherEntry.format && entry.access == otherEntry.access && entry.viewDimension == otherEntry.viewDimension;
 }
 
 template<typename T>
-static bool LEGACY_NODELETE isEqual(const T* bindingLayoutPtr, const T& bindingLayout)
+NODELETE static bool isEqual(const T* bindingLayoutPtr, const T& bindingLayout)
 {
     if (!bindingLayoutPtr)
         return false;
@@ -576,10 +583,21 @@ static bool equalEntries(const BindGroupLayout::Entry& entry, const BindGroupLay
     if (entry.visibility != otherEntry.visibility)
         return false;
 
+#ifndef RC_REMOVE_SEC_ACCEL_3
+    // Two layouts which agree on every API-visible field can still disagree on where in the Metal
+    // argument buffer each resource and each buffer length lives; a BindGroup encoded against one of
+    // them would then feed the wrong slots to a pipeline compiled against the other.
+    if (entry.argumentBufferIndices != otherEntry.argumentBufferIndices)
+        return false;
+
+    if (entry.bufferSizeArgumentBufferIndices != otherEntry.bufferSizeArgumentBufferIndices)
+        return false;
+
+#endif
     return BindGroupLayout::equalBindingEntries(entry.bindingLayout, otherEntry.bindingLayout);
 }
 
-static uint64_t LEGACY_NODELETE makeBindGroupLayoutPairIdentifier(uint32_t bindGroupIdentifier, uint32_t otherBindGroupIdentifier)
+NODELETE static uint64_t makeBindGroupLayoutPairIdentifier(uint32_t bindGroupIdentifier, uint32_t otherBindGroupIdentifier)
 {
     return static_cast<uint64_t>(bindGroupIdentifier) | (static_cast<uint64_t>(otherBindGroupIdentifier) << 32);
 }
@@ -614,8 +632,22 @@ NSString* BindGroupLayout::errorValidatingBindGroupCompatibility(const BindGroup
     if (device->isCachedCompatibile(*this, otherLayout))
         return nil;
 
+#ifdef RC_REMOVE_SEC_ACCEL_3
     if (isAutoGenerated() != otherLayout.isAutoGenerated() || autogeneratedPipelineLayout() != otherLayout.autogeneratedPipelineLayout())
         return @"Auto-generated layouts mismatch";
+#else
+    // https://gpuweb.github.io/gpuweb/#bind-group-compatibility: two layouts are only
+    // group-equivalent if their [[exclusivePipeline]] slots are equal.
+    // m_autogeneratedPipelineLayoutIdentifier identifies the auto-generated PipelineLayout which
+    // produced this layout, so two auto-generated layouts belonging to different pipelines never
+    // compare equal, even once their owning PipelineLayouts have been destroyed. Unlike a WeakPtr to
+    // the PipelineLayout, the identifier does not decay, and identifier 0 (an auto-generated layout
+    // whose PipelineLayout was never constructed) is only ever compatible with itself.
+    if (isAutoGenerated() != otherLayout.isAutoGenerated())
+        return @"Auto-generated layouts mismatch";
+    if (isAutoGenerated() && (this != &otherLayout) && (!autogeneratedPipelineLayoutIdentifier() || autogeneratedPipelineLayoutIdentifier() != otherLayout.autogeneratedPipelineLayoutIdentifier()))
+        return @"Auto-generated layouts mismatch";
+#endif
 
     auto& entries = m_sortedEntries;
     auto& otherEntries = otherLayout.sortedEntries();
@@ -769,6 +801,7 @@ const Device& BindGroupLayout::device() const
     return m_device;
 }
 
+#ifdef RC_REMOVE_SEC_ACCEL_3
 RefPtr<const PipelineLayout> BindGroupLayout::autogeneratedPipelineLayout() const
 {
     return m_autogeneratedPipelineLayout.get();
@@ -784,6 +817,24 @@ bool BindGroupLayout::isAutoGenerated() const
     ASSERT(m_isAutoGenerated || !m_autogeneratedPipelineLayout.get());
     return m_isAutoGenerated;
 }
+#else
+uint64_t BindGroupLayout::autogeneratedPipelineLayoutIdentifier() const
+{
+    return m_autogeneratedPipelineLayoutIdentifier;
+}
+
+void BindGroupLayout::setAutogeneratedPipelineLayout(const PipelineLayout& autogeneratedPipelineLayout)
+{
+    ASSERT(m_isAutoGenerated);
+    m_autogeneratedPipelineLayoutIdentifier = autogeneratedPipelineLayout.uniqueId();
+}
+
+bool BindGroupLayout::isAutoGenerated() const
+{
+    ASSERT(m_isAutoGenerated || !m_autogeneratedPipelineLayoutIdentifier);
+    return m_isAutoGenerated;
+}
+#endif
 
 uint32_t BindGroupLayout::dynamicUniformBuffers() const
 {
@@ -809,17 +860,21 @@ const BindGroupLayout::ArgumentIndices& BindGroupLayout::argumentIndices(ShaderS
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuBindGroupLayoutAddRef(WGPUBindGroupLayout bindGroupLayout)
+NODELETE void wgpuBindGroupLayoutAddRef(WGPUBindGroupLayout bindGroupLayout)
 {
     WebGPU::Metal::fromAPI(bindGroupLayout).ref();
 }
 
 void wgpuBindGroupLayoutRelease(WGPUBindGroupLayout bindGroupLayout)
 {
-    WebGPU::Metal::fromAPI(bindGroupLayout).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(bindGroupLayout).deref();
+    }
 }
 
 void wgpuBindGroupLayoutSetLabel(WGPUBindGroupLayout bindGroupLayout, WGPUStringView label)
 {
-    protect(WebGPU::Metal::fromAPI(bindGroupLayout))->setLabel(WebGPU::Metal::fromAPI(label));
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(bindGroupLayout))->setLabel(WebGPU::Metal::fromAPI(label));
+    }
 }

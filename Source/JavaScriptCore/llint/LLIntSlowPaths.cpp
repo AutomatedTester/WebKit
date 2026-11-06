@@ -105,8 +105,8 @@ namespace JSC { namespace LLInt {
     LLINT_BEGIN_NO_SET_PC();                    \
     LLINT_SET_PC_FOR_STUBS()
 
-static inline JSValue LEGACY_NODELETE getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
-static inline JSValue LEGACY_NODELETE getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
+NODELETE static inline JSValue getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
+NODELETE static inline JSValue getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
 
 #define LLINT_RETURN_TWO(first, second) do {       \
         return encodeResult(first, second);        \
@@ -227,9 +227,9 @@ ALLOW_NONLITERAL_FORMAT_END
 
 #else // not LLINT_TRACING
 
-template<typename... Types> void LEGACY_NODELETE slowPathLog(const Types&...) { }
+template<typename... Types> NODELETE void slowPathLog(const Types&...) { }
 template<typename... Types> void slowPathLogLn(const Types&...) { }
-template<typename... Types> void LEGACY_NODELETE slowPathLogF(const char*, const Types&...) { }
+template<typename... Types> NODELETE void slowPathLogF(const char*, const Types&...) { }
 
 #endif // LLINT_TRACING
 
@@ -383,14 +383,18 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     DeferGCForAWhile deferGC(vm); // My callers don't set top callframe, so we don't want to GC here at all.
     ASSERT(Options::useJIT());
 
-    if (codeBlock->jitType() != JITType::BaselineJIT) {
-        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
-            codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
-            codeBlock->ownerExecutable()->installCode(codeBlock);
-            codeBlock->jitNextInvocation();
-            return true;
-        }
-    }
+    auto installSharedBaselineCode = [&] {
+        RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode;
+        if (!baselineRef)
+            return false;
+        codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
+        codeBlock->ownerExecutable()->installCode(codeBlock);
+        codeBlock->jitNextInvocation();
+        return true;
+    };
+
+    if (codeBlock->jitType() != JITType::BaselineJIT && installSharedBaselineCode())
+        return true;
 
     if (!codeBlock->checkIfJITThresholdReached()) {
         CODEBLOCK_LOG_EVENT(codeBlock, "delayJITCompile", ("threshold not reached, counter = ", codeBlock->llintExecuteCounter()));
@@ -398,20 +402,30 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
         return false;
     }
 
+    // Must precede the worklist query so that a plan becoming ready afterwards can still force the slow path. finalize() overrides it.
+    codeBlock->jitSoon();
+
     JITWorklist::State worklistState = JITWorklist::ensureGlobalWorklist().completeAllReadyPlansForVM(vm, JITCompilationKey(codeBlock->unlinkedCodeBlock(), JITCompilationMode::Baseline));
 
     if (codeBlock->jitType() == JITType::BaselineJIT) {
         dataLogLnIf(Options::verboseOSR(), "    Code was already compiled.");
-        codeBlock->jitSoon();
+        codeBlock->jitNextInvocation();
         return true;
     }
 
-    if (worklistState == JITWorklist::NotKnown) {
+    switch (worklistState) {
+    case JITWorklist::NotKnown: {
         Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
         JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
-
+    case JITWorklist::Compiled:
+        // Either our compile failed, or the plan belonged to another CodeBlock sharing this UnlinkedCodeBlock.
+        return installSharedBaselineCode();
+    case JITWorklist::Compiling:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
     return false;
 }
 
@@ -2202,9 +2216,27 @@ LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs)
     LLINT_RETURN_CALLEE_FRAME(calleeFrame);
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_size_frame_for_varargs_with_spread)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpCallVarargsWithSpread>();
+    unsigned numUsedStackSlots = -bytecode.m_firstFree.offset();
+    const BitVector& bitVector = codeBlock->unlinkedCodeBlock()->bitVector(bytecode.m_bitVector);
+    JSValue* values = std::bit_cast<JSValue*>(&callFrame->r(bytecode.m_argv));
+    unsigned length = sizeFrameForVarargsWithSpread(globalObject, callFrame, vm, values, bytecode.m_argc, bitVector, numUsedStackSlots);
+    LLINT_CALL_CHECK_EXCEPTION(globalObject);
+
+    CallFrame* calleeFrame = calleeFrameForVarargs(callFrame, numUsedStackSlots, length + 1);
+    vm.varargsLength = length;
+    vm.newCallFrameReturnValue = calleeFrame;
+
+    LLINT_RETURN_CALLEE_FRAME(calleeFrame);
+}
+
 enum class SetArgumentsWith {
     Object,
-    CurrentArguments
+    CurrentArguments,
+    Spread
 };
 
 template<typename Op, SetArgumentsWith set>
@@ -2225,6 +2257,10 @@ static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* p
     if constexpr (set == SetArgumentsWith::Object) {
         setupVarargsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), getOperand(callFrame, bytecode.m_arguments), bytecode.m_firstVarArg, vm.varargsLength);
         LLINT_CALL_CHECK_EXCEPTION(globalObject);
+    } else if constexpr (set == SetArgumentsWith::Spread) {
+        const BitVector& bitVector = codeBlock->unlinkedCodeBlock()->bitVector(bytecode.m_bitVector);
+        JSValue* values = std::bit_cast<JSValue*>(&callFrame->r(bytecode.m_argv));
+        setupVarargsFrameWithSpreadAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), values, bytecode.m_argc, bitVector, vm.varargsLength);
     } else
         setupForwardArgumentsFrameAndSetThis(globalObject, callFrame, calleeFrame, getOperand(callFrame, bytecode.m_thisValue), vm.varargsLength);
 
@@ -2256,6 +2292,11 @@ LLINT_SLOW_PATH_DECL(slow_path_construct_varargs)
 LLINT_SLOW_PATH_DECL(slow_path_super_construct_varargs)
 {
     return varargsSetup<OpSuperConstructVarargs, SetArgumentsWith::Object>(callFrame, pc, CodeSpecializationKind::CodeForConstruct);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_call_varargs_with_spread)
+{
+    return varargsSetup<OpCallVarargsWithSpread, SetArgumentsWith::Spread>(callFrame, pc, CodeSpecializationKind::CodeForCall);
 }
 
 static inline UGPRPair commonCallDirectEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)
@@ -2508,21 +2549,21 @@ static void throwArityCheckStackOverflowError(JSGlobalObject* globalObject, Thro
 #endif
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE numberOfExtraSlots(int argumentCountIncludingThis)
+NODELETE static ALWAYS_INLINE int numberOfExtraSlots(int argumentCountIncludingThis)
 {
     int frameSize = argumentCountIncludingThis + CallFrame::headerSizeInRegisters;
     int alignedFrameSize = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), frameSize);
     return alignedFrameSize - frameSize;
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
+NODELETE static ALWAYS_INLINE int numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
 {
     if (static_cast<unsigned>(argumentCountIncludingThis) >= codeBlock->numParameters())
         return 0;
     return CommonSlowPaths::numberOfStackPaddingSlots(codeBlock, argumentCountIncludingThis) + numberOfExtraSlots(argumentCountIncludingThis);
 }
 
-static ALWAYS_INLINE int LEGACY_NODELETE arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
+NODELETE static ALWAYS_INLINE int arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
 {
     ASSERT(callFrame->argumentCountIncludingThis() < static_cast<unsigned>(newCodeBlock->numParameters()));
     int slotsToAdd = numberOfStackPaddingSlotsWithExtraSlots(newCodeBlock, callFrame->argumentCountIncludingThis());
@@ -2570,6 +2611,46 @@ static void handleVarargsCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject
         result = call(globalObject, getOperand(callFrame, bytecode.m_callee), getOperand(callFrame, bytecode.m_thisValue), args, ""_s);
     else
         result = construct(globalObject, getOperand(callFrame, bytecode.m_callee), getOperand(callFrame, bytecode.m_thisValue), args, ""_s);
+
+    RETURN_IF_EXCEPTION(scope, void());
+    callFrame->uncheckedR(bytecode.m_dst) = result;
+}
+
+static void handleVarargsWithSpreadCheckpoint(VM& vm, CallFrame* callFrame, JSGlobalObject* globalObject, CodeBlock* codeBlock, const OpCallVarargsWithSpread& bytecode, CheckpointOSRExitSideState& sideState)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const BitVector& bitVector = codeBlock->unlinkedCodeBlock()->bitVector(bytecode.m_bitVector);
+    JSValue* values = std::bit_cast<JSValue*>(&callFrame->r(bytecode.m_argv));
+    unsigned argc = bytecode.m_argc;
+    unsigned length = sideState.tmps[OpCallVarargsWithSpread::argCountIncludingThis].asUInt32() - 1;
+
+    if (length > maxArguments) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
+
+    MarkedArgumentBuffer args;
+    args.fill(vm, length, [&](JSValue* buffer) {
+        JSValue* dest = buffer;
+        for (unsigned i = 0; i < argc; ++i) {
+            JSValue value = values[-static_cast<int>(i)];
+            if (bitVector.get(i)) {
+                JSCellButterfly* array = uncheckedDowncast<JSCellButterfly>(value);
+                unsigned n = array->publicLength();
+                array->copyToArguments(globalObject, dest, 0, n);
+                dest += n;
+            } else
+                *dest++ = value;
+        }
+    });
+    if (args.hasOverflowed()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
+
+    RETURN_IF_EXCEPTION(scope, void());
+
+    JSValue result = call(globalObject, getOperand(callFrame, bytecode.m_callee), getOperand(callFrame, bytecode.m_thisValue), args, ""_s);
 
     RETURN_IF_EXCEPTION(scope, void());
     callFrame->uncheckedR(bytecode.m_dst) = result;
@@ -2723,6 +2804,10 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_checkpoint_osr_exit_from_inlined_ca
         callFrame->uncheckedR(pc->as<OpCallVarargs>().m_dst) = JSValue::decode(result);
         break;
     }
+    case op_call_varargs_with_spread: {
+        callFrame->uncheckedR(pc->as<OpCallVarargsWithSpread>().m_dst) = JSValue::decode(result);
+        break;
+    }
     case op_construct_varargs: {
         callFrame->uncheckedR(pc->as<OpConstructVarargs>().m_dst) = JSValue::decode(result);
         break;
@@ -2809,6 +2894,9 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_checkpoint_osr_exit(CallFrame* call
     switch (opcode) {
     case op_call_varargs:
         handleVarargsCheckpoint(vm, callFrame, globalObject, pc->as<OpCallVarargs>(), *sideState.get());
+        break;
+    case op_call_varargs_with_spread:
+        handleVarargsWithSpreadCheckpoint(vm, callFrame, globalObject, codeBlock, pc->as<OpCallVarargsWithSpread>(), *sideState.get());
         break;
     case op_construct_varargs:
         handleVarargsCheckpoint(vm, callFrame, globalObject, pc->as<OpConstructVarargs>(), *sideState.get());

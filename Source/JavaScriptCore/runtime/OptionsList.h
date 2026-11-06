@@ -209,6 +209,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useConcurrentGC, true, Normal, nullptr) \
     v(Bool, collectContinuously, false, Normal, nullptr) \
     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \
+    v(Unsigned, initialHeapVersion, 0, Restricted, "If nonzero, the version each heap's marking, newly allocated and Eden versions start at. A value near the maximum makes them wrap within a few collections."_s) \
     v(Bool, forceFencedBarrier, false, Normal, nullptr) \
     v(Bool, verboseVisitRace, false, Normal, nullptr) \
     v(Bool, verboseHeapSnapshotLogging, true, Normal, nullptr) \
@@ -364,6 +365,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Int32, numberOfSuperAndPerformanceCoresOverride, 0, Normal, "If non-zero, overrides the number of Super and Performance (i.e. non-Efficiency) cores reported by the hardware; 0 means use the value reported by the hardware."_s) \
     v(Double, dfgThresholdScaleForFewPerformanceCores, 2.0, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the DFG tier-up thresholds (thresholdForOptimize*) by this factor."_s) \
     v(Double, ftlThresholdScaleForFewPerformanceCores, 1.5, Normal, "On Apple silicon Macs with few Super and Performance cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
+    v(Double, ftlThresholdScaleForFewCores, 4.0, Normal, "On Linux ARM64 devices (not Android) with four or fewer cores, scale the FTL tier-up thresholds (thresholdForFTLOptimize*) by this factor."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
     v(Int32, thresholdForJITAfterWarmUp, 500, Normal, nullptr) \
     v(Int32, thresholdForJITSoon, 100, Normal, nullptr) \
@@ -684,8 +686,10 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    /* Not sourced from UnifiedWebPreferences.yaml: force-enabled via the cross-origin-isolation path and consumed in WebCore. */ \
+    /* Not sourced from UnifiedWebPreferences.yaml: exposes SharedArrayBuffer to every global object. */ \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: lets an embedder expose SharedArrayBuffer to some global objects, see JSGlobalObject::exposeSharedArrayBuffer(). */ \
+    v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 
@@ -758,7 +762,7 @@ public:
     OptionRange(std::nullptr_t) { }
 
     bool init(const char*);
-    bool LEGACY_NODELETE isInRange(unsigned) const;
+    NODELETE bool isInRange(unsigned) const;
     const char* rangeString() const { return (m_state > InitError) ? m_rangeString : s_nullRangeStr; }
 
     void dump(PrintStream& out) const;

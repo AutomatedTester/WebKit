@@ -138,6 +138,7 @@ inline TransformStyle3D ComputedStyle::usedTransformStyle3D() const
     return transformStyleForcedToFlat() ? TransformStyle3D::Flat : transformStyle3D();
 }
 
+// The setters of everything read here update ComputedStyle::hasZeroEffectiveBorderWidths().
 template<BoxSide side> struct UsedBorderWidthsAccessor {
     static Style::LineWidth get(const BorderData& data)
     {
@@ -241,12 +242,13 @@ inline bool ComputedStyle::hasMask() const
 
 inline bool ComputedStyle::hasOutline() const
 {
-    return !usedOutlineWidth().isZero();
+    return !effectiveOutlineWidth(*this).isZero();
 }
 
 inline bool ComputedStyle::hasOutlineInVisualOverflow() const
 {
-    return !usedOutlineWidth().isZero() && (usedOutlineWidth().unresolvedValue() + usedOutlineOffset().unresolvedValue()) > 0;
+    auto outlineWidth = effectiveOutlineWidth(*this);
+    return !outlineWidth.isZero() && (outlineWidth.unresolvedValue() + effectiveOutlineOffset(*this).unresolvedValue()) > 0;
 }
 
 inline bool ComputedStyle::hasOutOfFlowPosition() const

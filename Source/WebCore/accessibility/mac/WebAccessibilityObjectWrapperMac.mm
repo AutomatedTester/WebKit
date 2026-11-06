@@ -49,6 +49,7 @@
 #import "AccessibilityScrollView.h"
 #import "AccessibilitySpinButton.h"
 #import "AccessibilityTableColumn.h"
+#import "BoundaryPointInlines.h"
 #import "CGUtilities.h"
 #import "Chrome.h"
 #import "ChromeClient.h"
@@ -73,7 +74,6 @@
 #import "PluginDocument.h"
 #import "PluginViewBase.h"
 #import "Range.h"
-#import "RenderInline.h"
 #import "RenderObjectInlines.h"
 #import "RenderTextControl.h"
 #import "RenderView.h"
@@ -1850,7 +1850,7 @@ static id handleTableSelectedRowsAttribute(WebAccessibilityObjectWrapper*, AXCor
     return selectedChildren.size() ? makeNSArray(WTF::move(selectedChildren)) : nil;
 }
 
-static id handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
+NODELETE static id handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
 {
     return nil;
 }
@@ -2776,7 +2776,17 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
     return [self _accessibilityHitTest:point returnPlatformElements:YES];
 }
 
+- (id)_accessibilityHitTestForScreenPoint:(NSPoint)point
+{
+    return [self _accessibilityHitTest:point returnPlatformElements:YES pointIsInScreenSpace:YES];
+}
+
 - (id)_accessibilityHitTest:(NSPoint)point returnPlatformElements:(BOOL)returnPlatformElements
+{
+    return [self _accessibilityHitTest:point returnPlatformElements:returnPlatformElements pointIsInScreenSpace:NO];
+}
+
+- (id)_accessibilityHitTest:(NSPoint)point returnPlatformElements:(BOOL)returnPlatformElements pointIsInScreenSpace:(BOOL)pointIsInScreenSpace
 {
     RefPtr<AXCoreObject> backingObject = self.updateObjectBackingStore;
     if (!backingObject)
@@ -2784,7 +2794,14 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
 
     if (RefPtr axObject = dynamicDowncast<AccessibilityObject>(backingObject))
         axObject->updateChildrenIfNecessary();
-    RefPtr axObject = backingObject->accessibilityHitTest(IntPoint(point));
+
+    RefPtr<AXCoreObject> axObject;
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (RefPtr isolatedObject = pointIsInScreenSpace ? dynamicDowncast<AXIsolatedObject>(backingObject) : nullptr)
+        axObject = isolatedObject->accessibilityHitTestForScreenPoint(IntPoint(point));
+    else
+#endif
+        axObject = backingObject->accessibilityHitTest(IntPoint(point));
 
     RetainPtr<id> hit = nil;
     if (axObject) {
@@ -2965,7 +2982,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
         NSAccessibilityTextMarkerForIndexAttribute,
         NSAccessibilityTextMarkerIsValidAttribute,
         NSAccessibilityIndexForTextMarkerAttribute,
-        NSAccessibilityRelativeIndexForTextMarkerAttribute
+        NSAccessibilityRelativeIndexForTextMarkerAttribute,
+        NSAccessibilityTextMarkerForRelativeIndexAttribute
     ];
 
     static NeverDestroyed textParamAttrs = [] {
@@ -3353,30 +3371,42 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 }
 ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
-- (AXTextMarkerRef)_textMarkerForIndex:(NSInteger)textIndex
+- (AXTextMarkerRef)_textMarkerForOffset:(NSInteger)offset fromBoundaryPoint:(const BoundaryPoint&)start
 {
-    return Accessibility::retrieveAutoreleasedValueFromMainThread<AXTextMarkerRef>([&textIndex, protectedSelf = retainPtr(self)] () -> RetainPtr<AXTextMarkerRef> {
-        RefPtr backingObject = downcast<AccessibilityObject>(protectedSelf.get().axBackingObject);
-        if (!backingObject)
-            return nil;
+    AX_ASSERT(isMainThread());
 
-        CheckedPtr cache = backingObject->axObjectCache();
-        if (!cache)
-            return nil;
+    RefPtr backingObject = downcast<AccessibilityObject>(self.axBackingObject);
+    if (!backingObject)
+        return nil;
 
-        RefPtr document = backingObject->document();
-        if (!document)
-            return nil;
+    CheckedPtr cache = backingObject->axObjectCache();
+    if (!cache)
+        return nil;
 
-        RefPtr documentElement = document->documentElement();
-        if (!documentElement)
-            return nil;
+    RefPtr document = backingObject->document();
+    if (!document)
+        return nil;
 
-        auto boundary = resolveCharacterLocation(makeRangeSelectingNodeContents(*documentElement), textIndex);
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return nil;
+
+    SimpleRange scope = makeSimpleRange(start, makeBoundaryPointAfterNodeContents(*documentElement));
+    auto boundary = resolveCharacterLocation(scope, offset);
+
+    // FIXME: Remove this branch once we consider snapping to grapheme cluster boundaries.
+    // Currently several tests rely on returning a marker at each UTF16 code point inside Text nodes.
+    if (is<Text>(boundary.container)) {
         auto characterOffset = cache->startOrEndCharacterOffsetForRange(makeSimpleRange(boundary), true);
-
         return textMarkerForCharacterOffset(cache.get(), characterOffset);
-    });
+    }
+
+    // Converting to a VisiblePosition to handle offsets that fall inside emitted (virtual) characters,
+    // mirroring the implementation of AXTextMarker::nextMarkerFromOffset. As stated there:
+    // Positions that fall inside an emitted (virtual) character, e.g. a newline at a block boundary,
+    // have no marker of their own, so they snap back to the end of the preceding run; this is a
+    // bounded, non-accumulating snap (acceptable per VoiceOver's needs).
+    return textMarkerForVisiblePosition(cache.get(), VisiblePosition { makeDeprecatedLegacyPosition(boundary) });
 }
 
 #if ENABLE(TREE_DEBUGGING)
@@ -3978,6 +4008,29 @@ static id handleRelativeIndexForTextMarkerAttribute(WebAccessibilityObjectWrappe
     return offset.has_value() ? [NSNumber numberWithUnsignedInt:*offset] : @(NSNotFound);
 }
 
+static id handleTextMarkerForRelativeIndexAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
+{
+    if (!context.number)
+        return nil;
+
+    NSInteger offset = [context.number integerValue];
+    if (offset < 0)
+        return nil;
+
+    AXTextMarker start = backingObject.textMarkerRange().start();
+    if (!start.isValid())
+        return nil;
+
+    if (AXObjectCache::useAXThreadTextApis())
+        return start.nextMarkerFromOffset(offset).platformData().bridgingAutorelease();
+
+    auto startPoint = start.boundaryPoint();
+    if (!startPoint)
+        return nil;
+
+    return (id)[wrapper _textMarkerForOffset:offset fromBoundaryPoint:*startPoint];
+}
+
 static id handleTextMarkerForIndexAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
 {
     if (AXObjectCache::useAXThreadTextApis()) {
@@ -3992,7 +4045,15 @@ static id handleTextMarkerForIndexAttribute(WebAccessibilityObjectWrapper* wrapp
         }
         return nil;
     }
-    return (id)[wrapper _textMarkerForIndex:[context.number integerValue]];
+    RefPtr document = backingObject.document();
+    if (!document)
+        return nil;
+
+    RefPtr documentElement = document->documentElement();
+    if (!documentElement)
+        return nil;
+
+    return (id)[wrapper _textMarkerForOffset:[context.number integerValue] fromBoundaryPoint:makeBoundaryPointBeforeNodeContents(*documentElement)];
 }
 
 static id handleLineForTextMarkerAttribute(WebAccessibilityObjectWrapper* wrapper, AXCoreObject&, const ParameterizedAttributeContext& context)
@@ -4355,6 +4416,7 @@ static MemoryCompactLookupOnlyRobinHoodHashMap<String, ParameterizedAttributeHan
         { NSAccessibilityTextMarkerIsValidAttribute, { handleTextMarkerIsValidAttribute } },
         { NSAccessibilityIndexForTextMarkerAttribute, { handleIndexForTextMarkerAttribute } },
         { NSAccessibilityRelativeIndexForTextMarkerAttribute, { handleRelativeIndexForTextMarkerAttribute } },
+        { NSAccessibilityTextMarkerForRelativeIndexAttribute, { handleTextMarkerForRelativeIndexAttribute } },
         { NSAccessibilityTextMarkerForIndexAttribute, { handleTextMarkerForIndexAttribute } },
         { NSAccessibilityLineForTextMarkerAttribute, { handleLineForTextMarkerAttribute } },
         { NSAccessibilityTextMarkerRangeForLineAttribute, { handleTextMarkerRangeForLineAttribute } },

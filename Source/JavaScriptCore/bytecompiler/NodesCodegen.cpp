@@ -31,7 +31,7 @@
 #include "AbstractModuleRecord.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
-#include "BytecodeGeneratorBaseInlines.h"
+#include "BytecodeGeneratorInlines.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncDisposableStack.h"
@@ -516,20 +516,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     if (!firstPutElement && !m_elision)
         return newArray(generator.finalDestination(dst), m_element, length);
 
+    if (!m_element)
+        return generator.emitNewArrayWithSize(generator.finalDestination(dst), generator.emitLoad(nullptr, jsNumber(m_elision)));
+
     allDenseStrings = false;
 
     if (firstPutElement && firstPutElement->value()->isSpreadExpression()) {
-        bool hasElision = m_elision;
-        if (!hasElision) {
-            for (ElementNode* node = firstPutElement; node; node = node->next()) {
-                if (node->elision()) {
-                    hasElision = true;
-                    break;
-                }
-            }
-        }
-
-        if (!hasElision)
+        if (!hasElision())
             return generator.emitNewArrayWithSpread(generator.finalDestination(dst), m_element);
     }
 
@@ -576,6 +569,17 @@ handleSpread:
         generator.emitPutById(array.get(), generator.propertyNames().length, index.get());
     }
     return generator.move(dst, array.get());
+}
+
+bool ArrayNode::hasElision() const
+{
+    if (m_elision)
+        return true;
+    for (ElementNode* node = m_element; node; node = node->next()) {
+        if (node->elision())
+            return true;
+    }
+    return false;
 }
 
 bool ArrayNode::isSimpleArray() const
@@ -1160,10 +1164,7 @@ RegisterID* BaseDotNode::emitGetPropertyValue(BytecodeGenerator& generator, Regi
         Variable var = generator.variable(m_ident);
         ASSERT_WITH_MESSAGE(!var.local(), "Private Field names must be stored in captured variables");
 
-        RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-        ASSERT(scope); // Private names are always captured.
-        RefPtr<RegisterID> privateName = generator.newTemporary();
-        generator.emitGetFromScope(privateName.get(), scope.get(), var, DoNotThrowIfNotFound);
+        RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
         return generator.emitGetPrivateName(dst, base, privateName.get());
     }
 
@@ -1219,10 +1220,7 @@ RegisterID* BaseDotNode::emitPutProperty(BytecodeGenerator& generator, RegisterI
         Variable var = generator.variable(m_ident);
         ASSERT_WITH_MESSAGE(!var.local(), "Private Field names must be stored in captured variables");
 
-        RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-        ASSERT(scope); // Private names are always captured.
-        RefPtr<RegisterID> privateName = generator.newTemporary();
-        generator.emitGetFromScope(privateName.get(), scope.get(), var, DoNotThrowIfNotFound);
+        RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
         return generator.emitPrivateFieldPut(base, privateName.get(), value);
     }
 
@@ -1603,7 +1601,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPrototypeOf(BytecodeGenerat
     return generator.emitGetPrototypeOf(generator.finalDestination(dst), value.get());
 }
 
-static JSGenerator::Field LEGACY_NODELETE generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSGenerator::Field generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldState)
@@ -1618,7 +1616,7 @@ static JSGenerator::Field LEGACY_NODELETE generatorInternalFieldIndex(BytecodeIn
     return JSGenerator::Field::State;
 }
 
-static JSIteratorHelper::Field LEGACY_NODELETE iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSIteratorHelper::Field iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_iteratorHelperFieldGenerator)
@@ -1629,7 +1627,7 @@ static JSIteratorHelper::Field LEGACY_NODELETE iteratorHelperInternalFieldIndex(
     return JSIteratorHelper::Field::Generator;
 }
 
-static JSArrayIterator::Field LEGACY_NODELETE arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSArrayIterator::Field arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_arrayIteratorFieldIndex)
@@ -1642,7 +1640,7 @@ static JSArrayIterator::Field LEGACY_NODELETE arrayIteratorInternalFieldIndex(By
     return JSArrayIterator::Field::Index;
 }
 
-static ProxyObject::Field LEGACY_NODELETE proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static ProxyObject::Field proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_proxyFieldTarget)
@@ -1653,7 +1651,7 @@ static ProxyObject::Field LEGACY_NODELETE proxyInternalFieldIndex(BytecodeIntrin
     return ProxyObject::Field::Target;
 }
 
-static JSWrapForValidIterator::Field LEGACY_NODELETE wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSWrapForValidIterator::Field wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_wrapForValidIteratorFieldIteratedIterator)
@@ -1664,7 +1662,7 @@ static JSWrapForValidIterator::Field LEGACY_NODELETE wrapForValidIteratorInterna
     return JSWrapForValidIterator::Field::IteratedNextMethod;
 }
 
-static JSDisposableStack::Field LEGACY_NODELETE disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSDisposableStack::Field disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldState)
@@ -1675,7 +1673,7 @@ static JSDisposableStack::Field LEGACY_NODELETE disposableStackInternalFieldInde
     return JSDisposableStack::Field::State;
 }
 
-static JSAsyncDisposableStack::Field LEGACY_NODELETE asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+NODELETE static JSAsyncDisposableStack::Field asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldState)
@@ -2741,10 +2739,7 @@ RegisterID* PostfixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
 
         if (privateTraits.isField()) {
             Variable var = generator.variable(ident);
-            RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-            ASSERT(scope); // Private names are always captured.
-            RefPtr<RegisterID> privateName = generator.newTemporary();
-            generator.emitGetFromScope(privateName.get(), scope.get(), var, DoNotThrowIfNotFound);
+            RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
 
             RefPtr<RegisterID> value = generator.emitGetPrivateName(generator.newTemporary(), base.get(), privateName.get());
             RefPtr<RegisterID> oldValue = emitPostIncOrDec(generator, generator.tempDestination(dst), value.get(), m_operator);
@@ -3038,9 +3033,7 @@ RegisterID* PrefixNode::emitDot(BytecodeGenerator& generator, RegisterID* dst)
         if (privateTraits.isField()) {
             ASSERT(!baseNode->isSuperNode());
             Variable var = generator.variable(ident);
-            RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-            RefPtr<RegisterID> privateName = generator.newTemporary();
-            generator.emitGetFromScope(privateName.get(), scope.get(), var, DoNotThrowIfNotFound);
+            RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
 
             value = generator.emitGetPrivateName(propDst.get(), base.get(), privateName.get());
             emitIncOrDec(generator, value, m_operator);
@@ -3314,7 +3307,7 @@ void BinaryOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
         generator.emitNodeInConditionContext(branchExpression, falseTarget, trueTarget, invert(fallThroughMode));
 }
 
-static inline bool LEGACY_NODELETE canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
+NODELETE static inline bool canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
 {
     ResultType expressionType = branchExpression->resultDescriptor();
 
@@ -3520,15 +3513,15 @@ RegisterID* InNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         auto identifier = static_cast<PrivateIdentifierNode*>(m_expr1)->value();
         auto privateTraits = generator.getPrivateTraits(identifier);
         Variable var = generator.variable(identifier);
-        RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-        ASSERT(scope); // Private names are always captured.
 
         if (privateTraits.isField()) {
-            RefPtr<RegisterID> privateName = generator.emitGetFromScope(generator.newTemporary(), scope.get(), var, DoNotThrowIfNotFound);
+            RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
             return generator.emitHasPrivateName(generator.finalDestination(dst, base.get()), base.get(), privateName.get());
         }
 
         ASSERT(privateTraits.isPrivateMethodOrAccessor());
+        RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
+        ASSERT(scope); // Private names are always captured.
         RefPtr<RegisterID> privateBrand = generator.emitGetPrivateBrand(generator.newTemporary(), scope.get(), privateTraits.isStatic());
         return generator.emitHasPrivateBrand(generator.finalDestination(dst, base.get()), base.get(), privateBrand.get(), privateTraits.isStatic());
     }
@@ -3980,7 +3973,7 @@ RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& g
 
 // ------------------------------ AssignResolveNode -----------------------------------
 
-static InitializationMode LEGACY_NODELETE initializationModeForAssignmentContext(AssignmentContext assignmentContext)
+NODELETE static InitializationMode initializationModeForAssignmentContext(AssignmentContext assignmentContext)
 {
     switch (assignmentContext) {
     case AssignmentContext::DeclarationStatement:
@@ -3997,7 +3990,7 @@ static InitializationMode LEGACY_NODELETE initializationModeForAssignmentContext
     return InitializationMode::NotInitialization;
 }
 
-static inline bool LEGACY_NODELETE isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
+NODELETE static inline bool isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
 {
     return context == AssignmentContext::UsingDeclarationStatement || context == AssignmentContext::AwaitUsingDeclarationStatement;
 }
@@ -5747,9 +5740,7 @@ void DefineFieldNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
         ASSERT_WITH_MESSAGE(!var.local(), "Private Field names must be stored in captured variables");
 
         generator.emitExpressionInfo(position(), position(), position() + m_ident.length());
-        RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, var);
-        RefPtr<RegisterID> privateName = generator.newTemporary();
-        generator.emitGetFromScope(privateName.get(), scope.get(), var, DoNotThrowIfNotFound);
+        RefPtr<RegisterID> privateName = generator.emitLoadPrivateName(var);
         generator.emitDefinePrivateField(generator.thisRegister(), privateName.get(), value.get());
         break;
     }
@@ -5826,6 +5817,9 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     } else
         constructor = generator.emitNewDefaultConstructor(constructor.get(), m_classHeritage ? ConstructorKind::Extends : ConstructorKind::Base, m_name, ecmaName(), m_classSource, needsClassFieldInitializer, privateBrandRequirement);
 
+    if (shouldInstallBrandOnConstructor)
+        generator.emitInstallPrivateClassBrand(constructor.get());
+
     const auto& propertyNames = generator.propertyNames();
     RefPtr<RegisterID> prototype = generator.emitNewObject(generator.newTemporary());
 
@@ -5881,9 +5875,6 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         RefPtr<RegisterID> scope = generator.emitResolveScope(nullptr, classNameVar);
         generator.emitPutToScope(scope.get(), classNameVar, constructor.get(), ThrowIfNotFound, InitializationMode::Initialization);
     }
-
-    if (shouldInstallBrandOnConstructor)
-        generator.emitInstallPrivateClassBrand(constructor.get());
 
     if (!staticElementDefinitions.isEmpty()) {
         RefPtr<RegisterID> staticFieldInitializer = generator.emitNewClassFieldInitializerFunction(generator.newTemporary(), WTF::move(staticElementDefinitions), m_classHeritage);
@@ -6060,6 +6051,7 @@ void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) 
                 generator.emitLoad(index.get(), jsNumber(0));
                 Ref<Label> loopStart = generator.newLabel();
                 generator.emitLabel(loopStart.get());
+                generator.emitLoopHint();
 
                 RefPtr<RegisterID> value = generator.newTemporary();
                 {

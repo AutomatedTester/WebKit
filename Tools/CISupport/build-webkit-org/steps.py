@@ -34,7 +34,7 @@ import re
 import socket
 import sys
 
-from Shared.steps import ShellMixin, SetBuildSummary, InstallSwiftToolchain, InstallMetalToolchain, cmake_tools_path, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
+from Shared.steps import ShellMixin, SetBuildSummary, InstallSwiftToolchain, InstallMetalToolchain, cmake_tools_path, FAILED_RESULTS_UPLOAD_MESSAGE, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -396,25 +396,38 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
         if '--cmake' in (additionalArguments or []):
             self.env['PATH'] = cmake_tools_path(self.getProperty('builddir'))
         if platform in self.APPLE_PLATFORMS:
-            # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
-            # be removed here. We can't have build-webkit pass this by default
-            # without invalidating local builds made by Xcode, and we set it
-            # via xcconfigs until all building of Xcode-based webkit is done in
-            # workspaces (rdar://88135402).
+            use_cmake = '--cmake' in (additionalArguments or [])
             if architecture:
                 build_command += ['--architecture', f'"{architecture}"']
-            build_command += ['WK_VALIDATE_DEPENDENCIES=YES']
-            build_command += ['WK_ENABLE_SLOW_BUILD_VERIFICATION=YES']
-            if buildOnly:
-                # For build-only bots, the expectation is that tests will be run on separate machines,
-                # so we need to package debug info as dSYMs. Only generating line tables makes
-                # this much faster than full debug info, and crash logs still have line numbers.
-                # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
-                build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym']
-                build_command += ['CLANG_DEBUG_INFORMATION_LEVEL=\\$\\(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only\\)']
             deployment_target = self.getProperty('deployment_target')
-            if deployment_target and platform == 'mac':
-                build_command += [f'MACOSX_DEPLOYMENT_TARGET={deployment_target}']
+            if use_cmake:
+                cmake_args = []
+                if buildOnly:
+                    # Tests run on separate machines. Package debug info as
+                    # dSYMs and only include line tables to reduce size.
+                    build_command += ['--dsym']
+                    cmake_args += [f'-DCMAKE_{lang}_FLAGS=-gline-tables-only' for lang in ('C', 'CXX', 'OBJC', 'OBJCXX')]
+                if deployment_target and platform == 'mac':
+                    cmake_args += [f'-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}']
+                if cmake_args:
+                    build_command += [f'--cmakeargs="{" ".join(cmake_args)}"']
+            else:
+                # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
+                # be removed here. We can't have build-webkit pass this by default
+                # without invalidating local builds made by Xcode, and we set it
+                # via xcconfigs until all building of Xcode-based webkit is done in
+                # workspaces (rdar://88135402).
+                build_command += ['WK_VALIDATE_DEPENDENCIES=YES']
+                build_command += ['WK_ENABLE_SLOW_BUILD_VERIFICATION=YES']
+                if buildOnly:
+                    # For build-only bots, the expectation is that tests will be run on separate machines,
+                    # so we need to package debug info as dSYMs. Only generating line tables makes
+                    # this much faster than full debug info, and crash logs still have line numbers.
+                    # Some projects (namely lldbWebKitTester) require full debug info, and may override this.
+                    build_command += ['DEBUG_INFORMATION_FORMAT=dwarf-with-dsym']
+                    build_command += ['CLANG_DEBUG_INFORMATION_LEVEL=\\$\\(WK_OVERRIDE_DEBUG_INFORMATION_LEVEL:default=line-tables-only\\)']
+                if deployment_target and platform == 'mac':
+                    build_command += [f'MACOSX_DEPLOYMENT_TARGET={deployment_target}']
 
         build_command += self.customBuildFlag(platform, self.getProperty('fullPlatform'))
 
@@ -918,6 +931,7 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
         ('failures', re.compile(r'Regressions: Unexpected.+\((\d+)\)')),
     ]
     cancelled_due_to_huge_logs = False
+    failed_results_upload = False
     line_count = 0
 
     def __init__(self, *args, **kwargs):
@@ -931,6 +945,7 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
         self.addLogObserver('stdio', self.log_observer)
         self.incorrectLayoutLines = []
         self.testFailures = {}
+        self.failed_results_upload = False
 
         platform = self.getProperty('platform')
         self.appendCustomTestingFlags(platform, self.getProperty('device_model'))
@@ -973,6 +988,10 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
             self.incorrectLayoutLines.append(self._strip_python_logging_prefix(line))
             return
 
+        if FAILED_RESULTS_UPLOAD_MESSAGE in line:
+            self.failed_results_upload = True
+            return
+
         for name, expression in self.expressions:
             match = expression.search(line)
             if match:
@@ -981,6 +1000,8 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
     def processTestFailures(self):
         for name, result in self.testFailures.items():
             self.incorrectLayoutLines.append(str(result) + ' ' + name)
+        if self.failed_results_upload:
+            self.incorrectLayoutLines.append('results upload failed')
 
     def evaluateCommand(self, cmd):
         self.processTestFailures()
@@ -1392,6 +1413,7 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
     def __init__(self, **kwargs):
         kwargs['timeout'] = 90 * 60
         kwargs['maxTime'] = 3 * 60 * 60
+        kwargs['sigtermTime'] = 30
         super().__init__(**kwargs)
 
     @defer.inlineCallbacks
@@ -2352,6 +2374,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
 
         self.commands = [
             util.ShellArg(command=self.shell_command('rm -rf ../build'), logname='stdio', haltOnFailure=False),
+            util.ShellArg(command=self.shell_command(f'rm -rf {swift_install_dir} {swift_symroot_dir}'), logname='stdio', haltOnFailure=False),
             util.ShellArg(command=self.shell_command('rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'), logname='stdio', haltOnFailure=False),
             util.ShellArg(command=self.shell_command('rm -rf /Users/buildbot/Library/Developer/Xcode/DerivedData'), logname='stdio'),
             util.ShellArg(command=self.shell_command(filter_command), logname='stdio', haltOnFailure=True),
@@ -2374,7 +2397,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
         ]
 
         if rc != SUCCESS:
-            if self.getProperty('current_swift_tag', '') and self.getProperty('has_swift_toolchain', False):
+            if self.getProperty('has_swift_toolchain', False):
                 return WARNINGS
             self.build.buildFinished(['Failed to set up swift, retrying update'], RETRY)
         else:

@@ -35,6 +35,34 @@
 
 namespace WebCore {
 
+static int makeSureRotationIsBetween0And360(int rotation)
+{
+    return ((rotation % 360) + 360) % 360;
+}
+
+// https://w3c.github.io/webcodecs/#videoframe-parse-rotation
+VideoFrameRotation parseVideoFrameRotation(double rotation)
+{
+    ASSERT(std::isfinite(rotation));
+
+    int rotation360 = static_cast<int>(std::floor(std::fmod(rotation, 360)));
+    if (rotation360 < 0)
+        rotation360 += 360;
+    return static_cast<VideoFrameRotation>(makeSureRotationIsBetween0And360(((rotation360 + 45) / 90) * 90));
+}
+
+// https://w3c.github.io/webcodecs/#videoframe-add-rotations
+VideoFrame::Rotation addVideoFrameRotations(VideoFrame::Rotation baseRotation, bool baseFlip, VideoFrame::Rotation rotation)
+{
+    int combinedRotation = static_cast<int>(baseRotation) + (baseFlip ? - static_cast<int>(rotation) : static_cast<int>(rotation));
+    return static_cast<VideoFrame::Rotation>(makeSureRotationIsBetween0And360(combinedRotation));
+}
+
+VideoFrame::Rotation combineVideoFrameRotations(const VideoFrame& frame, double initRotation)
+{
+    return addVideoFrameRotations(frame.rotation(), frame.isMirrored(), parseVideoFrameRotation(initRotation));
+}
+
 // https://w3c.github.io/webcodecs/#valid-videoframebufferinit
 bool isValidVideoFrameBufferInit(const WebCodecsVideoFrame::BufferInit& init)
 {
@@ -61,7 +89,7 @@ bool isValidVideoFrameBufferInit(const WebCodecsVideoFrame::BufferInit& init)
     return true;
 }
 
-static bool LEGACY_NODELETE isMultiple(double value, unsigned factor)
+NODELETE static bool isMultiple(double value, unsigned factor)
 {
      return !(static_cast<unsigned>(value) % factor);
 }
@@ -143,7 +171,7 @@ size_t videoPixelFormatToSampleByteSizePerPlane(VideoPixelFormat format)
     return isHighBitDepthVideoPixelFormat(format) ? 2 : 1;
 }
 
-static inline size_t LEGACY_NODELETE sampleCountPerPixel(VideoPixelFormat format, size_t planeNumber)
+NODELETE static inline size_t sampleCountPerPixel(VideoPixelFormat format, size_t planeNumber)
 {
     switch (format) {
     case VideoPixelFormat::I420:
@@ -168,7 +196,7 @@ static inline size_t LEGACY_NODELETE sampleCountPerPixel(VideoPixelFormat format
     return 1;
 }
 
-static bool LEGACY_NODELETE isChromaPlane(VideoPixelFormat format, size_t planeNumber)
+NODELETE static bool isChromaPlane(VideoPixelFormat format, size_t planeNumber)
 {
     if (format == VideoPixelFormat::NV12)
         return planeNumber == 1;
@@ -236,10 +264,8 @@ ExceptionOr<CombinedPlaneLayout> computeLayoutAndAllocationSize(const DOMRectIni
         return Exception { ExceptionCode::TypeError, "layout size is invalid"_s };
 
     size_t minAllocationSize = 0;
-    Vector<ComputedPlaneLayout> computedLayouts;
-    computedLayouts.reserveInitialCapacity(planeCount);
-    Vector<size_t> endOffsets;
-    endOffsets.reserveInitialCapacity(planeCount);
+    Vector<ComputedPlaneLayout> computedLayouts(ReserveCapacityTag { }, planeCount);
+    Vector<size_t> endOffsets(ReserveCapacityTag { }, planeCount);
     for (size_t i = 0; i < planeCount; ++i) {
         size_t pixelSampleCount = sampleCountPerPixel(format, i);
 
@@ -289,29 +315,49 @@ ExceptionOr<CombinedPlaneLayout> computeLayoutAndAllocationSize(const DOMRectIni
 // https://w3c.github.io/webcodecs/#videoframe-parse-videoframecopytooptions
 ExceptionOr<CombinedPlaneLayout> parseVideoFrameCopyToOptions(const WebCodecsVideoFrame& frame, const WebCodecsVideoFrame::CopyToOptions& options)
 {
-    ASSERT(!frame.isDetached());
-    ASSERT(frame.format());
+    if (frame.isDetached())
+        return Exception { ExceptionCode::InvalidStateError,  "VideoFrame is detached"_s };
+
+    auto format = frame.format();
+    if (!format || options.format)
+        format = options.format;
+    if (!format)
+        return Exception { ExceptionCode::NotSupportedError,  "No format is available"_s };
+
 
     Ref visibleRect = *frame.visibleRect();
-    auto parsedRect = parseVisibleRect({ visibleRect->x(), visibleRect->y(), visibleRect->width(), visibleRect->height() }, options.rect, frame.codedWidth(), frame.codedHeight(), *frame.format());
+    auto parsedRect = parseVisibleRect({ visibleRect->x(), visibleRect->y(), visibleRect->width(), visibleRect->height() }, options.rect, frame.codedWidth(), frame.codedHeight(), *format);
 
     if (parsedRect.hasException())
         return parsedRect.releaseException();
 
-    return computeLayoutAndAllocationSize(parsedRect.returnValue(), options.layout, *frame.format());
+    if (options.format && *options.format != VideoPixelFormat::RGBA && *options.format != VideoPixelFormat::RGBX && *options.format != VideoPixelFormat::BGRA && *options.format != VideoPixelFormat::BGRX)
+        return Exception { ExceptionCode::NotSupportedError, "Format is not supported"_s };
+
+    return computeLayoutAndAllocationSize(parsedRect.returnValue(), options.layout, *format);
 }
 
 // https://w3c.github.io/webcodecs/#videoframe-initialize-visible-rect-and-display-size
-void initializeVisibleRectAndDisplaySize(WebCodecsVideoFrame& frame, const WebCodecsVideoFrame::Init& init, const DOMRectInit& defaultVisibleRect, size_t defaultDisplayWidth, size_t defaultDisplayHeight)
+void initializeVisibleRectAndDisplaySize(WebCodecsVideoFrame& frame, const WebCodecsVideoFrame::Init& init, VideoFrame::Rotation baseRotation, VideoFrame::Rotation finalRotation, const DOMRectInit& defaultVisibleRect, size_t defaultDisplayWidth, size_t defaultDisplayHeight)
 {
     auto visibleRect = init.visibleRect.value_or(defaultVisibleRect);
     frame.setVisibleRect(visibleRect);
     if (init.displayWidth && init.displayHeight)
         frame.setDisplaySize(*init.displayWidth, *init.displayHeight);
     else {
+        if (is90DegreeRotation(baseRotation))
+            std::swap(defaultDisplayWidth, defaultDisplayHeight);
+
         auto widthScale = defaultDisplayWidth / defaultVisibleRect.width;
         auto heightScale = defaultDisplayHeight / defaultVisibleRect.height;
-        frame.setDisplaySize(visibleRect.width * widthScale, visibleRect.height * heightScale);
+
+        auto displayWidth = std::round(visibleRect.width * widthScale);
+        auto displayHeight = std::round(visibleRect.height * heightScale);
+
+        if (is90DegreeRotation(finalRotation))
+            std::swap(displayWidth, displayHeight);
+
+        frame.setDisplaySize(displayWidth, displayHeight);
     }
 }
 
@@ -328,7 +374,7 @@ VideoColorSpaceInit videoFramePickColorSpace(const std::optional<VideoColorSpace
 }
 
 // https://w3c.github.io/webcodecs/#validate-videoframeinit
-static bool LEGACY_NODELETE isNegativeOrNonFinite(double value)
+NODELETE static bool isNegativeOrNonFinite(double value)
 {
     return value < 0 || !std::isfinite(value);
 }

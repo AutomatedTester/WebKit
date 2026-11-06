@@ -25,8 +25,8 @@
 
 #include <WebCore/Color.h>
 #include <WebCore/FontCascade.h>
+#include <WebCore/LayoutInlineTextBox.h>
 #include <WebCore/RenderElement.h>
-#include <WebCore/Text.h>
 #include <wtf/Forward.h>
 #include <wtf/Markable.h>
 #include <wtf/Platform.h>
@@ -35,19 +35,16 @@
 namespace WebCore {
 
 class Font;
+class Text;
 struct GlyphOverflow;
 struct WordTrailingSpace;
 enum class DocumentMarkerType : uint32_t;
-
-namespace Layout {
-class InlineTextBox;
-}
 
 namespace LayoutIntegration {
 class LineLayout;
 }
 
-class RenderText : public RenderObject {
+class RenderText : public RenderObject, private Layout::InlineTextBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderText);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderText);
 public:
@@ -56,14 +53,55 @@ public:
 
     virtual ~RenderText();
 
-    Layout::InlineTextBox* LEGACY_NODELETE layoutBox();
-    const Layout::InlineTextBox* LEGACY_NODELETE layoutBox() const;
+    // RenderObject functions that the layout box base also has.
+    using RenderObject::firstLineUsedStyle;
+    using RenderObject::isAnonymous;
+    using RenderObject::isDescendantOf;
+    using RenderObject::isFloatingOrOutOfFlowPositioned;
+    using RenderObject::isImage;
+    using RenderObject::isInFlow;
+    using RenderObject::isInFlowPositioned;
+    using RenderObject::isInlineBox;
+    using RenderObject::isOutOfFlowPositioned;
+    using RenderObject::isPositioned;
+    using RenderObject::isRelativelyPositioned;
+    using RenderObject::nextInFlowSibling;
+    using RenderObject::nextSibling;
+    using RenderObject::parent;
+    using RenderObject::previousInFlowSibling;
+    using RenderObject::previousSibling;
+    using RenderObject::usedStyle;
+    using RenderObject::writingMode;
 
-    WEBCORE_EXPORT Text* LEGACY_NODELETE textNode() const;
+    // CheckedPtr to the renderer uses the RenderObject counter, CheckedPtr to the layout box the box counter. Deletion checks both.
+    using RenderObject::checkedPtrCount;
+    using RenderObject::decrementCheckedPtrCount;
+    using RenderObject::incrementCheckedPtrCount;
+    ALWAYS_INLINE uint32_t checkedPtrCountWithoutThreadCheck() const { return RenderObject::checkedPtrCountWithoutThreadCheck() + Layout::InlineTextBox::checkedPtrCountWithoutThreadCheck(); }
+    void setDidBeginCheckedPtrDeletion()
+    {
+        RenderObject::setDidBeginCheckedPtrDeletion();
+        Layout::InlineTextBox::setDidBeginCheckedPtrDeletion();
+    }
 
-    const Style::ComputedStyle& style() const LIFETIME_BOUND;
+    // The layout box is part of the renderer.
+    ALWAYS_INLINE Layout::InlineTextBox& layoutBox() LIFETIME_BOUND { return *this; }
+    ALWAYS_INLINE const Layout::InlineTextBox& layoutBox() const LIFETIME_BOUND { return *this; }
+    // Every InlineTextBox is the base of a RenderText.
+    ALWAYS_INLINE static RenderText& fromLayoutBox(Layout::InlineTextBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<RenderText&>(box); }
+    ALWAYS_INLINE static const RenderText& fromLayoutBox(const Layout::InlineTextBox& box) { SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<const RenderText&>(box); }
 
-    const Style::ComputedStyle& firstLineStyle() const LIFETIME_BOUND;
+    NODELETE WEBCORE_EXPORT Text* textNode() const;
+
+    // The style of an anonymous inline box around the text. The inherited properties come from the parent box, or from the
+    // DOM parent when it is display: contents and has no box. The other properties have their initial values.
+    ALWAYS_INLINE const Style::ComputedStyle& style() const LIFETIME_BOUND { return Layout::InlineTextBox::style(); }
+    ALWAYS_INLINE const Style::ComputedStyle& firstLineStyle() const LIFETIME_BOUND { return Layout::InlineTextBox::firstLineStyle(); }
+    // On attach and parent style change.
+    void inheritStyleFromParent();
+    bool inheritsStyleFromDisplayContentsParent() const { return Layout::InlineTextBox::inheritsStyleFromDisplayContentsParent(); }
+    void setStyleInheritedFromDisplayContentsParent(Style::ComputedStyle&&);
+    void clearStyleInheritedFromDisplayContentsParent();
     const Style::ComputedStyle* lazyPseudoElementStyle(const Style::PseudoElementIdentifier&, const Style::ComputedStyle* parentStyle = nullptr) const LIFETIME_BOUND;
 
     Color selectionBackgroundColor() const;
@@ -122,9 +160,9 @@ public:
 
     float hangablePunctuationStartWidth(unsigned index) const;
     float hangablePunctuationEndWidth(unsigned index) const;
-    unsigned LEGACY_NODELETE firstCharacterIndexStrippingSpaces() const;
-    unsigned LEGACY_NODELETE lastCharacterIndexStrippingSpaces() const;
-    static bool LEGACY_NODELETE isHangableStopOrComma(char16_t);
+    NODELETE unsigned firstCharacterIndexStrippingSpaces() const;
+    NODELETE unsigned lastCharacterIndexStrippingSpaces() const;
+    NODELETE static bool isHangableStopOrComma(char16_t);
     
     WEBCORE_EXPORT virtual IntRect linesBoundingBox() const;
     WEBCORE_EXPORT IntPoint firstRunLocation() const;
@@ -135,9 +173,6 @@ public:
     bool canBeSelectionLeaf() const override { return true; }
 
     LayoutRect collectSelectionGeometriesForLineBoxes(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent, Vector<FloatQuad>&);
-
-    inline LayoutUnit marginLeft() const;
-    inline LayoutUnit marginRight() const;
 
     int caretMinOffset() const final;
     int caretMaxOffset() const final;
@@ -156,7 +191,7 @@ public:
 
     void momentarilyRevealLastTypedCharacter(unsigned offsetAfterLastTypedCharacter);
 
-    bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace() const;
+    NODELETE bool containsOnlyCollapsibleWhitespace() const;
 
     FontCascade::CodePath fontCodePath() const { return m_fontCodePath; }
     bool canUseSimpleFontCodePath() const { return fontCodePath() == FontCascade::CodePath::Simple; }
@@ -167,27 +202,28 @@ public:
     float candidateComputedTextSize() const { return m_candidateComputedTextSize; }
     void setCandidateComputedTextSize(float size) { m_candidateComputedTextSize = size; }
 
-    StringView LEGACY_NODELETE stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
+    NODELETE StringView stringView(unsigned start = 0, std::optional<unsigned> stop = std::nullopt) const;
     
-    bool LEGACY_NODELETE containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
+    NODELETE bool containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
 
     Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
-
-    bool hasInlineWrapperForDisplayContents() const { return m_hasInlineWrapperForDisplayContents; }
-    RenderInline* LEGACY_NODELETE inlineWrapperForDisplayContents();
-    void setInlineWrapperForDisplayContents(RenderInline*);
 
     template <typename MeasureTextCallback>
     static float measureTextConsideringPossibleTrailingSpace(bool currentCharacterIsSpace, unsigned startIndex, unsigned wordLength, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, NOESCAPE const MeasureTextCallback&);
 
     void resetMinMaxWidth();
 
-    void setCanUseSimplifiedTextMeasuring(bool canUseSimplifiedTextMeasuring) { m_canUseSimplifiedTextMeasuring = canUseSimplifiedTextMeasuring; }
-    std::optional<bool> canUseSimplifiedTextMeasuring() const { return m_canUseSimplifiedTextMeasuring; }
-    void setHasPositionDependentContentWidth(bool hasPositionDependentContentWidth) { m_hasPositionDependentContentWidth = hasPositionDependentContentWidth; }
-    std::optional<bool> hasPositionDependentContentWidth() const { return m_hasPositionDependentContentWidth; }
-    void setHasStrongDirectionalityContent(bool hasStrongDirectionalityContent) { m_hasStrongDirectionalityContent = hasStrongDirectionalityContent; }
-    std::optional<bool> hasStrongDirectionalityContent() const { return m_hasStrongDirectionalityContent; }
+    bool canUseSimplifiedTextMeasuring() const { return layoutBox().canUseSimplifiedContentMeasuring(); }
+
+    // The layout box content is the rendered text, or the original text when combined, with the secure text disc swapped
+    // on Cocoa platforms. In a live inline formatting context it changes only together with the inline items.
+    void updateLayoutBoxContent();
+    bool layoutBoxContentNeedsUpdate() const { return m_layoutBoxContentNeedsUpdate; }
+    void updateLayoutBoxContentIfNeeded()
+    {
+        if (m_layoutBoxContentNeedsUpdate)
+            updateLayoutBoxContent();
+    }
 
 protected:
     virtual void computeMinMaxIntrinsicLogicalWidths(float leadingWidth, bool forcedMinMaxWidthComputation = false);
@@ -197,6 +233,9 @@ protected:
     virtual char32_t previousCharacter() const;
 
     virtual void setTextInternal(const String&, bool force);
+
+    void layoutBoxContentDidChange();
+    void displayContentsParentStyleDidChange(const Style::ComputedStyle& oldStyle, bool didChangeStyleSource);
 
 private:
     void updateRenderedText();
@@ -231,7 +270,6 @@ private:
 
     float maxWordFragmentWidth(const Style::ComputedStyle&, const FontCascade&, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, unsigned minimumWordLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&);
     float widthFromCacheConsideringPossibleTrailingSpace(const Style::ComputedStyle&, const FontCascade&, unsigned startIndex, unsigned wordLen, float xPos, bool currentCharacterIsSpace, WordTrailingSpace&, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow&) const;
-    void initiateFontLoadingByAccessingGlyphDataAndComputeCanUseSimplifiedTextMeasuring(const String&);
 
     // FIXME: This should probably be part of the text sizing structures in Document instead. That would save some memory.
     float m_candidateComputedTextSize { 0 };
@@ -242,11 +280,6 @@ private:
 
     String m_text;
 
-protected:
-    std::optional<bool> m_canUseSimplifiedTextMeasuring;
-private:
-    std::optional<bool> m_hasPositionDependentContentWidth;
-    std::optional<bool> m_hasStrongDirectionalityContent;
     unsigned m_hasBreakableChar : 1 { false }; // Whether or not we can be broken into multiple lines.
     unsigned m_hasBreak : 1 { false }; // Whether or not we have a hard break (e.g., <pre> with '\n').
     unsigned m_hasTab : 1 { false }; // Whether or not we have a variable width tab character (e.g., <pre> with '\t').
@@ -257,7 +290,7 @@ private:
     mutable unsigned m_knownToHaveNoOverflowAndNoFallbackFonts : 1 { false };
     unsigned m_useBackslashAsYenSymbol : 1 { false };
     unsigned m_originalTextDiffersFromRendered : 1 { false };
-    unsigned m_hasInlineWrapperForDisplayContents : 1 { false };
+    unsigned m_layoutBoxContentNeedsUpdate : 1 { false };
     unsigned m_hasSecureTextTimer : 1 { false };
     FontCascade::CodePath m_fontCodePath : 2;
 };
@@ -266,23 +299,13 @@ String applyTextTransform(const Style::ComputedStyle&, const String&, char32_t p
 String applyTextTransform(const Style::ComputedStyle&, const String&);
 String capitalize(const String&, char32_t previousCharacter, const AtomString& locale);
 String capitalize(const String&, const AtomString& locale);
-bool isDutchLocale(const AtomString&);
-TextBreakIterator::LineMode::Behavior LEGACY_NODELETE mapLineBreakToIteratorMode(LineBreak);
-TextBreakIterator::ContentAnalysis LEGACY_NODELETE mapWordBreakToContentAnalysis(WordBreak);
+NODELETE bool isDutchLocale(const AtomString&);
+NODELETE TextBreakIterator::LineMode::Behavior mapLineBreakToIteratorMode(LineBreak);
+NODELETE TextBreakIterator::ContentAnalysis mapWordBreakToContentAnalysis(WordBreak);
 
 inline char16_t RenderText::characterAt(unsigned i) const
 {
     return i >= length() ? 0 : text()[i];
-}
-
-inline const Style::ComputedStyle& RenderText::style() const
-{
-    return parent()->style();
-}
-
-inline const Style::ComputedStyle& RenderText::firstLineStyle() const
-{
-    return parent()->firstLineStyle();
 }
 
 inline const Style::ComputedStyle* RenderText::lazyPseudoElementStyle(const Style::PseudoElementIdentifier& pseudoElementIdentifier, const Style::ComputedStyle* parentStyle) const
@@ -342,11 +365,6 @@ inline const Style::ComputedStyle* RenderText::targetTextPseudoStyle() const
     return nullptr;
 }
 
-inline RenderText* Text::renderer() const
-{
-    return downcast<RenderText>(Node::renderer());
-}
-
 inline void RenderText::resetMinMaxWidth()
 {
     m_minWidth = { };
@@ -356,3 +374,67 @@ inline void RenderText::resetMinMaxWidth()
 } // namespace WebCore
 
 SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderText, isRenderText())
+
+namespace WebCore {
+
+// Both branches compute the same offset, so the branch folds away in optimized builds.
+inline Layout::Box& RenderObject::layoutBox()
+{
+    if (isRenderText())
+        return uncheckedDowncast<RenderText>(*this).layoutBox();
+    return uncheckedDowncast<RenderElement>(*this).layoutBox();
+}
+
+inline const Layout::Box& RenderObject::layoutBox() const
+{
+    if (isRenderText())
+        return uncheckedDowncast<RenderText>(*this).layoutBox();
+    return uncheckedDowncast<RenderElement>(*this).layoutBox();
+}
+
+inline RenderObject& RenderObject::fromLayoutBox(Layout::Box& box)
+{
+    ASSERT(!box.isInitialContainingBlock());
+    if (box.isInlineTextBox())
+        return RenderText::fromLayoutBox(uncheckedDowncast<Layout::InlineTextBox>(box));
+    return RenderElement::fromLayoutBox(uncheckedDowncast<Layout::ElementBox>(box));
+}
+
+inline const RenderObject& RenderObject::fromLayoutBox(const Layout::Box& box)
+{
+    ASSERT(!box.isInitialContainingBlock());
+    if (box.isInlineTextBox())
+        return RenderText::fromLayoutBox(uncheckedDowncast<Layout::InlineTextBox>(box));
+    return RenderElement::fromLayoutBox(uncheckedDowncast<Layout::ElementBox>(box));
+}
+
+inline RenderObject* Layout::Box::rendererForIntegration() const
+{
+    if (isInitialContainingBlock()) [[unlikely]]
+        return nullptr;
+    return &RenderObject::fromLayoutBox(const_cast<Box&>(*this));
+}
+
+namespace Layout {
+
+inline const Box* Box::nextSibling() const
+{
+    for (SUPPRESS_UNCHECKED_LOCAL auto* sibling = RenderObject::fromLayoutBox(*this).nextSibling(); sibling; sibling = sibling->nextSibling()) {
+        if (!isExcludedFromLayoutBoxNavigation(*sibling)) [[likely]]
+            return &sibling->layoutBox();
+    }
+    return nullptr;
+}
+
+inline const Box* Box::previousSibling() const
+{
+    for (SUPPRESS_UNCHECKED_LOCAL auto* sibling = RenderObject::fromLayoutBox(*this).previousSibling(); sibling; sibling = sibling->previousSibling()) {
+        if (!isExcludedFromLayoutBoxNavigation(*sibling)) [[likely]]
+            return &sibling->layoutBox();
+    }
+    return nullptr;
+}
+
+}
+
+} // namespace WebCore

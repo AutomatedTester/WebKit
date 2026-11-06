@@ -46,7 +46,6 @@
 #include "HTTPParsers.h"
 #include "HTTPStatusCodes.h"
 #include "InspectorNetworkAgent.h"
-#include "LinkLoader.h"
 #include "LoaderStrategy.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
@@ -433,7 +432,7 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
     // redirection with no or empty Location headers and fetch in manual redirect mode. Or in rare circumstances,
     // cases of too many redirects from CFNetwork (<rdar://problem/30610988>).
 #if !PLATFORM(COCOA)
-    ASSERT(response.httpStatusCode() < httpStatus300MultipleChoices || response.httpStatusCode() >= httpStatus400BadRequest || response.httpStatusCode() == httpStatus304NotModified || response.httpHeaderField(HTTPHeaderName::Location).isEmpty() || response.type() == ResourceResponse::Type::Opaqueredirect);
+    ASSERT(!response.isRedirection() || response.httpHeaderField(HTTPHeaderName::Location).isEmpty() || response.type() == ResourceResponse::Type::Opaqueredirect);
 #endif
 
     // Reference the object in this method since the additional processing can do
@@ -519,9 +518,6 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
         return;
 
     bool isResponseMultipart = response.isMultipart();
-    if (options().mode != FetchOptions::Mode::Navigate && frame && frame->document())
-        LinkLoader::loadLinksFromHeader(response.httpHeaderField(HTTPHeaderName::Link), response.url(), *protect(frame->document()), LinkLoader::MediaAttributeCheck::SkipMediaAttributeCheck);
-
     // https://wicg.github.io/nav-speculation/prefetch.html#clear-prefetch-cache
     if (frame && frame->settings().clearSiteDataHTTPHeaderEnabled()) {
         auto clearSiteDataValues = parseClearSiteDataHeader(response);

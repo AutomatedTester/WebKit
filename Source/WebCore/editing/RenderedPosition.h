@@ -46,20 +46,20 @@ class VisiblePosition;
 
 class RenderedPosition {
 public:
-    RenderedPosition();
+    NODELETE RenderedPosition();
     explicit RenderedPosition(const VisiblePosition&);
     explicit RenderedPosition(const Position&, Affinity);
-    bool isEquivalent(const RenderedPosition&) const;
+    NODELETE bool isEquivalent(const RenderedPosition&) const;
 
     bool isNull() const { return !m_renderer; }
     InlineIterator::LineBoxIterator lineBox() const { return m_box ? m_box->lineBox() : InlineIterator::LineBoxIterator(); }
     InlineIterator::LeafBoxIterator box() const { return m_box; }
     unsigned offset() const { return m_offset; }
 
-    unsigned char bidiLevelOnLeft() const;
-    unsigned char bidiLevelOnRight() const;
-    RenderedPosition leftBoundaryOfBidiRun(unsigned char bidiLevelOfRun) const;
-    RenderedPosition rightBoundaryOfBidiRun(unsigned char bidiLevelOfRun) const;
+    NODELETE unsigned char bidiLevelOnLeft() const;
+    NODELETE unsigned char bidiLevelOnRight() const;
+    NODELETE RenderedPosition leftBoundaryOfBidiRun(unsigned char bidiLevelOfRun) const;
+    NODELETE RenderedPosition rightBoundaryOfBidiRun(unsigned char bidiLevelOfRun) const;
 
     enum ShouldMatchBidiLevel { MatchBidiLevel, IgnoreBidiLevel };
     bool atLeftBoundaryOfBidiRun() const { return atLeftBoundaryOfBidiRun(IgnoreBidiLevel, 0); }
@@ -81,12 +81,12 @@ public:
 
 private:
     bool operator==(const RenderedPosition&) const { return false; }
-    explicit RenderedPosition(const RenderObject*, InlineIterator::LeafBoxIterator, unsigned offset);
+    NODELETE explicit RenderedPosition(const RenderObject*, InlineIterator::LeafBoxIterator, unsigned offset);
 
-    InlineIterator::LeafBoxIterator previousLeafOnLine() const;
-    InlineIterator::LeafBoxIterator nextLeafOnLine() const;
-    bool atLeftBoundaryOfBidiRun(ShouldMatchBidiLevel, unsigned char bidiLevelOfRun) const;
-    bool atRightBoundaryOfBidiRun(ShouldMatchBidiLevel, unsigned char bidiLevelOfRun) const;
+    NODELETE InlineIterator::LeafBoxIterator previousLeafOnLine() const;
+    NODELETE InlineIterator::LeafBoxIterator nextLeafOnLine() const;
+    NODELETE bool atLeftBoundaryOfBidiRun(ShouldMatchBidiLevel, unsigned char bidiLevelOfRun) const;
+    NODELETE bool atRightBoundaryOfBidiRun(ShouldMatchBidiLevel, unsigned char bidiLevelOfRun) const;
 
     SingleThreadWeakPtr<const RenderObject> m_renderer;
     RefPtr<Node> m_node;
@@ -97,6 +97,6 @@ private:
     mutable std::optional<InlineIterator::LeafBoxIterator> m_nextLeafOnLine;
 };
 
-bool LEGACY_NODELETE renderObjectContainsPosition(const RenderObject*, const Position&);
+NODELETE bool renderObjectContainsPosition(const RenderObject*, const Position&);
 
 } // namespace WebCore

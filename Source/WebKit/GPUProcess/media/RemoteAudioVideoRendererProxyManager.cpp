@@ -676,7 +676,7 @@ void RemoteAudioVideoRendererProxyManager::currentBitmapImage(RemoteAudioVideoRe
             completionHandler(std::nullopt);
             return;
         }
-        completionHandler((*result)->createHandle());
+        completionHandler(protect(*result)->createHandle());
     });
 }
 
@@ -716,6 +716,19 @@ RemoteAudioVideoRendererState RemoteAudioVideoRendererProxyManager::stateFor(Rem
         .paused = iterator->value.renderer->paused(),
     };
 }
+
+#if PLATFORM(COCOA)
+std::optional<FloatRect> RemoteAudioVideoRendererProxyManager::hostedVideoLayerBoundsForTesting(HTMLMediaElementIdentifier mediaElementIdentifier) const
+{
+    for (auto& context : m_renderers.values()) {
+        if (!context.mediaElementIdentifier || *context.mediaElementIdentifier != mediaElementIdentifier)
+            continue;
+        if (auto bounds = context.layerHostingContextManager.rootLayerBoundsForTesting())
+            return bounds;
+    }
+    return std::nullopt;
+}
+#endif
 
 void RemoteAudioVideoRendererProxyManager::rendereringModeChanged(RemoteAudioVideoRendererIdentifier identifier)
 {

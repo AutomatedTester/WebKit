@@ -1186,6 +1186,36 @@ TEST_F(ContentExtensionTest, RequestMethod)
     testRequest(makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\".*\", \"request-method\": \"get\"}}]"_s), { URL { "http://block_all_request_methods.org"_s }, URL { "http://block_all_request_methods.org"_str }, URL { "http://block_all_request_methods.org"_str }, ResourceType::TopDocument, false, RequestMethod::Post }, { });
 }
 
+TEST_F(ContentExtensionTest, RequestMethodWithConditions)
+{
+    auto load = [](ASCIILiteral topURL, RequestMethod method) -> ResourceLoadInfo {
+        URL top { topURL };
+        return { URL { "https://cdn.test/tracker.js"_s }, top, top, ResourceType::Script, false, method };
+    };
+
+    auto ifTopURL = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"tracker\",\"request-method\":\"get\",\"if-top-url\":[\"example\\\\.com\"]}}]"_s);
+    testRequest(ifTopURL, load("https://example.com/"_s, RequestMethod::Get), { variantIndex<ContentExtensions::BlockLoadAction> });
+    testRequest(ifTopURL, load("https://example.com/"_s, RequestMethod::Post), { });
+    testRequest(ifTopURL, load("https://webkit.org/"_s, RequestMethod::Get), { });
+
+    auto unlessTopURL = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"tracker\",\"request-method\":\"get\",\"unless-top-url\":[\"example\\\\.com\"]}}]"_s);
+    testRequest(unlessTopURL, load("https://example.com/"_s, RequestMethod::Get), { });
+    testRequest(unlessTopURL, load("https://webkit.org/"_s, RequestMethod::Get), { variantIndex<ContentExtensions::BlockLoadAction> });
+    testRequest(unlessTopURL, load("https://webkit.org/"_s, RequestMethod::Post), { });
+
+    auto ifDomain = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"tracker\",\"request-method\":\"post\",\"if-domain\":[\"example.com\"]}}]"_s);
+    testRequest(ifDomain, load("https://example.com/"_s, RequestMethod::Post), { variantIndex<ContentExtensions::BlockLoadAction> });
+    testRequest(ifDomain, load("https://webkit.org/"_s, RequestMethod::Post), { });
+
+    auto ifFrameURL = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"tracker\",\"request-method\":\"get\",\"if-frame-url\":[\"example\\\\.com\"]}}]"_s);
+    testRequest(ifFrameURL, load("https://example.com/"_s, RequestMethod::Get), { variantIndex<ContentExtensions::BlockLoadAction> });
+    testRequest(ifFrameURL, load("https://webkit.org/"_s, RequestMethod::Get), { });
+
+    auto unlessFrameURL = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"tracker\",\"request-method\":\"get\",\"unless-frame-url\":[\"example\\\\.com\"]}}]"_s);
+    testRequest(unlessFrameURL, load("https://example.com/"_s, RequestMethod::Get), { });
+    testRequest(unlessFrameURL, load("https://webkit.org/"_s, RequestMethod::Get), { variantIndex<ContentExtensions::BlockLoadAction> });
+}
+
 TEST_F(ContentExtensionTest, ResourceAndLoadType)
 {
     auto backend = makeBackend("[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\"BlockOnlyIfThirdPartyAndScript\",\"resource-type\":[\"script\"],\"load-type\":[\"third-party\"]}}]"_s);
@@ -3074,9 +3104,10 @@ TEST_F(ContentExtensionTest, Serialization)
         auto deserialized = RedirectAction::deserialize(buffer.span());
         EXPECT_EQ(deserialized, action);
     };
-    checkRedirectActionSerialization({ { RedirectAction::ExtensionPathAction { "extensionPath"_s } } }, 18);
-    checkRedirectActionSerialization({ { RedirectAction::RegexSubstitutionAction { "regexSubstitution"_s, "regexFilter"_s } } }, 41);
-    checkRedirectActionSerialization({ { RedirectAction::URLAction { "url"_s } } }, 8);
+    checkRedirectActionSerialization({ { RedirectAction::ExtensionPathAction { "extensionPath"_s } } }, 22);
+    checkRedirectActionSerialization({ { RedirectAction::RegexSubstitutionAction { "regexSubstitution"_s, "regexFilter"_s } } }, 45);
+    checkRedirectActionSerialization({ { RedirectAction::URLAction { "url"_s } } }, 12);
+    checkRedirectActionSerialization({ { RedirectAction::URLAction { "url"_s } }, 7 }, 12);
     checkRedirectActionSerialization({ { RedirectAction::URLTransformAction {
         String::fromUTF8("frägment"),
         "host"_s,
@@ -3086,11 +3117,11 @@ TEST_F(ContentExtensionTest, Serialization)
         { /* query */ },
         "scheme"_s,
         "username"_s
-    } } }, 68);
-    checkRedirectActionSerialization({ { RedirectAction::URLTransformAction { { }, { }, { }, { }, { }, { "query"_s }, { }, { } } } }, 20);
+    } } }, 72);
+    checkRedirectActionSerialization({ { RedirectAction::URLTransformAction { { }, { }, { }, { }, { }, { "query"_s }, { }, { } } } }, 24);
     checkRedirectActionSerialization({ { RedirectAction::URLTransformAction { { }, { }, { }, { }, { },
         { RedirectAction::URLTransformAction::QueryTransform { { { "key1"_s, false, "value1"_s }, { String::fromUTF8("key💩"), false, "value2"_s } }, { "testString1"_s, "testString2"_s } } }, { }, { },
-    } } }, 90);
+    } } }, 94);
 
     ModifyHeadersAction modifyHeaders { {
         { { ModifyHeadersAction::ModifyHeaderInfo::AppendOperation { "key1"_s, "value1"_s } } },

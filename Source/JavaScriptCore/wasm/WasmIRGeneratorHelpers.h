@@ -224,6 +224,12 @@ static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGener
 
 #endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
+inline CCallHelpers::Jump branchIfCalleeNotWasmToJS(CCallHelpers& jit, GPRReg boxedCalleeGPR)
+{
+    return jit.branchPtr(CCallHelpers::NotEqual, boxedCalleeGPR,
+        CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(&WasmToJSCallee::singleton())));
+}
+
 // Emits a RestoreInstanceCallee frame to restore our instance when returning from a
 // cross instance tail call chain. This is done lazily for performance of intra-module
 // tail call chains.
@@ -262,14 +268,14 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize), MacroAssembler::stackPointerRegister);
 
     if (needsCopy) {
-        // Copy [sp, cfr + topSourceOffsetFromFP) down by restoreFrameSize bytes.
-        // The range above cfr is the caller's argument area. OMG may reference
-        // these slots via positive-FP-offset ValueReps, so they must shift too.
-        jit.move(MacroAssembler::stackPointerRegister, scratch1);
+        // Copy [sp, cfr + topSourceOffsetFromFP) down by restoreFrameSize bytes, where sp is its
+        // value before the adjustment above. The range above cfr is the caller's argument area.
+        // OMG may reference these slots via positive-FP-offset ValueReps, so they must shift too.
+        jit.addPtr(CCallHelpers::TrustedImm32(restoreFrameSize), MacroAssembler::stackPointerRegister, scratch1);
 
         jit.jitAssert([&] {
             jit.addPtr(CCallHelpers::TrustedImm32(topSourceOffsetFromFP), GPRInfo::callFrameRegister, scratch2);
-            return jit.branchPtr(CCallHelpers::AboveOrEqual, scratch2, MacroAssembler::stackPointerRegister);
+            return jit.branchPtr(CCallHelpers::Above, scratch2, scratch1);
         });
 
         JIT_COMMENT(jit, "Copy loop start");

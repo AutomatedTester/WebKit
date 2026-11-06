@@ -40,7 +40,7 @@ namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSParserToken);
 
 template<typename CharacterType>
-CSSUnitType LEGACY_NODELETE cssPrimitiveValueUnitFromTrie(std::span<const CharacterType> data)
+NODELETE CSSUnitType cssPrimitiveValueUnitFromTrie(std::span<const CharacterType> data)
 {
     ASSERT(data.data());
     switch (data.size()) {
@@ -400,7 +400,7 @@ CSSParserToken::CSSParserToken(HashTokenType type, StringView value)
     initValueFromStringView(value);
 }
 
-static StringView LEGACY_NODELETE mergeIfAdjacent(StringView a, StringView b)
+NODELETE static StringView mergeIfAdjacent(StringView a, StringView b)
 {
     if (a.is8Bit() && b.is8Bit()) {
         auto characters = a.span8();
@@ -603,8 +603,9 @@ bool CSSParserToken::operator==(const CSSParserToken& other) const
     case UrlToken:
         return value() == other.value();
     case DimensionToken:
-        if (!m_nonUnitPrefixLength) {
+        if (!m_nonUnitPrefixLength || !other.m_nonUnitPrefixLength) {
             // The spec wants equality comparison of the original text but in some rare dimension cases we don't have it. Fall back to parsed values.
+            // This must be decided by both tokens so that the comparison is symmetric.
             if (unitString() != other.unitString())
                 return false;
             return m_numericSign == other.m_numericSign && m_numericValue == other.m_numericValue && m_numericValueType == other.m_numericValueType;

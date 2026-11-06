@@ -38,6 +38,11 @@
 #include "RemoteSharedResourceCache.h"
 #include "StreamConnectionWorkQueue.h"
 #include <WebCore/GraphicsContext.h>
+#if PLATFORM(COCOA)
+#include <WebCore/GraphicsLayerContentsDisplayDelegate.h>
+#include <WebCore/IOSurface.h>
+#include <WebCore/PlatformCALayerDelegatedContents.h>
+#endif
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/StdLibExtras.h>
 
@@ -79,6 +84,31 @@ void RemoteImageBuffer::getBackendHandle(CompletionHandler<void(std::optional<Im
     }
     completionHandler(downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle());
 }
+
+#if PLATFORM(COCOA)
+void RemoteImageBuffer::prepareForDisplay(IPC::Semaphore&& finishedSignal, CompletionHandler<void(MachSendRight&&)>&& completionHandler)
+{
+    assertIsCurrent(workQueue());
+    Ref imageBuffer = m_imageBuffer;
+    RefPtr displayDelegate = m_displayDelegate;
+    if (!displayDelegate) {
+        displayDelegate = imageBuffer->layerContentsDisplayDelegate();
+        m_displayDelegate = displayDelegate;
+    } else
+        imageBuffer->prepareForDisplay();
+    auto contents = displayDelegate ? displayDelegate->delegatedContents() : std::nullopt;
+    if (!contents) {
+        completionHandler({ });
+        finishedSignal.signal();
+        return;
+    }
+    RefPtr finishedFence = WTF::move(contents->finishedFence);
+    completionHandler(WTF::move(contents->surface));
+    if (finishedFence)
+        finishedFence->waitFor(WebCore::delegatedContentsFinishedTimeout);
+    finishedSignal.signal();
+}
+#endif
 
 RemoteImageBuffer::~RemoteImageBuffer()
 {
@@ -161,30 +191,6 @@ void RemoteImageBuffer::copyNativeImage(RenderingResourceIdentifier imageIdentif
     MESSAGE_CHECK(image, "OOM");
     bool success = m_renderingBackend->remoteResourceCache().cacheNativeImage(imageIdentifier, image.releaseNonNull());
     MESSAGE_CHECK(success, "NativeImage already exists");
-}
-
-void RemoteImageBuffer::filteredNativeImage(Ref<WebCore::Filter> filter, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
-{
-    assertIsCurrent(workQueue());
-    std::optional<WebCore::ShareableBitmap::Handle> handle = [&]() -> std::optional<WebCore::ShareableBitmap::Handle> {
-        Ref imageBuffer = m_imageBuffer;
-        auto image = imageBuffer->filteredNativeImage(filter);
-        if (!image)
-            return std::nullopt;
-        auto imageSize = image->size();
-        auto bitmap = WebCore::ShareableBitmap::create({ imageSize, imageBuffer->colorSpace() });
-        if (!bitmap)
-            return std::nullopt;
-        auto handle = bitmap->createHandle();
-        if (m_renderingBackend->sharedResourceCache().resourceOwner())
-            handle->setOwnershipOfMemory(m_renderingBackend->sharedResourceCache().resourceOwner(), WebCore::MemoryLedger::Graphics);
-        auto context = bitmap->createGraphicsContext();
-        if (!context)
-            return std::nullopt;
-        context->drawNativeImage(*image, WebCore::FloatRect { { }, imageSize }, WebCore::FloatRect { { }, imageSize });
-        return handle;
-    }();
-    completionHandler(WTF::move(handle));
 }
 
 void RemoteImageBuffer::convertToLuminanceMask()

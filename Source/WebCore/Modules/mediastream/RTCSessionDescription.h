@@ -49,8 +49,8 @@ public:
         RTCSdpType type;
         String sdp;
     };
-    static Ref<RTCSessionDescription> create(RTCSessionDescriptionInit&&);
-    static Ref<RTCSessionDescription> create(RTCSdpType, String&& sdp);
+    NODELETE static Ref<RTCSessionDescription> create(RTCSessionDescriptionInit&&);
+    NODELETE static Ref<RTCSessionDescription> create(RTCSdpType, String&& sdp);
 
     ~RTCSessionDescription();
 

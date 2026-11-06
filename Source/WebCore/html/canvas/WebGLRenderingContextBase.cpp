@@ -29,7 +29,6 @@
 #if ENABLE(WEBGL)
 
 #include "ANGLEInstancedArrays.h"
-#include "BitmapImage.h"
 #include "BufferSource.h"
 #include "CachedImage.h"
 #include "CanvasDrawImageSizing.h"
@@ -207,7 +206,7 @@ static IntRect texImageSourceSize(NativeImage& source)
 
 // Return true if a character belongs to the ASCII subset as defined in
 // GLSL ES 1.0 spec section 3.1.
-static bool LEGACY_NODELETE validateCharacter(unsigned char c)
+NODELETE static bool validateCharacter(unsigned char c)
 {
     // Printing characters are valid except " $ ` @ \ ' DEL.
     if (c >= 32 && c <= 126
@@ -375,7 +374,7 @@ static constexpr ASCIILiteral errorCodeToString(GCGLErrorCode error)
     return "INVALID_OPERATION"_s;
 }
 
-static constexpr GCGLenum LEGACY_NODELETE errorCodeToGLenum(GCGLErrorCode error)
+NODELETE static constexpr GCGLenum errorCodeToGLenum(GCGLErrorCode error)
 {
     switch (error) {
     case GCGLErrorCode::InvalidEnum:
@@ -395,26 +394,6 @@ static constexpr GCGLenum LEGACY_NODELETE errorCodeToGLenum(GCGLErrorCode error)
     return GraphicsContextGL::INVALID_OPERATION;
 }
 
-static constexpr GCGLErrorCode LEGACY_NODELETE glEnumToErrorCode(GCGLenum error)
-{
-    switch (error) {
-    case GraphicsContextGL::INVALID_ENUM:
-        return GCGLErrorCode::InvalidEnum;
-    case GraphicsContextGL::INVALID_VALUE:
-        return GCGLErrorCode::InvalidValue;
-    case GraphicsContextGL::INVALID_OPERATION:
-        return GCGLErrorCode::InvalidOperation;
-    case GraphicsContextGL::OUT_OF_MEMORY:
-        return GCGLErrorCode::OutOfMemory;
-    case GraphicsContextGL::INVALID_FRAMEBUFFER_OPERATION:
-        return GCGLErrorCode::InvalidFramebufferOperation;
-    case GraphicsContextGL::CONTEXT_LOST_WEBGL:
-        return GCGLErrorCode::ContextLost;
-    }
-    ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return GCGLErrorCode::InvalidOperation;
-}
-
 // Conversion function converting GraphicsContextGL member function results that are directly
 // UTF8CStrings. The returned values might be null on implementation error or context loss during
 // that function.
@@ -425,7 +404,7 @@ static String toNonNullString(const UTF8CString& text)
     return text;
 }
 
-static GraphicsContextGL::SurfaceBuffer LEGACY_NODELETE toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
+NODELETE static GraphicsContextGL::SurfaceBuffer toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
 {
     return buffer == CanvasRenderingContext::SurfaceBuffer::DrawingBuffer ? GraphicsContextGL::SurfaceBuffer::DrawingBuffer : GraphicsContextGL::SurfaceBuffer::DisplayBuffer;
 }
@@ -540,11 +519,11 @@ bool WebGLRenderingContextBase::initializeNewContext(Ref<GraphicsContextGL> cont
         initializeContextState();
         initializeDefaultObjects();
     }
+    // The storage is allocated when the default framebuffer is first used.
     m_defaultFramebuffer->setSize(clampedCanvasSize());
-    bool reshaped = m_defaultFramebuffer->ensureSize();
     // Next calls will receive the context lost callback.
     m_context->setClient(this);
-    return reshaped && !m_context->isContextLost();
+    return !m_context->isContextLost();
 }
 
 void WebGLRenderingContextBase::initializeContextState()
@@ -636,6 +615,11 @@ void WebGLRenderingContextBase::initializeContextState()
     m_supportedTexImageSourceFormats.addAll(supportedFormatsES2);
     m_supportedTexImageSourceTypes.addAll(supportedTypesES2);
     m_packReverseRowOrderSupported = context->enableExtension(GCGLExtension::ANGLE_pack_reverse_row_order);
+#if ENABLE(VIDEO)
+    // A restored context counts its copies from the start.
+    m_lastVideoUploadForTesting = { };
+    m_videoCopiesForTesting = 0;
+#endif
 }
 
 void WebGLRenderingContextBase::initializeDefaultObjects()
@@ -742,10 +726,13 @@ bool WebGLRenderingContextBase::ensureDefaultFramebufferSize()
 {
     if (isContextLost())
         return false;
+    auto oldAllocatedSize = m_defaultFramebuffer->allocatedSize();
     if (!m_defaultFramebuffer->ensureSize()) {
         forceContextLost();
         return false;
     }
+    if (m_defaultFramebuffer->allocatedSize() != oldAllocatedSize)
+        updateMemoryCost();
     return true;
 }
 
@@ -1014,10 +1001,21 @@ void WebGLRenderingContextBase::didUpdateCanvasSizeProperties(bool)
         return;
     // The display buffer must be replaced with the cleared drawing buffer of the new size. The
     // reallocation does not necessarily replace it, for example when the canvas is resized and
-    // resized back to the size of the storage without using the default framebuffer.
-    m_compositingResultsNeedUpdating = true;
-    willUpdateCanvasContents();
+    // resized back to the size of the storage without using the default framebuffer. If the storage
+    // is not allocated, nothing has been displayed, so there is nothing to replace. Then preparing
+    // for display would only allocate the storage that the canvas does not use.
+    if (!m_defaultFramebuffer->allocatedSize().isEmpty()) {
+        m_compositingResultsNeedUpdating = true;
+        willUpdateCanvasContents();
+    }
     updateMemoryCost();
+}
+
+IntSize WebGLRenderingContextBase::defaultFramebufferAllocatedSize() const
+{
+    if (isContextLost() || !m_defaultFramebuffer)
+        return { };
+    return m_defaultFramebuffer->allocatedSize();
 }
 
 int WebGLRenderingContextBase::drawingBufferWidth() const
@@ -3344,7 +3342,7 @@ IntRect WebGLRenderingContextBase::getImageDataSize(ImageData* pixels)
 }
 
 #if ENABLE(WEB_CODECS)
-static bool LEGACY_NODELETE isVideoFrameFormatEligibleToCopy(WebCodecsVideoFrame& frame)
+NODELETE static bool isVideoFrameFormatEligibleToCopy(WebCodecsVideoFrame& frame)
 {
 #if PLATFORM(COCOA)
     // FIXME: We should be able to remove the YUV restriction, see https://bugs.webkit.org/show_bug.cgi?id=251234.
@@ -3375,16 +3373,11 @@ static TexImageSourceImage nativeImageForTexImageSource(Image& image, ConcreteOb
     // Images without encoded data are backed by image buffers, which hold premultiplied alpha.
     RefPtr data = image.data();
     if (!data)
-        return { image.currentNativeImage(concreteObjectSize), AlphaPremultiplication::Premultiplied };
+        return { image.currentNativeImage(ImageDrawDescriptor { concreteObjectSize }), AlphaPremultiplication::Premultiplied };
     bool hasAlpha = !image.currentFrameKnownToBeOpaque();
-    if (ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) {
-        auto decodedImage = BitmapImage::create(nullptr, premultiplyAlpha ? AlphaOption::Premultiplied : AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
-        decodedImage->setData(WTF::move(data), true);
-        if (!decodedImage->frameCount())
-            return { };
-        return { decodedImage->currentNativeImage(), std::nullopt };
-    }
-    return { image.currentNativeImage(concreteObjectSize), std::nullopt };
+    if (ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha))
+        return { NativeImage::create(*data, premultiplyAlpha ? AlphaOption::Premultiplied : AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied), std::nullopt };
+    return { image.currentNativeImage(ImageDrawDescriptor { concreteObjectSize }), std::nullopt };
 }
 
 ExceptionOr<void> WebGLRenderingContextBase::texImageSourceHelper(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, TexImageSource&& source)
@@ -3570,7 +3563,99 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
     return { };
 }
 
+#if ENABLE(VIDEO) || ENABLE(WEB_CODECS)
+// Returns true if texImage2D of a video frame with the combination can use GraphicsContextGL::copyTextureFromVideoFrame().
+// The copy does not take the format, so the combination must be valid for TexImage2D.
+static bool isValidVideoFrameCopyCombination(bool isWebGL2, GCGLenum internalformat, GCGLenum format, GCGLenum type)
+{
+    if (type != GraphicsContextGL::UNSIGNED_BYTE)
+        return false;
+    switch (internalformat) {
+    case GraphicsContextGL::RGB:
+        return format == GraphicsContextGL::RGB;
+    case GraphicsContextGL::RGBA:
+        return format == GraphicsContextGL::RGBA;
+    case GraphicsContextGL::RGB8:
+    case GraphicsContextGL::SRGB8:
+    case GraphicsContextGL::RGB565:
+        return isWebGL2 && format == GraphicsContextGL::RGB;
+    case GraphicsContextGL::RGBA8:
+    case GraphicsContextGL::SRGB8_ALPHA8:
+    case GraphicsContextGL::RGBA4:
+    case GraphicsContextGL::RGB5_A1:
+        return isWebGL2 && format == GraphicsContextGL::RGBA;
+    default:
+        return false;
+    }
+}
+#endif
+
 #if ENABLE(VIDEO)
+// The upload restrictions of GraphicsContextGL::copyTextureFromVideoFrame(). Returns the reason the
+// copy is not tried, or nullopt.
+// FIXME: The current restrictions require that the source rectangle is the whole frame and
+// the format is RGB or RGBA with UNSIGNED_BYTE. It may be lifted in the future.
+std::optional<WebGLRenderingContextBase::VideoUploadDecision> WebGLRenderingContextBase::videoUploadGate(TexImageFunctionID functionID, bool sourceImageRectIsDefault, GCGLint internalformat, GCGLenum format, GCGLenum type) const
+{
+    if (m_videoUploadPathForTesting == VideoUploadPathForTesting::Software) [[unlikely]]
+        return VideoUploadDecision::Forced;
+    if (functionID != TexImageFunctionID::TexImage2D)
+        return VideoUploadDecision::GateFunction;
+    if (!sourceImageRectIsDefault)
+        return VideoUploadDecision::GateSourceRect;
+    if (!isValidVideoFrameCopyCombination(isWebGL2(), internalformat, format, type))
+        return VideoUploadDecision::GateCombination;
+    return std::nullopt;
+}
+
+WebGLRenderingContextBase::VideoUploadStatus WebGLRenderingContextBase::copyVideoFrameToTexture(VideoFrame& videoFrame, WebGLTexture& texture, ASCIILiteral functionName, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLenum type)
+{
+    bool hardwareOnly = m_videoUploadPathForTesting == VideoUploadPathForTesting::Hardware;
+    bool copied = protect(m_context)->copyTextureFromVideoFrame(videoFrame, texture.object(), target, level, internalformat, type, m_unpackFlipY, m_unpackPremultiplyAlpha);
+    m_lastVideoUploadForTesting = { m_lastVideoUploadForTesting.sequence + 1, VideoUploadDecision::Copy, hardwareOnly, copied, ++m_videoCopiesForTesting };
+    if (copied)
+        return VideoUploadStatus::Done;
+    if (hardwareOnly) [[unlikely]] {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "hardware video upload not possible"_s);
+        return VideoUploadStatus::Done;
+    }
+    return VideoUploadStatus::UseSoftwarePath;
+}
+
+WebGLRenderingContextBase::VideoUploadStatus WebGLRenderingContextBase::recordSoftwareVideoUpload(VideoUploadDecision decision, ASCIILiteral functionName)
+{
+    bool hardwareOnly = m_videoUploadPathForTesting == VideoUploadPathForTesting::Hardware;
+    m_lastVideoUploadForTesting = { m_lastVideoUploadForTesting.sequence + 1, decision, hardwareOnly, false, 0 };
+    if (hardwareOnly) [[unlikely]] {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "hardware video upload not possible"_s);
+        return VideoUploadStatus::Done;
+    }
+    return VideoUploadStatus::UseSoftwarePath;
+}
+
+void WebGLRenderingContextBase::setVideoUploadPathForTesting(VideoUploadPathForTesting path)
+{
+    m_videoUploadPathForTesting = path;
+}
+
+std::optional<WebGLRenderingContextBase::VideoUploadRecordForTesting> WebGLRenderingContextBase::lastVideoUploadForTesting()
+{
+    auto& last = m_lastVideoUploadForTesting;
+    if (!last.sequence)
+        return std::nullopt;
+    auto notCopiedPath = last.hardwareOnly ? VideoUploadPathTakenForTesting::None : VideoUploadPathTakenForTesting::Software;
+    VideoUploadRecordForTesting record { last.sequence, notCopiedPath, last.decision, std::nullopt };
+    if (last.decision != VideoUploadDecision::Copy)
+        return record;
+    if (last.copied)
+        record.path = VideoUploadPathTakenForTesting::Hardware;
+    RefPtr context = m_context;
+    auto copy = context ? context->lastVideoUploadForTesting() : std::nullopt;
+    if (copy && copy->sequence == last.copyNumber)
+        record.copy = *copy;
+    return record;
+}
+
 ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, HTMLVideoElement& source)
 {
     auto functionName = texImageFunctionName(functionID);
@@ -3595,19 +3680,18 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
 
     // Go through the fast path doing a GPU-GPU textures copy without a readback to system memory if possible.
     // Otherwise, it will fall back to the normal SW path.
-    // FIXME: The current restrictions require that format shoud be RGB or RGBA,
-    // type should be UNSIGNED_BYTE and level should be 0. It may be lifted in the future.
-    if (functionID == TexImageFunctionID::TexImage2D && sourceImageRectIsDefault && texture
-        && (format == GraphicsContextGL::RGB || format == GraphicsContextGL::RGBA)
-        && type == GraphicsContextGL::UNSIGNED_BYTE
-        && !level) {
-        if (RefPtr player = source.player()) {
-            if (RefPtr videoFrame = player->videoFrameForCurrentTime()) {
-                if (protect(graphicsContextGL())->copyTextureFromVideoFrame(*videoFrame, texture->object(), target, level, internalformat, format, type, m_unpackPremultiplyAlpha, m_unpackFlipY))
-                return { };
-            }
-        }
+    auto decision = videoUploadGate(functionID, sourceImageRectIsDefault, internalformat, format, type);
+    if (!decision) {
+        RefPtr<VideoFrame> videoFrame;
+        if (RefPtr player = source.player())
+            videoFrame = player->videoFrameForCurrentTime();
+        if (!videoFrame)
+            decision = VideoUploadDecision::NoFrame;
+        else if (copyVideoFrameToTexture(*videoFrame, *texture, functionName, target, level, internalformat, type) == VideoUploadStatus::Done)
+            return { };
     }
+    if (decision && recordSoftwareVideoUpload(*decision, functionName) == VideoUploadStatus::Done)
+        return { };
 
     // Fallback pure SW path.
     RefPtr image = videoFrameToNativeImage(source, functionName);
@@ -3659,22 +3743,31 @@ ExceptionOr<void> WebGLRenderingContextBase::texImageSource(TexImageFunctionID f
         return { };
     if (!validateTexFunc(functionID, SourceWebCodecsVideoFrame, target, level, internalformat, source.displayWidth(), source.displayHeight(), depth, border, format, type, xoffset, yoffset, zoffset))
         return { };
+    if (!inputSourceImageRect.isValid()) {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, functionName, "source sub-rectangle specified via pixel unpack parameters is invalid"_s);
+        return { };
+    }
 
-    auto internalFrame = source.internalFrame();
+    RefPtr internalFrame = source.internalFrameForRendering(*protect(scriptExecutionContext()));
+
+    // The texture has the size of the frame once rotated.
+    auto frameSize = internalFrame->rotatedSize();
 
     // Go through the fast path doing a GPU-GPU textures copy without a readback to system memory if possible.
     // Otherwise, it will fall back to the normal SW path.
-    // FIXME: The current restrictions require that format shoud be RGB or RGBA,
-    // type should be UNSIGNED_BYTE and level should be 0. It may be lifted in the future.
-    bool sourceImageRectIsDefault = inputSourceImageRect == sentinelEmptyRect() || inputSourceImageRect == IntRect(0, 0, static_cast<int>(internalFrame->presentationSize().width()), static_cast<int>(internalFrame->presentationSize().height()));
+    bool sourceImageRectIsDefault = inputSourceImageRect == sentinelEmptyRect() || inputSourceImageRect == IntRect(0, 0, frameSize.width(), frameSize.height());
     RefPtr context = m_context;
-    if (isVideoFrameFormatEligibleToCopy(source) && functionID == TexImageFunctionID::TexImage2D && texture && (format == GraphicsContextGL::RGB || format == GraphicsContextGL::RGBA) && sourceImageRectIsDefault && type == GraphicsContextGL::UNSIGNED_BYTE && !level) {
-        if (context->copyTextureFromVideoFrame(*internalFrame, texture->object(), target, level, internalformat, format, type, m_unpackPremultiplyAlpha, m_unpackFlipY))
+    auto decision = videoUploadGate(functionID, sourceImageRectIsDefault, internalformat, format, type);
+    if (!decision && !isVideoFrameFormatEligibleToCopy(source))
+        decision = VideoUploadDecision::GateVideoFrameFormat;
+    if (!decision) {
+        if (copyVideoFrameToTexture(*internalFrame, *texture, functionName, target, level, internalformat, type) == VideoUploadStatus::Done)
             return { };
-    }
+    } else if (recordSoftwareVideoUpload(*decision, functionName) == VideoUploadStatus::Done)
+        return { };
 
     // Fallback pure SW path.
-    auto image = context->videoFrameToNativeImage(*internalFrame);
+    RefPtr image = context->videoFrameToNativeImage(*internalFrame);
     if (!image)
         return { };
 
@@ -3765,7 +3858,7 @@ void WebGLRenderingContextBase::texImageImpl(TexImageFunctionID functionID, GCGL
     if (m_unpackFlipY)
         adjustedSourceImageRect.setY(image.size().height() - adjustedSourceImageRect.maxY());
 
-    GraphicsContextGLImageExtractor imageExtractor(image, sourceAlphaPremultiplication, premultiplyAlpha);
+    GraphicsContextGLImageExtractor imageExtractor(image, sourceAlphaPremultiplication, premultiplyAlpha, format);
     if (!imageExtractor.extractSucceeded()) {
         synthesizeGLError(GraphicsContextGL::INVALID_VALUE, functionName, "bad image data"_s);
         return;
@@ -3859,7 +3952,7 @@ bool WebGLRenderingContextBase::validateReadPixelsDimensions(GCGLint width, GCGL
         synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "readPixels"_s, "invalid pack parameters"_s);
         return false;
     }
-    auto skipAndWidth = Checked<GCGLint> { m_packParameters.skipPixels } + width;
+    auto skipAndWidth = Checked<GCGLint, RecordOverflow> { m_packParameters.skipPixels } + width;
     if (skipAndWidth.hasOverflowed() || skipAndWidth > dataStoreWidth) {
         synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "readPixels"_s, "invalid pack parameters"_s);
         return false;
@@ -3987,9 +4080,124 @@ ExceptionOr<void> WebGLRenderingContextBase::texSubImage2D(GCGLenum target, GCGL
     return texImageSourceHelper(TexImageFunctionID::TexSubImage2D, target, level, 0, 0, format, type, xoffset, yoffset, 0, sentinelEmptyRect(), 1, 0, WTF::move(*source));
 }
 
-ExceptionOr<void> WebGLRenderingContextBase::texElementSubImage2D(GCGLenum, GCGLint, GCGLint, GCGLint, std::optional<CanvasElementImageSource>, std::optional<WebGLCopyElementImageConfig>)
+ExceptionOr<void> WebGLRenderingContextBase::texElementSnapshot2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, const CanvasElementSnapshot& snapshot, std::optional<WebGLCopyElementImageConfig> config)
 {
-    return Exception { ExceptionCode::InvalidStateError };
+    auto snapshotRect = FloatRect { { }, snapshot.size };
+    auto srcRect = snapshotRect;
+
+    if (config) {
+        bool hasSourceMembers[] = { !!config->sx, !!config->sy, !!config->swidth, !!config->sheight };
+        bool hasAnySourceMember = hasSourceMembers[0] || hasSourceMembers[1] || hasSourceMembers[2] || hasSourceMembers[3];
+        bool hasAllSourceMembers = hasSourceMembers[0] && hasSourceMembers[1] && hasSourceMembers[2] && hasSourceMembers[3];
+
+        // Sepcs: If only some of the config members are supplied, generates an INVALID_VALUE error.
+        if (hasAnySourceMember && !hasAllSourceMembers) {
+            synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "sx, sy, swidth and sheight must be all specified or all omitted"_s);
+            return { };
+        }
+
+        // Specs: If any supplied numeric member of config is negative, generates an INVALID_VALUE error.
+        if (config->sx.value_or(0) < 0 || config->sy.value_or(0) < 0 || config->swidth.value_or(0) < 0 || config->sheight.value_or(0) < 0 || config->width.value_or(0) < 0 || config->height.value_or(0) < 0) {
+            synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "config members must not be negative"_s);
+            return { };
+        }
+
+        // Sepcs: If config.sx, config.sy, config.swidth, and config.sheight are all supplied, they
+        // define the source rectangle of the element image snapshot to render, in CSS pixels.
+        if (hasAllSourceMembers) {
+            srcRect = {
+                *config->sx,
+                *config->sy,
+                *config->swidth,
+                *config->sheight
+            };
+        }
+    }
+
+    if (!std::isfinite(srcRect.x()) || !std::isfinite(srcRect.y()) || !std::isfinite(srcRect.width()) || !std::isfinite(srcRect.height())) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSnapshot2D"_s, "source rectangle is not finite"_s);
+        return { };
+    }
+
+    auto normalizedSrcRect = normalizeRect(intersection(srcRect, snapshotRect));
+    if (normalizedSrcRect.isEmpty()) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSnapshot2D"_s, "source rectangle is empty"_s);
+        return { };
+    }
+
+    auto dstSize = expandedIntSize(normalizedSrcRect.size());
+
+    if (config) {
+        // Specs: If only one of config.width and config.height is supplied, generates an INVALID_VALUE error.
+        if (!config->width != !config->height) {
+            synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "width and height must be both specified or both omitted"_s);
+            return { };
+        }
+
+        if (config->width)
+            dstSize = { *config->width, *config->height };
+    }
+
+    if (dstSize.isEmpty()) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "width or height <= 0"_s);
+        return { };
+    }
+
+    auto texture = validateTexImageBinding(TexImageFunctionID::TexSubImage2D, target);
+    if (!texture)
+        return { };
+    if (!validateTexFunc(TexImageFunctionID::TexSubImage2D, SourceElementImage, target, level, 0, dstSize.width(), dstSize.height(), 1, 0, GraphicsContextGL::RGBA, GraphicsContextGL::UNSIGNED_BYTE, xoffset, yoffset, 0))
+        return { };
+
+    // FIXME: Handle drawable element with HDR contents.
+    RefPtr buffer = ImageBuffer::create(dstSize, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    if (!buffer) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "bad drawable element data"_s);
+        return { };
+    }
+
+    {
+        auto& context = buffer->context();
+        auto scale = dstSize / normalizedSrcRect.size();
+        context.translate(-toFloatSize(normalizedSrcRect.location()) * scale);
+        context.scale(scale);
+        context.drawDisplayList(snapshot.displayList);
+    }
+
+    RefPtr image = buffer->createNativeImageReference();
+    if (!image) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "bad image data"_s);
+        return { };
+    }
+
+    // Sepcs: UNPACK_ pixel store parameters should be ignored by this function.
+    texImageImpl(TexImageFunctionID::TexSubImage2D, target, level, 0, xoffset, yoffset, 0, GraphicsContextGL::RGBA, GraphicsContextGL::UNSIGNED_BYTE, *image, AlphaPremultiplication::Premultiplied, false, false, sentinelEmptyRect(), 1, 0);
+    return { };
+}
+
+ExceptionOr<void> WebGLRenderingContextBase::texElementSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, std::optional<CanvasElementImageSource> source, std::optional<WebGLCopyElementImageConfig> config)
+{
+    if (isContextLost())
+        return { };
+
+    if (!source) {
+        synthesizeGLError(GraphicsContextGL::INVALID_VALUE, "texElementSubImage2D"_s, "source is null"_s);
+        return { };
+    }
+
+    return WTF::switchOn(*source,
+        [&](Ref<Element>& element) -> ExceptionOr<void> {
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(canvasBase())) {
+                if (auto snapshot = canvasElement->canvasDrawableSnapshot(element))
+                    return texElementSnapshot2D(target, level, xoffset, yoffset, *snapshot, config);
+            }
+            synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "texElementSubImage2D"_s, "element is not a direct child of the drawable canvas"_s);
+            return { };
+        },
+        [&](Ref<CanvasElementImage>& elementImage) -> ExceptionOr<void> {
+            return texElementSnapshot2D(target, level, xoffset, yoffset, elementImage->snapshot(), config);
+        }
+    );
 }
 
 bool WebGLRenderingContextBase::validateTypeAndArrayBufferType(ASCIILiteral functionName, ArrayBufferViewFunctionType functionType, GCGLenum type, ArrayBufferView* pixels)
@@ -4145,6 +4353,7 @@ bool WebGLRenderingContextBase::validateTexFuncParameters(TexImageFunctionID fun
     // temporary data based on this combination, so it must be legal.
     if (sourceType == SourceHTMLImageElement
         || sourceType == SourceHTMLCanvasElement
+        || sourceType == SourceElementImage
         || sourceType == SourceImageData
         || sourceType == SourceImageBitmap
 #if ENABLE(VIDEO)
@@ -4399,7 +4608,7 @@ RefPtr<NativeImage> WebGLRenderingContextBase::drawImageIntoBuffer(const SizedIm
 
     FloatRect srcRect(FloatPoint(), sizedImage.concreteObjectSize.size());
     FloatRect destRect(FloatPoint(), size);
-    buf->context().drawImage(sizedImage.image, sizedImage.concreteObjectSize, destRect, srcRect);
+    protect(sizedImage.image)->draw(buf->context(), ImageDrawDescriptor { sizedImage.concreteObjectSize }, destRect, srcRect);
     // FIXME: createNativeImageReference() does not make sense for GPUP.
     // Instead, should fix by GPUP side upload.
     return buf->createNativeImageReference();
@@ -5871,7 +6080,7 @@ void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGL
 
     if (type == GraphicsContextGL::DEBUG_TYPE_ERROR) {
         level = MessageLevel::Error;
-        formattedMessage = makeString("WebGL: "_s, errorCodeToString(glEnumToErrorCode(id)), ": "_s, message);
+        formattedMessage = makeString("WebGL: "_s, errorCodeToString(GraphicsContextGL::enumToErrorCode(id)), ": "_s, message);
     } else
         formattedMessage = makeString("WebGL debug message: type:"_s, debugMessageTypeToString(type), ", id:"_s, id, " severity: "_s, debugMessageSeverityToString(severity), ": "_s, message);
 
@@ -5993,7 +6202,7 @@ void WebGLRenderingContextBase::updateMemoryCost() const
     newMemoryCost += m_readDisplayBuffer.memoryCost();
     newMemoryCost += m_readDrawingBuffer.memoryCost();
     if (!isContextLost()) {
-        size_t area = m_defaultFramebuffer->size().unclampedArea();
+        size_t area = m_defaultFramebuffer->allocatedSize().unclampedArea();
         size_t bytesPerSample = 4;
         if (m_attributes.depth)
             bytesPerSample += 4;

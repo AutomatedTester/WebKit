@@ -303,6 +303,29 @@ inline void checkDoesNotUseInstruction(Compilation& compilation, const char* tex
         toUTF8CString("Did not expected to find ", text, " but it's there!"));
 }
 
+// Counts whole mnemonics, so "smull" does not also count "smull2" and "addp" does not count "faddp".
+inline void checkInstructionCount(Compilation& compilation, const char* mnemonic, unsigned expected)
+{
+    checkDisassembly(
+        compilation,
+        [&](UTF8CStringView disassembly) -> bool {
+            auto span = byteCast<char>(disassembly.span());
+            std::string_view haystack { span.data(), span.size() };
+            std::string_view needle { mnemonic };
+            unsigned count = 0;
+            for (size_t position = haystack.find(needle); position != std::string_view::npos; position = haystack.find(needle, position + 1)) {
+                size_t end = position + needle.size();
+                if (position && isASCIIAlphanumeric(haystack[position - 1]))
+                    continue;
+                if (end < haystack.size() && isASCIIAlphanumeric(haystack[end]))
+                    continue;
+                ++count;
+            }
+            return count == expected;
+        },
+        toUTF8CString("Expected ", expected, " occurrences of ", mnemonic));
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 template<typename Type>
@@ -565,6 +588,7 @@ struct TestConfig {
 void run(const TestConfig* filter);
 
 void testBitAndSExt32(int32_t value, int64_t mask);
+void testBitAndSExt32WithOtherUse(int32_t value, int64_t mask);
 void testUbfx32ShiftAnd();
 void testUbfx32AndShift();
 void testUbfx64ShiftAnd();
@@ -609,6 +633,7 @@ void testBitAndZeroShiftRightArgImmMask32();
 void testBitAndZeroShiftRightArgImmMask64();
 void testBasicSelect();
 void testSelectTest();
+void testSelectTestHighBits();
 void testAddWithLeftShift32();
 void testAddWithRightShift32();
 void testAddWithUnsignedRightShift32();
@@ -977,6 +1002,7 @@ void testPhiFoldEqualConstantFromBackEdge();
 void testPhiFoldDeadLoopWithStalePredecessor();
 void testPhiFoldInBlockReachedOnlyByRetreatingEdge(bool swapArms);
 void testPhiFoldConstantInBlockReachedOnlyByRetreatingEdge(bool swapArms);
+void testPhiFoldInputFromMergedBlock(bool swapArms);
 void testPhiFoldDeadLoopHeaderEnteredFromRoot();
 void testPhiFoldLoopPhiTrivialAfterLatch();
 void testBranchNotEqualFoldPtr(intptr_t value);
@@ -1222,6 +1248,7 @@ void testSwitchSameCaseAsDefault();
 void testSwitchChillDiv(unsigned degree, unsigned gap);
 void testSwitchTargettingSameBlock();
 void testSwitchTargettingSameBlockFoldPathConstant();
+void testBranchOnPhiOfTakenComparesFoldPathConstant();
 void testSwitchOnConstant(int64_t key, bool is64Bit);
 void testSwitchSparseI64RangeOverflow();
 void testTruncFold(int64_t value);
@@ -1411,6 +1438,13 @@ void testCSELoadAfterStoreDiamond(bool flag);
 void testCSELoadAcrossLoopBackEdge(unsigned count);
 void testCSELoopHeaderLoadFromBackEdgeStore(unsigned count);
 
+void testFixSSALocalOnly();
+void testFixSSADiamondSetInOneArm(bool flag);
+void testFixSSADiamondJoinPhi(bool flag);
+void testFixSSADominatorChain(bool flag);
+void testFixSSAGetBeforeSet(bool flag);
+void testFixSSASetFromGetInSameBlock(bool flag);
+
 bool shouldRun(const TestConfig*, UTF8CStringView testName);
 
 void testLoadPreIndex32();
@@ -1491,16 +1525,18 @@ void testSShrCompare64(int64_t);
 void testInt52RoundTripUnary(int32_t);
 void testInt52RoundTripBinary();
 void testTruncSShrAddUnalignedConstant();
+void testTruncSShrShlSExt32(int32_t);
 
 void testMulHigh32();
 void testMulHigh64();
 void testUMulHigh32();
 void testUMulHigh64();
 
-void testMemoryCopy();
-void testMemoryCopyConstant();
+void testMemoryMove();
+void testMemoryMoveConstant();
 void testMemoryFill();
 void testMemoryFillConstant();
+void testGCSafeMemoryMove();
 
 void testLoadImmutable();
 
@@ -1533,6 +1569,14 @@ void testCCmpNegatedOr32(int32_t, int32_t);
 void testCCmpMixedWidth32And64(int32_t, int64_t, int32_t);
 void testCCmpMixedWidth64And32(int64_t, int32_t);
 void testCCmpChainRollback(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain32(B3::Opcode, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain64(B3::Opcode, int64_t, int64_t, int64_t);
+void testXorOrCompareChainZExt64(int64_t, int32_t);
+void testXorOrCompareChainBitImmediate32(int32_t, int32_t);
+void testXorOrCompareChainBranch64(int64_t, int64_t, int64_t, int64_t);
+void testXorOrCompareChainBranchEqualZero32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainSharedLeaf32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainLoads64(unsigned, unsigned);
 
 // ARM64 fccmp tests (floating-point conditional compare)
 void testFCCmpAndDouble(double, double, double, double);
@@ -1549,11 +1593,15 @@ void testFCCmpNegatedAndDouble(double, double, double, double);
 
 // SIMD XOR+rotate pattern matching
 void testVectorXorRotateRight64();
+void testVectorXorRotateRight64ShiftKindAndAmount();
 void testVectorXor3();
 void testVectorDotProductSplatOne();
+void testVectorReplaceLaneOfZeroWithLoad();
+void testVectorDotProductSum();
 void testVectorShrZipToExtend();
 void testVectorShrZipToExtendI32();
 void testVectorShrZipToExtendI64();
+void testVectorShrZipWithMismatchedLane();
 
 // SIMD VectorUnzip/Zip/Transpose/Reverse B3 opcodes
 void testVectorUnzipEven();

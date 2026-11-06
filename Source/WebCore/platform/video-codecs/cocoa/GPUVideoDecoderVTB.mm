@@ -86,9 +86,9 @@ static RetainPtr<CFDictionaryRef> createPixelBufferAttributes(CMVideoFormatDescr
 
 class GPUVideoDecoderVTBQueue : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<GPUVideoDecoderVTBQueue> {
 public:
-    static Ref<GPUVideoDecoderVTBQueue> create(uint8_t reorderQueueMaxSize) { return adoptRef(*new GPUVideoDecoderVTBQueue(reorderQueueMaxSize)); }
-    void setReorderQueueMaxSize(uint8_t);
-    uint8_t reorderQueueMaxSize() const;
+    NODELETE static Ref<GPUVideoDecoderVTBQueue> create(uint8_t reorderQueueMaxSize) { return adoptRef(*new GPUVideoDecoderVTBQueue(reorderQueueMaxSize)); }
+    NODELETE void setReorderQueueMaxSize(uint8_t);
+    NODELETE uint8_t reorderQueueMaxSize() const;
 
     struct Buffer {
         RetainPtr<CVPixelBufferRef> frame;
@@ -104,7 +104,7 @@ private:
     }
 
     struct BufferComparator {
-        bool operator()(const Buffer& a, const Buffer& b) const { return a.timeStamp <= b.timeStamp; }
+        NODELETE bool operator()(const Buffer& a, const Buffer& b) const { return a.timeStamp <= b.timeStamp; }
     };
 
     mutable Lock m_lock;

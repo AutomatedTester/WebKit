@@ -29,6 +29,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
+#include <wtf/Seconds.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -44,6 +45,10 @@ public:
     void start();
     void stop();
 
+    // Starts the stopwatch as if it had been running since the MonotonicTime epoch, so that its
+    // times are raw MonotonicTime seconds and line up with those of stopwatches in other processes.
+    void startAtMonotonicEpoch();
+
     Seconds elapsedTime() const;
     Seconds elapsedTimeSince(MonotonicTime) const;
     std::tuple<Seconds, MonotonicTime> elapsedTimeAndTimestamp() const;
@@ -56,13 +61,14 @@ private:
 
     Seconds m_elapsedTime;
     MonotonicTime m_lastStartTime;
-    Vector<std::pair<MonotonicTime, MonotonicTime>> m_pastInternals;
+    Vector<std::pair<MonotonicTime, MonotonicTime>> m_pastIntervals;
 };
 
 inline void Stopwatch::reset()
 {
     m_elapsedTime = 0_s;
     m_lastStartTime = MonotonicTime::nan();
+    m_pastIntervals.clear();
 }
 
 inline void Stopwatch::start()
@@ -72,12 +78,18 @@ inline void Stopwatch::start()
     m_lastStartTime = MonotonicTime::now();
 }
 
+inline void Stopwatch::startAtMonotonicEpoch()
+{
+    reset();
+    m_lastStartTime = MonotonicTime::fromRawSeconds(0);
+}
+
 inline void Stopwatch::stop()
 {
     ASSERT_WITH_MESSAGE(!m_lastStartTime.isNaN(), "Tried to stop the stopwatch, but it is not running.");
 
     auto stopTime = MonotonicTime::now();
-    m_pastInternals.append({ m_lastStartTime, stopTime });
+    m_pastIntervals.append({ m_lastStartTime, stopTime });
     m_elapsedTime += stopTime - m_lastStartTime;
     m_lastStartTime = MonotonicTime::nan();
 }
@@ -110,7 +122,7 @@ inline std::optional<Seconds> Stopwatch::fromMonotonicTime(MonotonicTime timeSta
         return Stopwatch::elapsedTimeSince(timeStamp);
 
     Seconds elapsedTime;
-    for (auto& interval : m_pastInternals) {
+    for (auto& interval : m_pastIntervals) {
         if (timeStamp < interval.first)
             return std::nullopt;
         if (interval.first <= timeStamp && timeStamp <= interval.second)

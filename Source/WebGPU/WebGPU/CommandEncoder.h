@@ -31,7 +31,6 @@
 #import "Device.h"
 #import <WebGPU/WebGPU.h>
 #import <WebGPU/WebGPUCpp.h>
-#import <WebGPU/WebGPUExt.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Function.h>
 #import <wtf/Ref.h>
@@ -52,8 +51,6 @@ IGNORE_CLANG_WARNINGS_BEGIN("nullability-completeness")
 @property (nonatomic) NSUInteger depthPlane;
 @end
 
-struct WGPUCommandEncoderImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -69,7 +66,7 @@ class Texture;
 class TextureView;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandencoder
-class CommandEncoder final : public WebGPU::CommandEncoder, public CommandsMixin, public WGPUCommandEncoderImpl {
+class CommandEncoder final : public WebGPU::CommandEncoder, public CommandsMixin {
     WTF_MAKE_TZONE_ALLOCATED(CommandEncoder);
 public:
     static Ref<CommandEncoder> create(id<MTLCommandBuffer> commandBuffer, Device& device, uint64_t uniqueId)
@@ -92,20 +89,28 @@ public:
     ~CommandEncoder();
 
     Ref<ComputePassEncoder> beginComputePass(const WebGPU::ComputePassDescriptor&);
-    Ref<RenderPassEncoder> beginRenderPass(const WebGPU::RenderPassDescriptor&);
+    RefPtr<WebGPU::RenderPassEncoder> beginRenderPass(const WebGPU::RenderPassDescriptor&) final;
     void copyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, Buffer& destination, uint64_t destinationOffset, uint64_t size);
-    void copyBufferToTexture(const WebGPU::TexelCopyBufferInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize);
-    void copyTextureToBuffer(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyBufferInfo& destination, const WebGPU::Extent3D& copySize);
-    void copyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize);
+    void copyBufferToTexture(const WebGPU::TexelCopyBufferInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize) final;
+    void copyTextureToBuffer(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyBufferInfo& destination, const WebGPU::Extent3D& copySize) final;
+    void copyTextureToTexture(const WebGPU::TexelCopyTextureInfo& source, const WebGPU::TexelCopyTextureInfo& destination, const WebGPU::Extent3D& copySize) final;
     void runClearEncoder(NSMutableDictionary<NSNumber*, TextureAndClearColor*> *attachmentsToClear, id<MTLTexture> depthStencilAttachmentToClear, bool depthAttachmentToClear, bool stencilAttachmentToClear, float depthClearValue = 0, uint32_t stencilClearValue = 0, id<MTLRenderCommandEncoder> existingEncoder = nil);
     // std::nullopt is the rest of the buffer after the offset.
     void clearBuffer(Buffer&, uint64_t offset, std::optional<uint64_t> size);
-    Ref<CommandBuffer> finish(const WebGPU::CommandBufferDescriptor&);
-    void insertDebugMarker(String&& markerLabel);
-    void popDebugGroup();
-    void pushDebugGroup(String&& groupLabel);
+    RefPtr<WebGPU::CommandBuffer> finish(const WebGPU::CommandBufferDescriptor&) final;
+    void insertDebugMarker(String&& markerLabel) final;
+    void popDebugGroup() final;
+    void pushDebugGroup(String&& groupLabel) final;
     void resolveQuerySet(const QuerySet&, uint32_t firstQuery, uint32_t queryCount, Buffer& destination, uint64_t destinationOffset);
     void writeTimestamp(QuerySet&, uint32_t queryIndex);
+
+    // The WebGPU::CommandEncoder methods that take objects. Every object they take was created
+    // by this implementation, so they cast it to its WebGPU::Metal type.
+    RefPtr<WebGPU::ComputePassEncoder> beginComputePass(const std::optional<WebGPU::ComputePassDescriptor>&) final;
+    void copyBufferToBuffer(const WebGPU::Buffer& source, uint64_t sourceOffset, WebGPU::Buffer& destination, uint64_t destinationOffset, uint64_t size) final;
+    void clearBuffer(WebGPU::Buffer&, uint64_t offset, std::optional<uint64_t> size) final;
+    void writeTimestamp(WebGPU::QuerySet&, uint32_t queryIndex) final;
+    void resolveQuerySet(const WebGPU::QuerySet&, uint32_t firstQuery, uint32_t queryCount, WebGPU::Buffer& destination, uint64_t destinationOffset) final;
     void setLabel(String&&) final;
 
     Device& device() const { return m_device; }
@@ -123,8 +128,8 @@ public:
 
     id<MTLBlitCommandEncoder> ensureBlitCommandEncoder();
     void finalizeBlitCommandEncoder();
-    static void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
-    static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>);
+    static void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger, const Device&, id<MTLBlitCommandEncoder>, const CommandEncoder* _Nullable owningCommandEncoder = nullptr);
+    static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>, const CommandEncoder* _Nullable owningCommandEncoder = nullptr);
     void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     void makeInvalid(NSString*);
     void makeSubmitInvalid(NSString* = nil);
@@ -141,8 +146,9 @@ public:
     void addICB(id<MTLIndirectCommandBuffer>);
     void addTexture(id<MTLTexture>);
     void addTexture(const Texture&);
+    void addResidentResource(id<MTLResource>);
     void addSampler(const Sampler&);
-    id<MTLCommandBuffer> _Nullable LEGACY_NODELETE commandBuffer() const;
+    NODELETE id<MTLCommandBuffer> _Nullable commandBuffer() const;
     void setExistingEncoder(id<MTLCommandEncoder>);
 
     // IOGPU can only fit on the order of 37000 MTLRenderCommandEncoders in a single MTLCommandBuffer
@@ -160,7 +166,7 @@ public:
     void encodeDeferredRenderPassTimestamps(MTLRenderPassDescriptor*);
     Ref<RenderPassEncoder> createRenderPassEncoder(const WebGPU::RenderPassDescriptor&, NSUInteger visibilityResultBufferSize, bool depthReadOnly, bool stencilReadOnly, id<MTLBuffer> _Nullable visibilityResultBuffer, uint64_t maxDrawCount, MTLRenderPassDescriptor*);
     void generateInvalidEncoderStateError();
-    bool LEGACY_NODELETE validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
+    NODELETE bool validateClearBuffer(const Buffer&, uint64_t offset, uint64_t size);
     void clearTracking();
     bool trackEncoderForBuffer(const Buffer&, TrackedResourceContainer&);
     void trackEncoderForTexture(const Texture&, TrackedResourceContainer&);
@@ -176,13 +182,14 @@ public:
     bool useResidencySet(id<MTLResidencySet>);
 #endif
     void skippedDrawIndexedValidation(uint64_t bufferIdentifier, DrawIndexCacheContainerIterator);
+    void skippedBundleIndirectDrawValidation(uint64_t bufferIdentifier, ReusedIndirectIndexedDraw&&);
     void rebindSamplersPreCommit(const BindGroup&);
 
 private:
     CommandEncoder(id<MTLCommandBuffer>, Device&, uint64_t uniqueId);
     CommandEncoder(Device&);
 
-    bool LEGACY_NODELETE validatePopDebugGroup() const;
+    NODELETE bool validatePopDebugGroup() const;
 
     NSString * _Nullable validateFinishError() const;
     NSString * _Nullable errorValidatingCopyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, const Buffer& destination, uint64_t destinationOffset, uint64_t size);
@@ -217,6 +224,7 @@ private:
     NSMutableSet<id<MTLCounterSampleBuffer>> * _Nullable m_retainedTimestampBuffers { nil };
     Vector<Function<bool(CommandBuffer&, CommandEncoder&)>> m_onCommitHandlers;
     HashMap<uint64_t, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedDrawIndexedValidationKeys;
+    HashMap<uint64_t, Vector<ReusedIndirectIndexedDraw>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_reusedIndirectIndexedDraws;
     Vector<Ref<const BindGroup>> m_bindGroups;
     Vector<Ref<const Buffer>> m_trackedBuffers;
     Vector<Ref<const Texture>> m_trackedTextures;
@@ -229,7 +237,9 @@ private:
     id<MTLSharedEvent> _Nullable m_sharedEvent { nil };
     uint64_t m_sharedEventSignalValue { 0 };
     const Ref<Device> m_device;
-    uint64_t m_uniqueId;
+    // const so that a constructor which forgets to initialize this is a compile error rather than
+    // an uninitialized read in ~CommandEncoder(). rdar://178679545
+    const uint64_t m_uniqueId;
 #if ENABLE(WEBGPU_BY_DEFAULT)
     uint32_t m_currentResidencySetCount { 0 };
 #endif

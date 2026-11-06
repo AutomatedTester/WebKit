@@ -102,8 +102,8 @@ template<> struct CSSValueCreation<BorderImageSlice> { auto operator()(CSSValueP
 // MARK: - Blending
 
 template<> struct Blending<BorderImageSlice> {
-    auto canBlend(const BorderImageSlice&, const BorderImageSlice&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const BorderImageSlice&, const BorderImageSlice&) -> bool;
+    NODELETE bool canBlend(const BorderImageSlice&, const BorderImageSlice&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const BorderImageSlice&, const BorderImageSlice&);
     auto blend(const BorderImageSlice&, const BorderImageSlice&, const BlendingContext&) -> BorderImageSlice;
 };
 

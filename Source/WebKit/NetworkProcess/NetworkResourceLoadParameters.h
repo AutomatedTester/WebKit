@@ -54,7 +54,7 @@ namespace WebKit {
 struct NetworkResourceLoadParameters {
     void createSandboxExtensionHandlesIfNecessary();
 
-    RefPtr<WebCore::SecurityOrigin> LEGACY_NODELETE parentOrigin() const;
+    NODELETE RefPtr<WebCore::SecurityOrigin> parentOrigin() const;
     NetworkLoadParameters networkLoadParameters() const;
     WebCore::SecurityOriginData topOriginForServiceWorkers(const WebCore::ResourceRequest&) const;
 
@@ -89,9 +89,10 @@ struct NetworkResourceLoadParameters {
     std::optional<WebCore::ContentSecurityPolicyResponseHeaders> cspResponseHeaders { };
     URL parentFrameURL { };
     URL frameURL { };
+    URL workerURL { };
     WebCore::CrossOriginEmbedderPolicy parentCrossOriginEmbedderPolicy { };
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy { };
-    WebCore::DocumentIsolationPolicy documentIsolationPolicy { WebCore::DocumentIsolationPolicy::None };
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy { };
     WebCore::HTTPHeaderMap originalRequestHeaders { };
     WebCore::PreflightPolicy preflightPolicy { WebCore::PreflightPolicy::Consider };
     bool shouldEnableCrossOriginResourcePolicy { false };
@@ -132,7 +133,7 @@ struct NetworkResourceLoadParameters {
     bool shouldRecordFrameLoadForStorageAccess { false };
 
     bool isInitiatorPrefetch { false };
-    bool isInitiatedByDedicatedWorker { false };
+    bool isInitiatedByWorker { false };
     bool hasUnpartitionedStorageAccess { false };
     bool globalPrivacyControlEnabled { false };
     bool shouldConsiderEnhancedSecurityForInsecureResponse { false };

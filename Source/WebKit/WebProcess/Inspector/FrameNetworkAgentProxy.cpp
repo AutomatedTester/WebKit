@@ -176,8 +176,11 @@ static ResourceType resourceTypeForRequest(const ResourceRequest& request, Docum
 
 void FrameNetworkAgentProxy::willSendRequest(ResourceLoaderIdentifier resourceID, DocumentLoader* loader, ResourceRequest& request, const ResourceResponse& redirectResponse, const CachedResource* cachedResource, ResourceLoader* resourceLoader)
 {
-    if (request.hiddenFromInspector())
+    // A redirect hop can lose the hidden bit, so a load stays hidden by identifier.
+    if (request.hiddenFromInspector() || m_hiddenRequestIdentifiers.contains(resourceID)) {
+        m_hiddenRequestIdentifiers.add(resourceID);
         return;
+    }
 
     if (!loader || !loader->frame() || !loader->frame()->document())
         return;
@@ -188,11 +191,8 @@ void FrameNetworkAgentProxy::willSendRequest(ResourceLoaderIdentifier resourceID
         request.setHTTPHeaderField(header.key, header.value);
 
     RefPtr protectedLoader = loader;
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    auto loaderId = loaderIdForLoader(*page, protectedLoader.get());
+    Ref page = m_page;
+    auto loaderId = loaderIdForLoader(page, protectedLoader.get());
     auto frameID = frameIdentifier(protectedLoader.get());
     auto resourceType = resourceTypeForRequest(request, protectedLoader.get(), cachedResource);
     if (!frameID)
@@ -222,6 +222,11 @@ void FrameNetworkAgentProxy::willSendRequest(ResourceLoaderIdentifier resourceID
 
 void FrameNetworkAgentProxy::willSendRequestOfType(ResourceLoaderIdentifier resourceID, DocumentLoader* loader, ResourceRequest& request, Inspector::UncachedLoadType)
 {
+    if (request.hiddenFromInspector() || m_hiddenRequestIdentifiers.contains(resourceID)) {
+        m_hiddenRequestIdentifiers.add(resourceID);
+        return;
+    }
+
     if (!loader || !loader->frame() || !loader->frame()->document())
         return;
 
@@ -231,11 +236,8 @@ void FrameNetworkAgentProxy::willSendRequestOfType(ResourceLoaderIdentifier reso
         request.setHTTPHeaderField(header.key, header.value);
 
     RefPtr protectedLoader = loader;
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    auto loaderId = loaderIdForLoader(*page, protectedLoader.get());
+    Ref page = m_page;
+    auto loaderId = loaderIdForLoader(page, protectedLoader.get());
     auto frameID = frameIdentifier(protectedLoader.get());
     if (!frameID)
         return;
@@ -262,15 +264,15 @@ void FrameNetworkAgentProxy::willSendRequestOfType(ResourceLoaderIdentifier reso
 
 void FrameNetworkAgentProxy::didReceiveResponse(ResourceLoaderIdentifier resourceID, DocumentLoader* loader, const ResourceResponse& response, ResourceLoader* resourceLoader)
 {
+    if (m_hiddenRequestIdentifiers.contains(resourceID))
+        return;
+
     if (!loader || !loader->frame() || !loader->frame()->document())
         return;
 
     RefPtr protectedLoader = loader;
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
-    auto loaderId = loaderIdForLoader(*page, protectedLoader.get());
+    Ref page = m_page;
+    auto loaderId = loaderIdForLoader(page, protectedLoader.get());
     auto frameID = frameIdentifier(protectedLoader.get());
     if (!frameID)
         return;
@@ -296,22 +298,24 @@ void FrameNetworkAgentProxy::didReceiveResponse(ResourceLoaderIdentifier resourc
 
 void FrameNetworkAgentProxy::didReceiveData(ResourceLoaderIdentifier resourceID, const SharedBuffer* data, int dataLength, int encodedDataLength)
 {
+    if (m_hiddenRequestIdentifiers.contains(resourceID))
+        return;
+
     if (data)
         m_resourcesData->maybeAddResourceData(resourceID, *data);
-
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
 
     auto timestamp = MonotonicTime::now().secondsSinceEpoch().value();
 
     protect(WebProcess::singleton().parentProcessConnection())->send(
         Messages::ProxyingNetworkAgent::DataReceived(qualifyResourceID(resourceID), dataLength, encodedDataLength, timestamp),
-        page->identifier());
+        protect(m_page)->identifier());
 }
 
 void FrameNetworkAgentProxy::didFinishLoading(ResourceLoaderIdentifier resourceID, DocumentLoader* loader, const NetworkLoadMetrics& networkLoadMetrics, ResourceLoader*)
 {
+    if (m_hiddenRequestIdentifiers.remove(resourceID))
+        return;
+
     if (!loader || !loader->frame() || !loader->frame()->document())
         return;
 
@@ -342,10 +346,7 @@ void FrameNetworkAgentProxy::didFinishLoading(ResourceLoaderIdentifier resourceI
         }
     }
 
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
+    Ref page = m_page;
     // The Network domain's sourceMapURL is CSS-only by design; scripts flow through
     // the Debugger domain. Mirror ResourceUtilities::sourceMapURLForResource: prefer the
     // SourceMap/X-SourceMap response header (captured at response time), then fall back to
@@ -385,32 +386,28 @@ void FrameNetworkAgentProxy::didFinishLoading(ResourceLoaderIdentifier resourceI
 
 void FrameNetworkAgentProxy::didFailLoading(ResourceLoaderIdentifier resourceID, DocumentLoader* loader, const ResourceError& error)
 {
-    if (!loader || !loader->frame() || !loader->frame()->document())
+    if (m_hiddenRequestIdentifiers.remove(resourceID))
         return;
 
-    RefPtr page = m_page.get();
-    if (!page)
+    if (!loader || !loader->frame() || !loader->frame()->document())
         return;
 
     auto timestamp = MonotonicTime::now().secondsSinceEpoch().value();
 
     protect(WebProcess::singleton().parentProcessConnection())->send(
         Messages::ProxyingNetworkAgent::LoadingFailed(qualifyResourceID(resourceID), timestamp, error.localizedDescription(), error.isCancellation()),
-        page->identifier());
+        protect(m_page)->identifier());
 }
 
-void FrameNetworkAgentProxy::didLoadResourceFromMemoryCache(DocumentLoader* loader, CachedResource& cachedResource)
+void FrameNetworkAgentProxy::didLoadResourceFromMemoryCache(DocumentLoader* loader, CachedResource& cachedResource, const URL& url)
 {
     if (!loader || !loader->frame() || !loader->frame()->document())
         return;
 
     RefPtr protectedLoader = loader;
-    RefPtr page = m_page.get();
-    if (!page)
-        return;
-
+    Ref page = m_page;
     auto resourceID = ResourceLoaderIdentifier::generate();
-    auto loaderId = loaderIdForLoader(*page, protectedLoader.get());
+    auto loaderId = loaderIdForLoader(page, protectedLoader.get());
     auto frameID = frameIdentifier(protectedLoader.get());
     auto resourceType = ResourceUtilities::inspectorResourceType(cachedResource);
     if (!frameID)
@@ -442,7 +439,7 @@ void FrameNetworkAgentProxy::didLoadResourceFromMemoryCache(DocumentLoader* load
 
     protect(WebProcess::singleton().parentProcessConnection())->send(
         Messages::ProxyingNetworkAgent::RequestServedFromMemoryCache(
-            qualifyResourceID(resourceID), *frameID, loaderId, documentURL,
+            qualifyResourceID(resourceID), *frameID, loaderId, documentURL, url,
             cachedResource.response(), resourceType, sourceMapURL, bodySize, timestamp, WTF::move(initiator)),
         page->identifier());
 }

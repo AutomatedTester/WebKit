@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/Forward.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/Variant.h>
 #include <wtf/text/AtomString.h>
@@ -51,10 +52,12 @@ struct FontPalette {
 
     WEBCORE_EXPORT ~FontPalette();
 
-    bool isNormal() const;
-    bool isLight() const;
-    bool isDark() const;
-    std::optional<AtomString> ident() const;
+    NODELETE bool isNormal() const;
+    NODELETE bool isLight() const;
+    NODELETE bool isDark() const;
+    NODELETE std::optional<AtomString> ident() const;
+
+    OrderedHashSet<AtomString> referencedIdentifiers() const;
 
     template<typename... F> decltype(auto) switchOn(F&&...) const;
 

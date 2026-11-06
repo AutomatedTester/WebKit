@@ -45,6 +45,7 @@
 #include "WebKitSettingsPrivate.h"
 #include "WebKitURISchemeRequestPrivate.h"
 #include "WebKitUserMessagePrivate.h"
+#include "WebKitWebContextInternal.h"
 #include "WebKitWebContextPrivate.h"
 #include "WebKitWebViewPrivate.h"
 #include "WebKitWebsiteDataManagerPrivate.h"
@@ -2018,6 +2019,24 @@ GVariant* webkitWebContextInitializeWebProcessExtensions(WebKitWebContext* conte
     return gVariantNew("(msmv)",
         context->priv->webProcessExtensionsDirectory,
         context->priv->webProcessExtensionsInitializationUserData.get());
+}
+
+void webkitWebContextSetSandboxEnabledForTesting(WebKitWebContext* context, bool enabled)
+{
+    Ref pool = *context->priv->processPool;
+    pool->setSandboxEnabledForTesting(enabled);
+}
+
+void webkitWebContextPrewarmProcessForTesting(WebKitWebContext* context, WebKitWebView* webView)
+{
+    context->priv->processPool->prewarmProcess(&webkitWebViewGetPage(webView).websiteDataStore());
+}
+
+unsigned webkitWebContextGetPrewarmedProcessCountForTesting(WebKitWebContext* context)
+{
+    return std::ranges::count_if(context->priv->processPool->processes(), [](auto& process) {
+        return process->isPrewarmed();
+    });
 }
 
 WebProcessPool& webkitWebContextGetProcessPool(WebKitWebContext* context)

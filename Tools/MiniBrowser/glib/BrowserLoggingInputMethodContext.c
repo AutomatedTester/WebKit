@@ -60,6 +60,30 @@ static const char *purposeName(WebKitInputPurpose purpose)
     return "Unknown";
 }
 
+static const char *enterKeyHintName(WebKitInputEnterKeyHint hint)
+{
+    switch (hint) {
+    case WEBKIT_INPUT_ENTER_KEY_HINT_UNSPECIFIED:
+        return "Unspecified";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_ENTER:
+        return "Enter";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_DONE:
+        return "Done";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_GO:
+        return "Go";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_NEXT:
+        return "Next";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_PREVIOUS:
+        return "Previous";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_SEARCH:
+        return "Search";
+    case WEBKIT_INPUT_ENTER_KEY_HINT_SEND:
+        return "Send";
+    }
+
+    return "Unknown";
+}
+
 static char *hintsDescription(WebKitInputHints hints)
 {
     GString *description;
@@ -77,6 +101,7 @@ static char *hintsDescription(WebKitInputHints hints)
     APPEND_HINT(WEBKIT_INPUT_HINT_UPPERCASE_WORDS, "UppercaseWords");
     APPEND_HINT(WEBKIT_INPUT_HINT_UPPERCASE_SENTENCES, "UppercaseSentences");
     APPEND_HINT(WEBKIT_INPUT_HINT_INHIBIT_OSK, "InhibitOSK");
+    APPEND_HINT(WEBKIT_INPUT_HINT_PRIVATE, "Private");
 #undef APPEND_HINT
 
     return g_string_free(description, FALSE);
@@ -85,7 +110,8 @@ static char *hintsDescription(WebKitInputHints hints)
 static void logContentType(WebKitInputMethodContext *context, const char *event)
 {
     g_autofree char *hints = hintsDescription(webkit_input_method_context_get_input_hints(context));
-    logInputMethod("%s: purpose=%s hints=%s", event, purposeName(webkit_input_method_context_get_input_purpose(context)), hints);
+    logInputMethod("%s: purpose=%s hints=%s enter-key-hint=%s", event, purposeName(webkit_input_method_context_get_input_purpose(context)), hints,
+        enterKeyHintName(webkit_input_method_context_get_enter_key_hint(context)));
 }
 
 static void browserLoggingInputMethodContextDispatchPropertiesChanged(GObject *object, guint propertyCount, GParamSpec **properties)
@@ -98,7 +124,7 @@ static void browserLoggingInputMethodContextDispatchPropertiesChanged(GObject *o
         return;
 
     for (i = 0; i < propertyCount; i++) {
-        if (g_str_equal(properties[i]->name, "input-purpose") || g_str_equal(properties[i]->name, "input-hints")) {
+        if (g_str_equal(properties[i]->name, "input-purpose") || g_str_equal(properties[i]->name, "input-hints") || g_str_equal(properties[i]->name, "enter-key-hint")) {
             logContentType(WEBKIT_INPUT_METHOD_CONTEXT(object), "content type");
             return;
         }

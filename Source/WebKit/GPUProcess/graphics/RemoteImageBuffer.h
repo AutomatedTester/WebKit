@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "IPCEvent.h"
+#include "IPCSemaphore.h"
 #include "ImageBufferBackendHandle.h"
 #include "RemoteGraphicsContextIdentifier.h"
 #include "ScopedActiveMessageReceiveQueue.h"
@@ -60,7 +61,7 @@ public:
 private:
     RemoteImageBuffer(Ref<WebCore::ImageBuffer>&&, WebCore::RenderingResourceIdentifier, RemoteGraphicsContextIdentifier, RemoteRenderingBackend&);
     void startListeningForIPC();
-    IPC::StreamConnectionWorkQueue& LEGACY_NODELETE workQueue() const;
+    NODELETE IPC::StreamConnectionWorkQueue& workQueue() const;
 
     // IPC::StreamMessageReceiver
     void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
@@ -73,7 +74,9 @@ private:
     void copyNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier);
     void getEffectiveRenderingModeForTesting(CompletionHandler<void(std::optional<WebCore::RenderingMode>)>&&);
     void getBackendHandle(CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&)>&&);
-    void filteredNativeImage(Ref<WebCore::Filter>, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+#if PLATFORM(COCOA)
+    void prepareForDisplay(IPC::Semaphore&& finishedSignal, CompletionHandler<void(MachSendRight&&)>&&);
+#endif
     void convertToLuminanceMask();
     void transformToColorSpace(const WebCore::ColorSpace&);
     void setFlushSignal(IPC::Signal&&);
@@ -85,6 +88,9 @@ private:
 #endif
 
     const Ref<WebCore::ImageBuffer> m_imageBuffer;
+#if PLATFORM(COCOA)
+    RefPtr<WebCore::GraphicsLayerContentsDisplayDelegate> m_displayDelegate;
+#endif
     const WebCore::RenderingResourceIdentifier m_identifier;
     const Ref<RemoteRenderingBackend> m_renderingBackend;
     IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferGraphicsContext> m_context;

@@ -29,6 +29,7 @@
 
 namespace WebCore {
 
+class HTMLOptionElement;
 class HTMLSelectElement;
 
 class HTMLSelectedContentElement final : public HTMLElement {
@@ -38,6 +39,8 @@ public:
     static Ref<HTMLSelectedContentElement> create(const QualifiedName&, Document&);
 
     bool isDisabled() const { return m_isDisabled; }
+    void updateFromOption(HTMLOptionElement*);
+    void updateFromOptions(const Vector<Ref<HTMLOptionElement>>&);
     void updateClonedOptionSelectedStates();
 
 private:
@@ -47,7 +50,6 @@ private:
     void postConnectionSteps() final;
     void removingSteps(RemovalType, ContainerNode&) final;
     void movingSteps(MovingType, ContainerNode&) final;
-    void childrenChanged(const ChildChange&) final;
 
     RefPtr<HTMLSelectElement> recalculateDisabledness();
 

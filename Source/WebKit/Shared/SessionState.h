@@ -33,6 +33,7 @@
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PolicyContainer.h>
+#include <WebCore/Site.h>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RunLoop.h>
@@ -88,7 +89,7 @@ public:
     const Vector<AtomString>& documentState() const LIFETIME_BOUND { return m_documentState; }
     enum class ShouldValidate : bool { No, Yes };
     void setDocumentState(const Vector<AtomString>&, ShouldValidate = ShouldValidate::No);
-    static bool LEGACY_NODELETE validateDocumentState(const Vector<AtomString>&);
+    NODELETE static bool validateDocumentState(const Vector<AtomString>&);
     void replaceChildFrameState(Ref<FrameState>&&);
 
     String urlString;
@@ -119,6 +120,7 @@ public:
     bool wasRestoredFromSession { false };
     WebCore::IsInitialAboutBlank isInitialAboutBlank { WebCore::IsInitialAboutBlank::No };
     std::optional<WebCore::PolicyContainer> policyContainer;
+    std::optional<WebCore::Site> inheritedSite;
 
     // FIXME: These should not be per frame.
 #if PLATFORM(IOS_FAMILY)
@@ -132,7 +134,7 @@ public:
 
     Vector<Ref<FrameState>> children;
 
-    bool LEGACY_NODELETE isEqualForTesting(const FrameState&) const;
+    NODELETE bool isEqualForTesting(const FrameState&) const;
 
 private:
     // This is used to help debug <rdar://problem/48634553>.
@@ -145,7 +147,7 @@ private:
         Vector<Ref<FrameState>>&& children, Vector<AtomString>&& documentState
     );
 
-    FrameState(const String& urlString, const String& originalURLString, const String& referrer, const AtomString& target, std::optional<WebCore::FrameIdentifier>, std::optional<Vector<uint8_t>> stateObjectData, int64_t documentSequenceNumber, int64_t itemSequenceNumber, std::optional<WTF::UUID> navigationAPIKey, WebCore::IntPoint scrollPosition, bool shouldRestoreScrollPosition, float pageScaleFactor, const std::optional<HTTPBody>&, std::optional<WebCore::BackForwardItemIdentifier>, std::optional<WebCore::BackForwardFrameItemIdentifier>, const String& title, WebCore::ShouldOpenExternalURLsPolicy, RefPtr<WebCore::SerializedScriptValue>&& sessionStateObject, bool wasCreatedByJSWithoutUserInteraction, bool wasRestoredFromSession, WebCore::IsInitialAboutBlank, const std::optional<WebCore::PolicyContainer>&,
+    FrameState(const String& urlString, const String& originalURLString, const String& referrer, const AtomString& target, std::optional<WebCore::FrameIdentifier>, const std::optional<Vector<uint8_t>>& stateObjectData, int64_t documentSequenceNumber, int64_t itemSequenceNumber, std::optional<WTF::UUID> navigationAPIKey, WebCore::IntPoint scrollPosition, bool shouldRestoreScrollPosition, float pageScaleFactor, const std::optional<HTTPBody>&, std::optional<WebCore::BackForwardItemIdentifier>, std::optional<WebCore::BackForwardFrameItemIdentifier>, const String& title, WebCore::ShouldOpenExternalURLsPolicy, RefPtr<WebCore::SerializedScriptValue>&& sessionStateObject, bool wasCreatedByJSWithoutUserInteraction, bool wasRestoredFromSession, WebCore::IsInitialAboutBlank, const std::optional<WebCore::PolicyContainer>&, const std::optional<WebCore::Site>& inheritedSite,
 #if PLATFORM(IOS_FAMILY)
         WebCore::FloatRect exposedContentRect, WebCore::IntRect unobscuredContentRect, WebCore::FloatSize minimumLayoutSizeInScrollViewCoordinates, WebCore::IntSize contentSize, bool scaleIsInitial, WebCore::FloatBoxExtent obscuredInsets,
 #endif

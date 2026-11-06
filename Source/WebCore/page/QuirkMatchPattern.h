@@ -52,6 +52,7 @@ enum class URLEnvironment : uint8_t {
     TubularApp,
     LensApp,
     SafariWebApp,
+    HomeView,
 };
 
 WEBCORE_EXPORT bool evaluateURLEnvironment(URLEnvironment);
@@ -81,6 +82,10 @@ class QuirkMatchPattern {
 public:
     WEBCORE_EXPORT static std::optional<QuirkMatchPattern> parse(StringView);
 
+    WEBCORE_EXPORT explicit QuirkMatchPattern(String&&);
+
+    bool isValid() const { return m_pattern.isValid(); }
+
     WEBCORE_EXPORT bool matches(const URLMatchContext&) const;
 
     const String& string() const LIFETIME_BOUND { return m_string; }
@@ -88,13 +93,15 @@ public:
     friend bool operator==(const QuirkMatchPattern& a, const QuirkMatchPattern& b) { return a.m_string == b.m_string; }
 
 private:
-    QuirkMatchPattern(String&&, UserContentURLPattern&&, bool matchesAnyPublicSuffix);
+    NODELETE QuirkMatchPattern(String&&, UserContentURLPattern&&, bool matchesAnyPublicSuffix);
 
     String m_string;
 
     UserContentURLPattern m_pattern;
     bool m_matchesAnyPublicSuffix { false };
 };
+
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const QuirkMatchPattern&);
 
 inline bool anyPatternMatches(std::span<const QuirkMatchPattern> patterns, const URLMatchContext& context)
 {

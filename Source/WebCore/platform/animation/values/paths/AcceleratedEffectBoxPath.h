@@ -49,8 +49,8 @@ std::optional<WebCore::Path> tryPath(const AcceleratedEffectBoxPath&, const Tran
 // MARK: - Blending
 
 template<> struct AcceleratedEffectInterpolation<AcceleratedEffectBoxPath> {
-    auto canBlend(const AcceleratedEffectBoxPath&, const AcceleratedEffectBoxPath&) -> bool;
-    auto blend(const AcceleratedEffectBoxPath&, const AcceleratedEffectBoxPath&, const BlendingContext&) -> AcceleratedEffectBoxPath;
+    NODELETE bool canBlend(const AcceleratedEffectBoxPath&, const AcceleratedEffectBoxPath&);
+    NODELETE AcceleratedEffectBoxPath blend(const AcceleratedEffectBoxPath&, const AcceleratedEffectBoxPath&, const BlendingContext&);
 };
 
 } // namespace WebCore

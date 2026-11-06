@@ -78,7 +78,7 @@ public:
     template<typename U> WeakPtr(const WeakRef<U, WeakPtrImpl>&);
     template<typename U> WeakPtr(WeakRef<U, WeakPtrImpl>&&);
 
-    template<typename = std::enable_if_t<!IsSmartPtr<T>::value>> WeakPtr(const T* object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
+    WeakPtr(const T* object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes) requires (!IsSmartPtr<T>::value)
         : m_impl(object ? &object->weakImpl() : nullptr)
 #if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
         , m_shouldEnableAssertions(shouldEnableAssertions == EnableWeakPtrThreadingAssertions::Yes)
@@ -88,7 +88,8 @@ public:
         ASSERT(!object || object == m_impl->template get<T>());
     }
 
-    template<typename = std::enable_if_t<!IsSmartPtr<T>::value && !std::is_pointer_v<T>>> WeakPtr(const T& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
+    template<typename U = T> requires (!IsSmartPtr<U>::value && !std::is_pointer_v<U>)
+    WeakPtr(const std::type_identity_t<U>& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
         : m_impl(&object.weakImpl())
 #if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
         , m_shouldEnableAssertions(shouldEnableAssertions == EnableWeakPtrThreadingAssertions::Yes)
@@ -98,11 +99,11 @@ public:
         ASSERT(&object == m_impl->template get<T>());
     }
 
-    template<typename = std::enable_if_t<!IsSmartPtr<T>::value>> WeakPtr(const Ref<T>& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
+    WeakPtr(const Ref<T>& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes) requires (!IsSmartPtr<T>::value)
         : WeakPtr(object.get(), shouldEnableAssertions)
     { }
 
-    template<typename = std::enable_if_t<!IsSmartPtr<T>::value>> WeakPtr(const RefPtr<T>& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
+    WeakPtr(const RefPtr<T>& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes) requires (!IsSmartPtr<T>::value)
         : WeakPtr(object.get(), shouldEnableAssertions)
     { }
 
@@ -154,13 +155,13 @@ public:
     bool operator!() const { return !m_impl || !*m_impl; }
     explicit operator bool() const { return m_impl && *m_impl; }
 
-    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(const WeakPtr&) = default;
-    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(WeakPtr&&) = default;
-    SUPPRESS_NODELETE WeakPtr& LEGACY_NODELETE operator=(std::nullptr_t) { m_impl = nullptr; return *this; }
-    template<typename U> WeakPtr& LEGACY_NODELETE operator=(const WeakPtr<U, WeakPtrImpl, PtrTraits>&);
-    template<typename U> WeakPtr& LEGACY_NODELETE operator=(WeakPtr<U, WeakPtrImpl, PtrTraits>&&);
-    template<typename U> WeakPtr& LEGACY_NODELETE operator=(const WeakRef<U, WeakPtrImpl>&);
-    template<typename U> WeakPtr& LEGACY_NODELETE operator=(WeakRef<U, WeakPtrImpl>&&);
+    NODELETE SUPPRESS_NODELETE WeakPtr& operator=(const WeakPtr&) = default;
+    NODELETE SUPPRESS_NODELETE WeakPtr& operator=(WeakPtr&&) = default;
+    NODELETE SUPPRESS_NODELETE WeakPtr& operator=(std::nullptr_t) { m_impl = nullptr; return *this; }
+    template<typename U> NODELETE WeakPtr& operator=(const WeakPtr<U, WeakPtrImpl, PtrTraits>&);
+    template<typename U> NODELETE WeakPtr& operator=(WeakPtr<U, WeakPtrImpl, PtrTraits>&&);
+    template<typename U> NODELETE WeakPtr& operator=(const WeakRef<U, WeakPtrImpl>&);
+    template<typename U> NODELETE WeakPtr& operator=(WeakRef<U, WeakPtrImpl>&&);
 
     T* operator->() const
     {
@@ -456,16 +457,20 @@ ALWAYS_INLINE CLANG_POINTER_CONVERSION CheckedPtr<T, CheckedPtrTraits> protect(c
     return CheckedPtr<T, CheckedPtrTraits>(weakPtr.get());
 }
 
-template<class T, typename = std::enable_if_t<!IsSmartPtr<T>::value>>
+template<class T>
+    requires (!IsSmartPtr<T>::value)
 WeakPtr(const T* value, EnableWeakPtrThreadingAssertions = EnableWeakPtrThreadingAssertions::Yes) -> WeakPtr<T, typename T::WeakPtrImplType>;
 
-template<class T, typename = std::enable_if_t<!IsSmartPtr<T>::value && !std::is_pointer_v<T>>>
+template<class T>
+    requires (!IsSmartPtr<T>::value && !std::is_pointer_v<T>)
 WeakPtr(const T& value, EnableWeakPtrThreadingAssertions = EnableWeakPtrThreadingAssertions::Yes) -> WeakPtr<T, typename T::WeakPtrImplType>;
 
-template<class T, typename = std::enable_if_t<!IsSmartPtr<T>::value>>
+template<class T>
+    requires (!IsSmartPtr<T>::value)
 WeakPtr(const Ref<T>& value, EnableWeakPtrThreadingAssertions = EnableWeakPtrThreadingAssertions::Yes) -> WeakPtr<T, typename T::WeakPtrImplType>;
 
-template<class T, typename = std::enable_if_t<!IsSmartPtr<T>::value>>
+template<class T>
+    requires (!IsSmartPtr<T>::value)
 WeakPtr(const RefPtr<T>& value, EnableWeakPtrThreadingAssertions = EnableWeakPtrThreadingAssertions::Yes) -> WeakPtr<T, typename T::WeakPtrImplType>;
 
 template<typename T, typename PtrTraits = RawPtrTraits<SingleThreadWeakPtrImpl>> using SingleThreadWeakPtr = WeakPtr<T, SingleThreadWeakPtrImpl, PtrTraits>;

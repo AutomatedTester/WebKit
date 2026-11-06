@@ -107,6 +107,10 @@ JSValueRef toWebAPI(JSContextRef context, const WebExtensionMessageSenderParamet
     if (parameters.tabParameters)
         JSObjectSetProperty(context, result, toJSString(tabKey).get(), toJSValueRef(context, toWebAPI(parameters.tabParameters.value())), 0, nullptr);
 
+    // The window identifier is omitted for senders without a window, like background pages.
+    if (isValid(parameters.windowIdentifier))
+        JSObjectSetProperty(context, result, toJSString(windowIdKey).get(), JSValueMakeNumber(context, toWebAPI(parameters.windowIdentifier.value())), 0, nullptr);
+
     // The frame identifier is only included when tab is included.
     if (parameters.frameIdentifier && parameters.tabParameters)
         JSObjectSetProperty(context, result, toJSString(frameIdKey).get(), JSValueMakeNumber(context, toWebAPI(parameters.frameIdentifier.value())), 0, nullptr);
@@ -163,7 +167,7 @@ void WebExtensionContextProxy::dispatchRuntimeMessageEventOnceBackgroundServiceW
         return;
     }
 
-    id message = parseJSON(messageJSON.createNSString().get(), JSONOptions::FragmentsAllowed);
+    RefPtr messageString = toJSString(messageJSON);
     auto sourceContentWorldType = senderParameters.contentWorldType;
 
     auto callbackAggregator = ReplyCallbackAggregator::create([completionHandler = WTF::move(completionHandler)](JSValue *replyMessage, IsDefaultReply defaultReply) mutable {
@@ -217,7 +221,7 @@ void WebExtensionContextProxy::dispatchRuntimeMessageEventOnceBackgroundServiceW
             // with a signature to translate the JS function arguments. Having the block capture
             // callbackAggregatorWrapper ensures that callbackAggregator remains in scope.
             auto senderInfo = toWebAPI(listener->globalContext(), senderParameters);
-            auto returnValue = listener->call(toJSValueRef(listener->globalContext(), message), senderInfo, toJSValueRef(listener->globalContext(), ^(JSValue *replyMessage) {
+            auto returnValue = listener->call(fromMessageJSON(listener->globalContext(), messageString.get()), senderInfo, toJSValueRef(listener->globalContext(), ^(JSValue *replyMessage) {
                 protect(callbackAggregatorWrapper.get().aggregator).get()(replyMessage, IsDefaultReply::No);
             }));
 

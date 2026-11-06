@@ -55,7 +55,7 @@ struct TextAutoSizingHashTranslator {
     static unsigned hash(const Style::ComputedStyle&);
     static bool equal(const Style::ComputedStyle&, const Style::ComputedStyle&);
     static bool equal(const TextAutoSizingKey&, const Style::ComputedStyle&);
-    static void translate(TextAutoSizingKey&, const Style::ComputedStyle&, unsigned hash);
+    static void translate(TextAutoSizingKey*, const Style::ComputedStyle&, unsigned hash);
 };
 
 class TextAutoSizingValue {
@@ -161,9 +161,9 @@ bool TextAutoSizingHashTranslator::equal(const Style::ComputedStyle& styleA, con
         && styleA.textOverflow() == styleB.textOverflow();
 }
 
-void TextAutoSizingHashTranslator::translate(TextAutoSizingKey& key, const Style::ComputedStyle& style, unsigned hash)
+void TextAutoSizingHashTranslator::translate(TextAutoSizingKey* key, const Style::ComputedStyle& style, unsigned hash)
 {
-    key = { style, hash };
+    new (NotNull, key) TextAutoSizingKey(style, hash);
 }
 
 // MARK: - TextAutoSizingValue
@@ -234,7 +234,7 @@ auto TextAutoSizingValue::adjustTextNodeSizes() -> StillHasNodes
 
         auto* parentRenderer = renderer.parent();
 
-        auto style = cloneRenderStyleWithState(renderer.style());
+        auto style = cloneRenderStyleWithState(parentRenderer->style());
         auto fontDescription = style.fontDescription();
         fontDescription.setUsedSize(averageSize);
         style.setFontDescription(FontCascadeDescription { fontDescription });
@@ -358,7 +358,7 @@ TextAutoSizing::~TextAutoSizing() = default;
 void TextAutoSizing::addTextNode(Text& node, float candidateSize)
 {
     LOG(TextAutosizing, " addAutoSizedNode %p candidateSize=%f", &node, candidateSize);
-    auto addResult = m_textNodes.add<TextAutoSizingHashTranslator>(node.renderer()->style(), nullptr);
+    auto addResult = m_textNodes.add<TextAutoSizingHashTranslator>(node.renderer()->parent()->style(), nullptr);
     if (addResult.isNewEntry)
         addResult.iterator->value = makeUnique<TextAutoSizingValue>();
     addResult.iterator->value->addTextNode(node, candidateSize);

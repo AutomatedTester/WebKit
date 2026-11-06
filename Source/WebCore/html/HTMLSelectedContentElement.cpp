@@ -29,7 +29,6 @@
 #include "Document.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementChildIteratorInlines.h"
-#include "EventLoop.h"
 #include "HTMLElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
@@ -58,7 +57,6 @@ auto HTMLSelectedContentElement::insertionSteps(InsertionType insertionType, Con
 {
     HTMLElement::insertionSteps(insertionType, parentOfInsertedTree);
 
-    ASSERT(document().settings().htmlEnhancedSelectParsingEnabled());
     ASSERT(document().settings().htmlEnhancedSelectEnabled());
     ASSERT(!document().settings().mutationEventsEnabled());
 
@@ -71,8 +69,8 @@ auto HTMLSelectedContentElement::insertionSteps(InsertionType insertionType, Con
 
 void HTMLSelectedContentElement::postConnectionSteps()
 {
-    RefPtr select = recalculateDisabledness();
-    if (m_isDisabled || !select || !select->updatesSelectedContent())
+    RefPtr select = m_owningSelect;
+    if (m_isDisabled || !select || !select->updatesSelectedContent() || select->hasPendingSelectedContentUpdate())
         return;
 
     select->updateSelectedContent(*this);
@@ -82,36 +80,41 @@ void HTMLSelectedContentElement::removingSteps(RemovalType removalType, Containe
 {
     HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
 
-    if (RefPtr select = m_owningSelect; select && !isInclusiveDescendantOf(*select)) {
-        select->unregisterSelectedContentElement();
-        m_owningSelect = nullptr;
-    }
-}
-
-void HTMLSelectedContentElement::childrenChanged(const ChildChange& change)
-{
-    HTMLElement::childrenChanged(change);
-
-    // The contents reflect into the first child button's text, which the select may render.
-    if (RefPtr select = m_owningSelect)
-        select->buttonElementChildrenChanged();
+    recalculateDisabledness();
 }
 
 void HTMLSelectedContentElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
 {
     HTMLElement::movingSteps(movingType, oldParent);
 
+    RefPtr oldSelect = m_owningSelect;
+    bool wasDisabled = m_isDisabled;
     RefPtr select = recalculateDisabledness();
     if (m_isDisabled || !select || !select->updatesSelectedContent())
         return;
 
-    Ref document = this->document();
-    protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis = WeakPtr<HTMLSelectedContentElement, WeakPtrImplWithEventTargetData> { *this }, weakSelect = WeakPtr<HTMLSelectElement, WeakPtrImplWithEventTargetData> { *select }] {
-        RefPtr selectedContent = weakThis;
-        RefPtr select = weakSelect;
-        if (selectedContent && select)
-            select->updateSelectedContent(*selectedContent);
-    });
+    if (!wasDisabled && select == oldSelect)
+        return;
+
+    select->queueSelectedContentUpdate();
+}
+
+void HTMLSelectedContentElement::updateFromOption(HTMLOptionElement* option)
+{
+    if (option)
+        option->cloneIntoSelectedContent(*this);
+    else
+        removeChildren();
+}
+
+void HTMLSelectedContentElement::updateFromOptions(const Vector<Ref<HTMLOptionElement>>& options)
+{
+    ASSERT(document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled());
+
+    NodeVector clones;
+    for (auto& option : options)
+        clones.append(option->cloneForSelectedContent());
+    replaceChildrenWithoutValidityCheck(WTF::move(clones));
 }
 
 void HTMLSelectedContentElement::updateClonedOptionSelectedStates()

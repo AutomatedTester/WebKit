@@ -93,8 +93,14 @@ void WebExtensionContext::windowsCreate(const WebExtensionWindowParameters& crea
                 }
 
                 [tabs addObject:tab->delegate()];
-            } else if (tabParameters.url)
+            } else if (tabParameters.url) {
+                if (!canNavigateToURL(tabParameters.url.value())) {
+                    completionHandler(toWebExtensionError(apiName, @"url", unsupportedNavigationURLMessage(tabParameters.url.value())));
+                    return;
+                }
+
                 [urls addObject:tabParameters.url.value().createNSURL().get()];
+            }
         }
     }
 

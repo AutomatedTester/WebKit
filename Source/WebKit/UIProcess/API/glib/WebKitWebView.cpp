@@ -247,6 +247,7 @@ enum {
     PROP_MAGNIFICATION,
     PROP_IS_LOADING,
     PROP_IS_PLAYING_AUDIO,
+    PROP_HAS_PROTECTED_MEDIA,
 #if !ENABLE(2022_GLIB_API)
     PROP_IS_EPHEMERAL,
 #endif
@@ -450,6 +451,7 @@ struct _WebKitWebViewPrivate {
 #endif
 
     GRefPtr<WebKitAuthenticationRequest> authenticationRequest;
+    Markable<WebCore::NavigationIdentifier> authenticationRequestNavigationID;
 
 #if ENABLE(2022_GLIB_API)
     GRefPtr<WebKitNetworkSession> networkSession;
@@ -531,6 +533,11 @@ void PageLoadStateObserver::didChangeActiveURL()
 void webkitWebViewIsPlayingAudioChanged(WebKitWebView* webView)
 {
     g_object_notify_by_pspec(G_OBJECT(webView), sObjProperties[PROP_IS_PLAYING_AUDIO]);
+}
+
+void webkitWebViewHasProtectedMediaChanged(WebKitWebView* webView)
+{
+    g_object_notify_by_pspec(G_OBJECT(webView), sObjProperties[PROP_HAS_PROTECTED_MEDIA]);
 }
 
 void webkitWebViewMediaCaptureStateDidChange(WebKitWebView* webView, WebCore::MediaProducer::MediaStateFlags mediaStateFlags)
@@ -964,7 +971,9 @@ static void webkitWebViewCreatePage(WebKitWebView* webView, Ref<API::PageConfigu
 #endif
 #endif
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     webView->priv->view = WKWPE::ViewLegacy::create(webkit_web_view_backend_get_wpe_backend(webView->priv->backend.get()), configuration.get());
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #endif
 }
@@ -1267,6 +1276,9 @@ static void webkitWebViewGetProperty(GObject* object, guint propId, GValue* valu
     case PROP_IS_PLAYING_AUDIO:
         g_value_set_boolean(value, webkit_web_view_is_playing_audio(webView));
         break;
+    case PROP_HAS_PROTECTED_MEDIA:
+        g_value_set_boolean(value, webkit_web_view_has_protected_media(webView));
+        break;
 #if !ENABLE(2022_GLIB_API)
     case PROP_IS_EPHEMERAL:
         g_value_set_boolean(value, webkit_web_view_is_ephemeral(webView));
@@ -1399,19 +1411,23 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
 
 #if PLATFORM(WPE)
 #if USE(LIBWPE)
+    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     /**
      * WebKitWebView:backend:
      *
      * The #WebKitWebViewBackend of the view.
      *
      * Since: 2.20
+     *
+     * Deprecated: 2.56: Use WPE Platform API instead.
      */
     sObjProperties[PROP_BACKEND] =
         g_param_spec_boxed(
             "backend",
             nullptr, nullptr,
             WEBKIT_TYPE_WEB_VIEW_BACKEND,
-            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
+            static_cast<GParamFlags>(WEBKIT_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_DEPRECATED));
+    ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #if ENABLE(WPE_PLATFORM)
     /**
@@ -1638,6 +1654,25 @@ static void webkit_web_view_class_init(WebKitWebViewClass* webViewClass)
     sObjProperties[PROP_IS_PLAYING_AUDIO] =
         g_param_spec_boolean(
             "is-playing-audio",
+            nullptr, nullptr,
+            FALSE,
+            WEBKIT_PARAM_READABLE);
+
+    /**
+     * WebKitWebView:has-protected-media:
+     *
+     * Whether a page in the #WebKitWebView has a media element with
+     * Encrypted Media Extensions (EME) MediaKeys attached, i.e. it may be
+     * presenting DRM-protected content. This property becomes %TRUE as soon
+     * as MediaKeys are attached to a media element, independently of whether
+     * playback is running, and is set back to %FALSE once no media element
+     * has MediaKeys attached anymore.
+     *
+     * Since: 2.56
+     */
+    sObjProperties[PROP_HAS_PROTECTED_MEDIA] =
+        g_param_spec_boolean(
+            "has-protected-media",
             nullptr, nullptr,
             FALSE,
             WEBKIT_PARAM_READABLE);
@@ -2741,6 +2776,11 @@ static void webkitWebViewCompleteAuthenticationRequest(WebKitWebView* webView)
     priv->authenticationRequest = nullptr;
 }
 
+static bool webkitWebViewAuthenticationRequestIsForNavigation(WebKitWebView* webView, API::Navigation* navigation)
+{
+    return navigation && webView->priv->authenticationRequest && navigation->navigationID() == webView->priv->authenticationRequestNavigationID;
+}
+
 WebPageProxy& webkitWebViewGetPage(WebKitWebView* webView)
 {
     return getPage(webView);
@@ -2768,7 +2808,7 @@ void webkitWebViewWillStartLoad(WebKitWebView* webView)
         error.get());
 }
 
-void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
+void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent, API::Navigation* navigation)
 {
     WebKitWebViewPrivate* priv = webView->priv;
     switch (loadEvent) {
@@ -2777,7 +2817,8 @@ void webkitWebViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent loadEvent)
         webkitWebViewCancelFaviconRequest(webView);
         webkitWebViewWatchForChangesInFavicon(webView);
 #endif
-        webkitWebViewCompleteAuthenticationRequest(webView);
+        if (!webkitWebViewAuthenticationRequestIsForNavigation(webView, navigation))
+            webkitWebViewCompleteAuthenticationRequest(webView);
         priv->mainResource = nullptr;
         webView->priv->isActiveURIChangeBlocked = false;
         break;
@@ -2839,7 +2880,7 @@ void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView* webView, const String& 
 }
 
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
-void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const HashMap<CallbackID, WebCore::LinkIcon>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
+void webkitWebViewGetLoadDecisionForIcons(WebKitWebView* webView, const Vector<std::pair<CallbackID, WebCore::LinkIcon>>& icons, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
 {
     struct CallbackAggregator final : public ThreadSafeRefCounted<CallbackAggregator>  {
         explicit CallbackAggregator(CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&& completionHandler)
@@ -3235,6 +3276,7 @@ void webkitWebViewHandleAuthenticationChallenge(WebKitWebView* webView, Authenti
     bool credentialStorageEnabled = webkit_website_data_manager_get_persistent_credential_storage_enabled(websiteDataManager);
 #endif
     webView->priv->authenticationRequest = adoptGRef(webkitAuthenticationRequestCreate(authenticationChallenge, webkitWebViewIsEphemeral(webView), credentialStorageEnabled));
+    webView->priv->authenticationRequestNavigationID = getPage(webView).pageLoadState().pendingAPIRequest().navigationID;
     gboolean returnValue;
     g_signal_emit(webView, signals[AUTHENTICATE], 0, webView->priv->authenticationRequest.get(), &returnValue);
 }
@@ -3405,6 +3447,8 @@ RendererBufferDescription webkitWebViewGetRendererBufferDescription(WebKitWebVie
  * Returns: (transfer none): the #WebKitWebViewBackend of @web_view
  *
  * Since: 2.20
+ *
+ * Deprecated: 2.56: Use WPE Platform API instead.
  */
 WebKitWebViewBackend* webkit_web_view_get_backend(WebKitWebView* webView)
 {
@@ -3866,6 +3910,29 @@ gboolean webkit_web_view_is_playing_audio(WebKitWebView* webView)
     g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), FALSE);
 
     return getPage(webView).isPlayingAudio();
+}
+
+/**
+ * webkit_web_view_has_protected_media:
+ * @web_view: a #WebKitWebView
+ *
+ * Gets the value of the #WebKitWebView:has-protected-media property.
+ *
+ * You can monitor when a page in a #WebKitWebView may be presenting
+ * DRM-protected media by connecting to the notify::has-protected-media
+ * signal of @web_view. This is useful when the application needs to keep
+ * protected content out of screenshots or recordings.
+ *
+ * Returns: %TRUE if a page in @web_view has a media element with MediaKeys
+ *    attached or %FALSE otherwise.
+ *
+ * Since: 2.56
+ */
+gboolean webkit_web_view_has_protected_media(WebKitWebView* webView)
+{
+    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), FALSE);
+
+    return getPage(webView).hasProtectedMedia();
 }
 
 /**

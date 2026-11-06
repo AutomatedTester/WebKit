@@ -29,7 +29,7 @@
 #include <WebCore/PlatformRawAudioData.h>
 #include <wtf/Forward.h>
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
 struct AudioStreamBasicDescription;
@@ -50,12 +50,13 @@ public:
     size_t numberOfFrames() const final;
     std::optional<uint64_t> duration() const final;
     int64_t timestamp() const final;
+    MediaChannelLayout channelLayout() const final { return m_channelLayout; }
     size_t memoryCost() const final;
 
     constexpr MediaPlatformType platformType() const final { return MediaPlatformType::AVFObjC; }
 
     const CAAudioStreamDescription& description() const LIFETIME_BOUND;
-    CMSampleBufferRef LEGACY_NODELETE sampleBuffer() const;
+    NODELETE CMSampleBufferRef sampleBuffer() const;
 
 private:
     friend class PlatformRawAudioData;
@@ -65,6 +66,7 @@ private:
 
     const Ref<MediaSampleAVFObjC> m_sample;
     const CAAudioStreamDescription m_description;
+    const MediaChannelLayout m_channelLayout;
 };
 
 }
@@ -73,4 +75,4 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::PlatformRawAudioDataCocoa)
 static bool isType(const WebCore::PlatformRawAudioData& data) { return data.platformType() == WebCore::MediaPlatformType::AVFObjC; }
 SPECIALIZE_TYPE_TRAITS_END()
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(AVFOUNDATION)

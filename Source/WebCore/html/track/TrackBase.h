@@ -29,6 +29,7 @@
 
 #include <WebCore/ContextDestructionObserver.h>
 #include <WebCore/WebCoreOpaqueRoot.h>
+#include <atomic>
 #include <wtf/LoggerHelper.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
@@ -40,6 +41,7 @@ class Document;
 class SourceBuffer;
 class TrackListBase;
 class WeakPtrImplWithEventTargetData;
+class TrackOpaqueRoot;
 class TrackPrivateBase;
 class TrackPrivateBaseClient;
 using TrackID = uint64_t;
@@ -73,14 +75,17 @@ public:
     virtual int uniqueId() const { return m_uniqueId; }
 
 #if ENABLE(MEDIA_SOURCE)
-    SourceBuffer* LEGACY_NODELETE sourceBuffer() const;
-    void LEGACY_NODELETE setSourceBuffer(SourceBuffer*);
+    NODELETE SourceBuffer* sourceBuffer() const;
+    NODELETE void setSourceBuffer(SourceBuffer*);
 #endif
 
     void setTrackList(TrackListBase&);
     void clearTrackList();
-    TrackListBase* LEGACY_NODELETE trackList() const;
-    WebCoreOpaqueRoot LEGACY_NODELETE opaqueRoot() const;
+
+    NODELETE TrackListBase* trackList() const;
+
+    void setOpaqueRoot(TrackOpaqueRoot&);
+    NODELETE WebCoreOpaqueRoot opaqueRoot() const;
 
     virtual bool enabled() const = 0;
 
@@ -122,6 +127,7 @@ private:
     uint64_t m_logIdentifier { 0 };
 #endif
     WeakPtr<TrackListBase, WeakPtrImplWithEventTargetData> m_trackList;
+    RefPtr<TrackOpaqueRoot> m_trackOpaqueRoot;
     size_t m_clientRegistrationId { 0 };
 };
 

@@ -123,6 +123,20 @@ Vector<Ref<API::Error>> WebExtensionContext::errors()
     return array;
 }
 
+void WebExtensionContext::didEncounterScriptError(const String& message, const String& sourceURL, uint32_t lineNumber, uint32_t columnNumber, WebExtensionContentWorldType)
+{
+    auto path = sourceURL.isEmpty() ? String() : URL(sourceURL).path().toString();
+    if (path.startsWith('/'))
+        path = path.substring(1);
+    auto location = !path.isEmpty() ? (columnNumber ? makeString(path, ':', lineNumber, ':', columnNumber) : makeString(path, ':', lineNumber)) : String();
+    String description;
+    if (message.isEmpty())
+        description = !location.isEmpty() ? makeString('(', location, ')') : String();
+    else
+        description = !location.isEmpty() ? makeString(message, " ("_s, location, ')') : message;
+    recordError(createError(Error::ScriptExecutionError, description));
+}
+
 String WebExtensionContext::stateFilePath() const
 {
     if (!storageIsPersistent())
@@ -145,6 +159,34 @@ void WebExtensionContext::setBaseURL(URL&& url)
 bool WebExtensionContext::isURLForThisExtension(const URL& url) const
 {
     return url.isValid() && protocolHostAndPortAreEqual(baseURL(), url);
+}
+
+bool WebExtensionContext::hasResource(const String& path) const
+{
+    URL url { baseURL(), path };
+    if (!isURLForThisExtension(url))
+        return false;
+
+    // The path excludes any query or fragment.
+    return protect(extension())->hasResourceForPath(url.path().toString());
+}
+
+bool WebExtensionContext::canNavigateToURL(const URL& url) const
+{
+    if (url.protocolIsJavaScript())
+        return false;
+
+    if (url.protocolIsFile())
+        return hasAccessToFileURLs();
+
+    return true;
+}
+
+String WebExtensionContext::unsupportedNavigationURLMessage(const URL& url) const
+{
+    if (url.protocolIsJavaScript())
+        return "it cannot be a JavaScript URL"_s;
+    return "it cannot be a local file URL"_s;
 }
 
 bool WebExtensionContext::isURLForAnyExtension(const URL& url)
@@ -178,7 +220,7 @@ RefPtr<API::Data> WebExtensionContext::localizedResourceData(const RefPtr<API::D
     if (!equalLettersIgnoringASCIICase(mimeType, "text/css"_s) || !resourceData)
         return resourceData;
 
-    RefPtr decoder = WebCore::TextResourceDecoder::create(mimeType, PAL::UTF8Encoding());
+    RefPtr decoder = WebCore::TextResourceDecoder::create(WebCore::TextResourceDecoder::contentTypeForMIMEType(mimeType), PAL::UTF8Encoding());
     auto stylesheetContents = decoder->decode(resourceData->span());
 
     auto localizedString = localizedResourceString(stylesheetContents, mimeType);
@@ -1273,7 +1315,7 @@ void WebExtensionContext::addInjectedContent(const InjectedContentVector& inject
         addInjectedContent(injectedContents, pattern);
 }
 
-static WebCore::UserScriptInjectionTime LEGACY_NODELETE toImpl(WebExtension::InjectionTime injectionTime)
+NODELETE static WebCore::UserScriptInjectionTime toImpl(WebExtension::InjectionTime injectionTime)
 {
     switch (injectionTime) {
     case WebExtension::InjectionTime::DocumentStart:
@@ -1643,7 +1685,7 @@ void WebExtensionContext::addDeclarativeNetRequestRulesToPrivateUserContentContr
     });
 }
 
-static HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>& LEGACY_NODELETE webExtensionContexts()
+NODELETE static HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>& webExtensionContexts()
 {
     static NeverDestroyed<HashMap<WebExtensionContextIdentifier, WeakRef<WebExtensionContext>>> contexts;
     return contexts;
@@ -1947,6 +1989,19 @@ RefPtr<WebInspectorUIProxy> WebExtensionContext::inspector(const API::InspectorE
 }
 #endif // ENABLE(INSPECTOR_EXTENSIONS)
 
+void WebExtensionContext::setStorageAccessLevel(WebExtensionDataType dataType, WebExtensionStorageAccessLevel accessLevel)
+{
+    m_storageAccessLevels.set(dataType, accessLevel);
+
+    saveStorageAccessLevelsToStorage();
+
+    if (!isLoaded())
+        return;
+
+    if (RefPtr extensionController = this->extensionController())
+        extensionController->sendToAllProcesses(Messages::WebExtensionContextProxy::SetStorageAccessLevel(dataType, accessLevel), identifier());
+}
+
 size_t WebExtensionContext::quotaForStorageType(WebExtensionDataType storageType)
 {
     switch (storageType) {
@@ -2002,6 +2057,157 @@ Ref<WebExtensionRegisteredScriptsSQLiteStore> WebExtensionContext::registeredCon
     if (!m_registeredContentScriptsStorage)
         m_registeredContentScriptsStorage = WebExtensionRegisteredScriptsSQLiteStore::create(m_uniqueIdentifier, storageDirectory(), !storageIsPersistent());
     return *m_registeredContentScriptsStorage;
+}
+
+void WebExtensionContext::reloadBackgroundContentForTesting()
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    unloadBackgroundWebView();
+    loadBackgroundWebViewIfNeeded();
+}
+
+void WebExtensionContext::unloadBackgroundContentForTesting()
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    unloadBackgroundWebView();
+}
+
+void WebExtensionContext::sendTestMessage(const String& message, const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto eventType = WebExtensionEventListenerType::TestOnMessage;
+
+    if (!hasTestEventListeners(eventType)) {
+        addTestMessageToQueue(message, argument, eventType);
+        return;
+    }
+
+    sendToProcesses(processes(eventType, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ eventType }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchTestMessageEvent(message, argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::sendTestStarted(const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto type = WebExtensionEventListenerType::TestOnTestStarted;
+
+    if (!hasTestEventListeners(type)) {
+        addTestMessageToQueue(nullString(), argument, type);
+        return;
+    }
+
+    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestStartedEvent(argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::sendTestFinished(const String& argument)
+{
+    ASSERT(isLoaded() && inTestingMode());
+    if (!isLoaded() || !inTestingMode())
+        return;
+
+    constexpr auto type = WebExtensionEventListenerType::TestOnTestFinished;
+
+    if (!hasTestEventListeners(type)) {
+        addTestMessageToQueue(nullString(), argument, type);
+        return;
+    }
+
+    sendToProcesses(processes(type, WebExtensionContentWorldType::WebPage), Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::WebPage));
+
+    sendToContentScriptProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::ContentScript));
+
+    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
+        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchTestFinishedEvent(argument, WebExtensionContentWorldType::Main));
+    });
+}
+
+void WebExtensionContext::addTestMessageToQueue(const String& message, const String& argument, WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        m_testMessageQueue.append({ message, argument });
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        m_testStartedQueue.append({ message, argument });
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        m_testFinishedQueue.append({ message, argument });
+        break;
+
+    default:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+void WebExtensionContext::sendQueuedTestMessagesIfNeeded(WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        while (!m_testMessageQueue.isEmpty()) {
+            const auto& testMessage = m_testMessageQueue.takeFirst();
+            sendTestMessage(testMessage.message, testMessage.argument);
+        }
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        while (!m_testStartedQueue.isEmpty()) {
+            const auto& testMessage = m_testStartedQueue.takeFirst();
+            sendTestStarted(testMessage.argument);
+        }
+        break;
+
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        while (!m_testFinishedQueue.isEmpty()) {
+            const auto& testMessage = m_testFinishedQueue.takeFirst();
+            sendTestFinished(testMessage.argument);
+        }
+        break;
+
+    default:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+bool WebExtensionContext::hasTestEventListeners(WebExtensionEventListenerType type)
+{
+    switch (type) {
+    case WebExtensionEventListenerType::TestOnMessage:
+        return m_testMessageListenersCount;
+    case WebExtensionEventListenerType::TestOnTestStarted:
+        return m_testStartedListenersCount;
+    case WebExtensionEventListenerType::TestOnTestFinished:
+        return m_testFinishedListenersCount;
+
+    default:
+        return false;
+    }
 }
 
 } // namespace WebKit

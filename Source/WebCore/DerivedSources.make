@@ -254,6 +254,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/applepay/ApplePayPaymentTokenContext.idl \
     $(WebCore)/Modules/applepay/ApplePayRecurringPaymentDateUnit.idl \
     $(WebCore)/Modules/applepay/ApplePayRecurringPaymentRequest.idl \
+    $(WebCore)/Modules/applepay/ApplePayReferenceRequest.idl \
+    $(WebCore)/Modules/applepay/ApplePayReferenceSession.idl \
     $(WebCore)/Modules/applepay/ApplePayRequestBase.idl \
     $(WebCore)/Modules/applepay/ApplePaySession.idl \
     $(WebCore)/Modules/applepay/ApplePaySessionError.idl \
@@ -447,6 +449,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/mediasource/TextTrack+MediaSource.idl \
     $(WebCore)/Modules/mediasource/VideoPlaybackQuality.idl \
     $(WebCore)/Modules/mediasource/VideoTrack+MediaSource.idl \
+    $(WebCore)/Modules/mediasession/CallToActionLabel.idl \
     $(WebCore)/Modules/mediasession/MediaImage.idl \
     $(WebCore)/Modules/mediasession/MediaMetadata.idl \
     $(WebCore)/Modules/mediasession/MediaMetadataInit.idl \
@@ -456,6 +459,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/mediasession/MediaSessionAction.idl \
     $(WebCore)/Modules/mediasession/MediaSessionActionDetails.idl \
     $(WebCore)/Modules/mediasession/MediaSessionActionHandler.idl \
+    $(WebCore)/Modules/mediasession/MediaSessionActionHandlerOptions.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCaptionTrack.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCoordinator.idl \
     $(WebCore)/Modules/mediasession/MediaSessionCoordinatorMixin.idl \
@@ -701,6 +705,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webaudio/AudioProcessingEvent.idl \
     $(WebCore)/Modules/webaudio/AudioProcessingEventInit.idl \
     $(WebCore)/Modules/webaudio/AudioScheduledSourceNode.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkInfo.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkOptions.idl \
+    $(WebCore)/Modules/webaudio/AudioSinkType.idl \
     $(WebCore)/Modules/webaudio/AudioTimestamp.idl \
     $(WebCore)/Modules/webaudio/AudioWorklet.idl \
     $(WebCore)/Modules/webaudio/AudioWorkletGlobalScope.idl \
@@ -785,6 +792,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webauthn/PublicKeyCredentialType.idl \
     $(WebCore)/Modules/webauthn/ResidentKeyRequirement.idl \
     $(WebCore)/Modules/webauthn/UserVerificationRequirement.idl \
+    $(WebCore)/Modules/webauthn/WebAuthnOperationErrorCode.idl \
+    $(WebCore)/Modules/webauthn/WebAuthnOperationException.idl \
     $(WebCore)/Modules/webauthn/UnknownCredentialOptions.idl \
     $(WebCore)/Modules/webauthn/AllAcceptedCredentialsOptions.idl \
     $(WebCore)/Modules/webauthn/CurrentUserDetailsOptions.idl \
@@ -877,6 +886,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRBoundedReferenceSpace.idl \
     $(WebCore)/Modules/webxr/WebXRFrame+HandInput.idl \
     $(WebCore)/Modules/webxr/WebXRFrame+HitTest.idl \
+    $(WebCore)/Modules/webxr/WebXRFrame+PlaneDetection.idl \
     $(WebCore)/Modules/webxr/WebXRFrame.idl \
     $(WebCore)/Modules/webxr/WebXRHand.idl \
     $(WebCore)/Modules/webxr/WebXRHitTestResult.idl \
@@ -888,6 +898,8 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRJointPose.idl \
     $(WebCore)/Modules/webxr/WebXRJointSpace.idl \
     $(WebCore)/Modules/webxr/WebXRLayer.idl \
+    $(WebCore)/Modules/webxr/WebXRPlane.idl \
+    $(WebCore)/Modules/webxr/WebXRPlaneSet.idl \
     $(WebCore)/Modules/webxr/WebXRPose.idl \
     $(WebCore)/Modules/webxr/WebXRRay.idl \
     $(WebCore)/Modules/webxr/WebXRReferenceSpace.idl \
@@ -897,6 +909,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/WebXRSession+AR.idl \
     $(WebCore)/Modules/webxr/WebXRSession+Layers.idl \
     $(WebCore)/Modules/webxr/WebXRSession+HitTest.idl \
+    $(WebCore)/Modules/webxr/WebXRSession+PlaneDetection.idl \
     $(WebCore)/Modules/webxr/WebXRSession.idl \
     $(WebCore)/Modules/webxr/WebXRSpace.idl \
     $(WebCore)/Modules/webxr/WebXRSystem.idl \
@@ -931,6 +944,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webxr/XRLayerInit.idl \
     $(WebCore)/Modules/webxr/XRLayerLayout.idl \
     $(WebCore)/Modules/webxr/XRLayerQuality.idl \
+    $(WebCore)/Modules/webxr/XRPlaneOrientation.idl \
     $(WebCore)/Modules/webxr/XRProjectionLayer.idl \
     $(WebCore)/Modules/webxr/XRProjectionLayerInit.idl \
     $(WebCore)/Modules/webxr/XRQuadLayer.idl \
@@ -1441,6 +1455,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasFillRule.idl \
     $(WebCore)/html/canvas/CanvasFillStrokeStyles.idl \
     $(WebCore)/html/canvas/CanvasFilters.idl \
+    $(WebCore)/html/canvas/CanvasFontKerning.idl \
+    $(WebCore)/html/canvas/CanvasFontStretch.idl \
+    $(WebCore)/html/canvas/CanvasFontVariantCaps.idl \
     $(WebCore)/html/canvas/CanvasGradient.idl \
     $(WebCore)/html/canvas/CanvasImageData.idl \
     $(WebCore)/html/canvas/CanvasImageSmoothing.idl \
@@ -1460,6 +1477,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasTextAlign.idl \
     $(WebCore)/html/canvas/CanvasTextBaseline.idl \
     $(WebCore)/html/canvas/CanvasTextDrawingStyles.idl \
+    $(WebCore)/html/canvas/CanvasTextRendering.idl \
     $(WebCore)/html/canvas/CanvasTransform.idl \
     $(WebCore)/html/canvas/CanvasUserInterface.idl \
     $(WebCore)/html/canvas/EXTBlendMinMax.idl \
@@ -1502,6 +1520,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/PaintRenderingContext2D.idl \
     $(WebCore)/html/canvas/Path2D.idl \
     $(WebCore)/html/canvas/PredefinedColorSpace.idl \
+    $(WebCore)/html/canvas/RenderingMode.idl \
 	$(WebCore)/html/canvas/UpdateElementGeometryOptions.idl \
     $(WebCore)/html/canvas/WebGL2RenderingContext.idl \
     $(WebCore)/html/canvas/WebGLActiveInfo.idl \
@@ -1816,6 +1835,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/testing/MockPaymentContactFields.idl \
     $(WebCore)/testing/MockPaymentCoordinator.idl \
     $(WebCore)/testing/MockPaymentError.idl \
+    $(WebCore)/testing/MockPhoneNumberPossessionConfiguration.idl \
     $(WebCore)/testing/MockWebAuthenticationConfiguration.idl \
     $(WebCore)/testing/RequestedGPU.idl \
     $(WebCore)/testing/ServiceWorkerInternals.idl \
@@ -2623,8 +2643,8 @@ QUIRK_BEHAVIORS_INPUT_FILES = \
 GENERATE_QUIRK_BEHAVIORS = \
     QuirkBehaviorDeclarations.cpp \
     QuirkBehaviorDeclarations.h \
-    QuirkBehaviorDefinitions.h \
     QuirkBehaviorID.h \
+    QuirkBehaviorID.serialization.in \
     QuirksAccessors.cpp \
     QuirksAccessors.h \
 #

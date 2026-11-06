@@ -30,7 +30,7 @@
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "InlineRunAndOffset.h"
-#include "LineSelection.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "LogicalSelectionOffsetCachesInlines.h"
 #include "RenderBlock.h"
 #include "RenderBoxModelObjectInlines.h"
@@ -103,24 +103,24 @@ void RenderLineBreak::collectSelectionGeometries(Vector<SelectionGeometry>& rect
         return;
     auto lineBox = run->lineBox();
 
-    auto lineSelectionRect = LineSelection::logicalRect(*lineBox);
-    LayoutRect rect = IntRect(run->logicalLeftIgnoringInlineDirection(), lineSelectionRect.y(), 0, lineSelectionRect.height());
-    if (!lineBox->isHorizontal())
+    auto lineRect = lineBox.contentLogicalRectAdjustedForAdjacentLineBoxes();
+    LayoutRect rect = IntRect(run->logicalLeftIgnoringInlineDirection(), lineRect.y(), 0, lineRect.height());
+    if (!lineBox.isHorizontal())
         rect = rect.transposedRect();
 
-    if (lineBox->isFirstAfterPageBreak()) {
+    if (lineBox.isFirstAfterPageBreak()) {
         if (run->isHorizontal())
-            rect.shiftYEdgeTo(lineBox->logicalTop());
+            rect.shiftYEdgeTo(lineBox.logicalTop());
         else
-            rect.shiftXEdgeTo(lineBox->logicalTop());
+            rect.shiftXEdgeTo(lineBox.logicalTop());
     }
 
-    // FIXME: Out-of-flow positioned line breaks do not follow normal containing block chain.
-    CheckedPtr containingBlock = RenderObject::containingBlockForPositionType(PositionType::Static, *this);
+    // Selection extents span the lines of the block that establishes our inline formatting context.
+    CheckedRef formattingContextRoot = LayoutIntegration::LineLayout::containing(*this)->flow();
     // Map rect, extended left to leftOffset, and right to rightOffset, through transforms to get minX and maxX.
-    LogicalSelectionOffsetCaches cache(*containingBlock);
-    LayoutUnit leftOffset = containingBlock->logicalLeftSelectionOffset(*containingBlock, LayoutUnit(run->logicalTop()), cache);
-    LayoutUnit rightOffset = containingBlock->logicalRightSelectionOffset(*containingBlock, LayoutUnit(run->logicalTop()), cache);
+    LogicalSelectionOffsetCaches cache(formattingContextRoot);
+    LayoutUnit leftOffset = formattingContextRoot->logicalLeftSelectionOffset(formattingContextRoot, LayoutUnit(run->logicalTop()), cache);
+    LayoutUnit rightOffset = formattingContextRoot->logicalRightSelectionOffset(formattingContextRoot, LayoutUnit(run->logicalTop()), cache);
     LayoutRect extentsRect = rect;
     if (run->isHorizontal()) {
         extentsRect.setX(leftOffset);
@@ -139,7 +139,7 @@ void RenderLineBreak::collectSelectionGeometries(Vector<SelectionGeometry>& rect
     bool isFixed = false;
     // FIXME: Remove suppression once rdar://189998444 is fixed.
     SUPPRESS_MEMORY_UNSAFE_CAST auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, &isFixed);
-    bool boxIsHorizontal = !is<InlineIterator::SVGTextBoxIterator>(run) ? run->isHorizontal() : !writingMode().isVertical();
+    bool boxIsHorizontal = !run->isSVGText() ? run->isHorizontal() : !writingMode().isVertical();
 
     rects.append(SelectionGeometry(absoluteQuad, HTMLElement::selectionRenderingBehavior(WTF::protect(element())), run->direction(), extentsRect.x(), extentsRect.maxX(), extentsRect.maxY(), 0, run->isLineBreak(), isFirstOnLine, isLastOnLine, false, false, boxIsHorizontal, isFixed, view().pageNumberForBlockProgressionOffset(absoluteQuad.enclosingBoundingBox().x())));
 }

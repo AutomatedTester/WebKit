@@ -47,8 +47,7 @@
 #if PLATFORM(IOS_FAMILY)
 - (void)_removeAllLayers
 {
-    for (CAShapeLayer *layer in _layers.get())
-        [layer removeFromSuperlayer];
+    [_layers makeObjectsPerformSelector:@selector(removeFromSuperlayer)];
     [_layers removeAllObjects];
 }
 #endif
@@ -95,7 +94,8 @@
 
         ASSERT([[NSGraphicsContext currentContext] isFlipped]);
 
-        WebCore::GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
+        RetainPtr cgContext = [[NSGraphicsContext currentContext] CGContext];
+        WebCore::GraphicsContextCG context(cgContext);
         if (CheckedPtr controller = [protect(_webNodeHighlight) inspectorController].get())
             controller->drawHighlight(context);
         [NSGraphicsContext restoreGraphicsState];

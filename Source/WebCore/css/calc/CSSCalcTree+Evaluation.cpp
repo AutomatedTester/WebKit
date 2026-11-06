@@ -51,8 +51,8 @@ static auto evaluate(const Percentage&, const EvaluationOptions&) -> std::option
 static auto evaluate(const CanonicalDimension&, const EvaluationOptions&) -> std::optional<double>;
 static auto evaluate(const NonCanonicalDimension&, const EvaluationOptions&) -> std::optional<double>;
 static auto evaluate(const Symbol&, const EvaluationOptions&) -> std::optional<double>;
-static auto evaluate(const SiblingCount&, const EvaluationOptions&) -> std::optional<double>;
-static auto evaluate(const SiblingIndex&, const EvaluationOptions&) -> std::optional<double>;
+NODELETE static std::optional<double> evaluate(const SiblingCount&, const EvaluationOptions&);
+NODELETE static std::optional<double> evaluate(const SiblingIndex&, const EvaluationOptions&);
 static auto evaluate(const IndirectNode<Sum>&, const EvaluationOptions&) -> std::optional<double>;
 static auto evaluate(const IndirectNode<Product>&, const EvaluationOptions&) -> std::optional<double>;
 static auto evaluate(const IndirectNode<Deg2Rad>&, const EvaluationOptions&) -> std::optional<double>;
@@ -95,7 +95,7 @@ template<typename Op> static std::optional<double> executeVariadicMathOperationA
     return result;
 }
 
-std::optional<CSS::Keyword::None> LEGACY_NODELETE evaluate(const CSS::Keyword::None& none, const EvaluationOptions&)
+NODELETE std::optional<CSS::Keyword::None> evaluate(const CSS::Keyword::None& none, const EvaluationOptions&)
 {
     return none;
 }
@@ -123,17 +123,17 @@ std::optional<std::optional<double>> evaluate(const std::optional<Child>& root, 
     return std::optional<double> { std::nullopt };
 }
 
-std::optional<double> LEGACY_NODELETE evaluate(const Number& number, const EvaluationOptions&)
+NODELETE std::optional<double> evaluate(const Number& number, const EvaluationOptions&)
 {
     return number.value;
 }
 
-std::optional<double> LEGACY_NODELETE evaluate(const Percentage& percentage, const EvaluationOptions&)
+NODELETE std::optional<double> evaluate(const Percentage& percentage, const EvaluationOptions&)
 {
     return percentage.value;
 }
 
-std::optional<double> LEGACY_NODELETE evaluate(const CanonicalDimension& root, const EvaluationOptions&)
+NODELETE std::optional<double> evaluate(const CanonicalDimension& root, const EvaluationOptions&)
 {
     return root.value;
 }

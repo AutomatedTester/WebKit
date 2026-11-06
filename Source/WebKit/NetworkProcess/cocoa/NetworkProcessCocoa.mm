@@ -37,6 +37,7 @@
 #import "NetworkStorageManager.h"
 #import "NetworkStorageSession.h"
 #import "SandboxExtension.h"
+#import "SecurityFlags.h"
 #import "WebCookieManager.h"
 #import <WebCore/PublicSuffixStore.h>
 #import <WebCore/ResourceRequestCFNet.h>
@@ -123,6 +124,8 @@ static void blockNetworkAccessIfNeeded(IPC::Connection* parentProcessConnection)
 
 void NetworkProcess::platformInitializeNetworkProcessCocoa(const NetworkProcessCreationParameters& parameters)
 {
+    RELEASE_LOG(Process, "SecurityFlags: radar184485266 is %" PUBLIC_LOG_STRING, SecurityFlags::radar184485266() ? "enforced" : "disabled");
+
     m_isParentProcessFullWebBrowserOrRunningTest = parameters.isParentProcessFullWebBrowserOrRunningTest;
 #if PLATFORM(IOS_FAMILY)
     m_containerTemporaryDirectory = parameters.containerTemporaryDirectory;
@@ -296,7 +299,6 @@ void NetworkProcess::setBackupExclusionPeriodForTesting(PAL::SessionID sessionID
 }
 #endif // PLATFORM(IOS_FAMILY)
 
-#if HAVE(NW_PROXY_CONFIG)
 void NetworkProcess::clearProxyConfigData(PAL::SessionID sessionID)
 {
     CheckedPtr session = networkSession(sessionID);
@@ -314,6 +316,5 @@ void NetworkProcess::setProxyConfigData(PAL::SessionID sessionID, Vector<std::pa
 
     session->setProxyConfigData(WTF::move(proxyConfigurations));
 }
-#endif // HAVE(NW_PROXY_CONFIG)
 
 } // namespace WebKit

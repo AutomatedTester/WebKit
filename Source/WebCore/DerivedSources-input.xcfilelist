@@ -389,6 +389,8 @@ $(PROJECT_DIR)/Modules/applepay/ApplePayPaymentTiming.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePayPaymentTokenContext.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePayRecurringPaymentDateUnit.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePayRecurringPaymentRequest.idl
+$(PROJECT_DIR)/Modules/applepay/ApplePayReferenceRequest.idl
+$(PROJECT_DIR)/Modules/applepay/ApplePayReferenceSession.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePayRequestBase.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePaySession.idl
 $(PROJECT_DIR)/Modules/applepay/ApplePaySessionError.idl
@@ -573,6 +575,7 @@ $(PROJECT_DIR)/Modules/mediacontrols/MediaControlsUtils.idl
 $(PROJECT_DIR)/Modules/mediarecorder/BlobEvent.idl
 $(PROJECT_DIR)/Modules/mediarecorder/MediaRecorder.idl
 $(PROJECT_DIR)/Modules/mediarecorder/MediaRecorderErrorEvent.idl
+$(PROJECT_DIR)/Modules/mediasession/CallToActionLabel.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaImage.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaMetadata.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaMetadataInit.idl
@@ -582,6 +585,7 @@ $(PROJECT_DIR)/Modules/mediasession/MediaSession.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionAction.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionActionDetails.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionActionHandler.idl
+$(PROJECT_DIR)/Modules/mediasession/MediaSessionActionHandlerOptions.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionCaptionTrack.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionCoordinator.idl
 $(PROJECT_DIR)/Modules/mediasession/MediaSessionCoordinatorMixin.idl
@@ -962,6 +966,9 @@ $(PROJECT_DIR)/Modules/webaudio/AudioParamMap.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioProcessingEvent.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioProcessingEventInit.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioScheduledSourceNode.idl
+$(PROJECT_DIR)/Modules/webaudio/AudioSinkInfo.idl
+$(PROJECT_DIR)/Modules/webaudio/AudioSinkOptions.idl
+$(PROJECT_DIR)/Modules/webaudio/AudioSinkType.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioTimestamp.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioWorklet.idl
 $(PROJECT_DIR)/Modules/webaudio/AudioWorkletGlobalScope.idl
@@ -1056,6 +1063,8 @@ $(PROJECT_DIR)/Modules/webauthn/RegistrationResponseJSON.idl
 $(PROJECT_DIR)/Modules/webauthn/ResidentKeyRequirement.idl
 $(PROJECT_DIR)/Modules/webauthn/UnknownCredentialOptions.idl
 $(PROJECT_DIR)/Modules/webauthn/UserVerificationRequirement.idl
+$(PROJECT_DIR)/Modules/webauthn/WebAuthnOperationErrorCode.idl
+$(PROJECT_DIR)/Modules/webauthn/WebAuthnOperationException.idl
 $(PROJECT_DIR)/Modules/webcodecs/AacEncoderConfig.idl
 $(PROJECT_DIR)/Modules/webcodecs/AudioSampleFormat.idl
 $(PROJECT_DIR)/Modules/webcodecs/AvcEncoderConfig.idl
@@ -1145,6 +1154,7 @@ $(PROJECT_DIR)/Modules/webxr/Navigator+WebXR.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRBoundedReferenceSpace.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRFrame+HandInput.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRFrame+HitTest.idl
+$(PROJECT_DIR)/Modules/webxr/WebXRFrame+PlaneDetection.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRFrame.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRHand.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRHitTestResult.idl
@@ -1163,7 +1173,10 @@ $(PROJECT_DIR)/Modules/webxr/WebXRRenderState+Layers.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRRenderState.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRRigidTransform.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRSession+AR.idl
+$(PROJECT_DIR)/Modules/webxr/WebXRPlane.idl
+$(PROJECT_DIR)/Modules/webxr/WebXRPlaneSet.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRSession+HitTest.idl
+$(PROJECT_DIR)/Modules/webxr/WebXRSession+PlaneDetection.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRSession+Layers.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRSession.idl
 $(PROJECT_DIR)/Modules/webxr/WebXRSpace.idl
@@ -1199,6 +1212,7 @@ $(PROJECT_DIR)/Modules/webxr/XRLayerEvent.idl
 $(PROJECT_DIR)/Modules/webxr/XRLayerInit.idl
 $(PROJECT_DIR)/Modules/webxr/XRLayerLayout.idl
 $(PROJECT_DIR)/Modules/webxr/XRLayerQuality.idl
+$(PROJECT_DIR)/Modules/webxr/XRPlaneOrientation.idl
 $(PROJECT_DIR)/Modules/webxr/XRProjectionLayer.idl
 $(PROJECT_DIR)/Modules/webxr/XRProjectionLayerInit.idl
 $(PROJECT_DIR)/Modules/webxr/XRQuadLayer.idl
@@ -1222,8 +1236,8 @@ $(PROJECT_DIR)/Scripts/GenerateQuirkBehaviors.rb
 $(PROJECT_DIR)/Scripts/GenerateSettings.rb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.cpp.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.h.erb
-$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDefinitions.h.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.h.erb
+$(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.serialization.in.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.cpp.erb
 $(PROJECT_DIR)/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.h.erb
 $(PROJECT_DIR)/Scripts/SettingsTemplates/InternalSettingsGenerated.cpp.erb
@@ -1786,6 +1800,9 @@ $(PROJECT_DIR)/html/canvas/CanvasElementImage.idl
 $(PROJECT_DIR)/html/canvas/CanvasFillRule.idl
 $(PROJECT_DIR)/html/canvas/CanvasFillStrokeStyles.idl
 $(PROJECT_DIR)/html/canvas/CanvasFilters.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontKerning.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontStretch.idl
+$(PROJECT_DIR)/html/canvas/CanvasFontVariantCaps.idl
 $(PROJECT_DIR)/html/canvas/CanvasGradient.idl
 $(PROJECT_DIR)/html/canvas/CanvasImageData.idl
 $(PROJECT_DIR)/html/canvas/CanvasImageSmoothing.idl
@@ -1805,6 +1822,7 @@ $(PROJECT_DIR)/html/canvas/CanvasText.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextAlign.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextBaseline.idl
 $(PROJECT_DIR)/html/canvas/CanvasTextDrawingStyles.idl
+$(PROJECT_DIR)/html/canvas/CanvasTextRendering.idl
 $(PROJECT_DIR)/html/canvas/CanvasTransform.idl
 $(PROJECT_DIR)/html/canvas/CanvasUserInterface.idl
 $(PROJECT_DIR)/html/canvas/EXTBlendMinMax.idl
@@ -1847,6 +1865,7 @@ $(PROJECT_DIR)/html/canvas/OffscreenCanvasRenderingContext2D.idl
 $(PROJECT_DIR)/html/canvas/PaintRenderingContext2D.idl
 $(PROJECT_DIR)/html/canvas/Path2D.idl
 $(PROJECT_DIR)/html/canvas/PredefinedColorSpace.idl
+$(PROJECT_DIR)/html/canvas/RenderingMode.idl
 $(PROJECT_DIR)/html/canvas/UpdateElementGeometryOptions.idl
 $(PROJECT_DIR)/html/canvas/WebGL2RenderingContext.idl
 $(PROJECT_DIR)/html/canvas/WebGLActiveInfo.idl
@@ -2196,6 +2215,7 @@ $(PROJECT_DIR)/testing/MockPaymentAddress.idl
 $(PROJECT_DIR)/testing/MockPaymentContactFields.idl
 $(PROJECT_DIR)/testing/MockPaymentCoordinator.idl
 $(PROJECT_DIR)/testing/MockPaymentError.idl
+$(PROJECT_DIR)/testing/MockPhoneNumberPossessionConfiguration.idl
 $(PROJECT_DIR)/testing/MockRTCRtpTransform.idl
 $(PROJECT_DIR)/testing/MockWebAuthenticationConfiguration.idl
 $(PROJECT_DIR)/testing/RequestedGPU.idl

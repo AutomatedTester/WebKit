@@ -550,6 +550,34 @@ URL WebExtension::resourceFileURLForPath(const String& originalPath)
     return result;
 }
 
+String WebExtension::resourceKeyForPath(const String& originalPath)
+{
+    // Read the path as a URL, like resourceFileURLForPath(), so a query or fragment is dropped and percent-encoding is decoded.
+    auto path = URL { URL { "file:///"_s }, originalPath }.fileSystemPath();
+    if (path.startsWith('/'))
+        path = path.substring(1);
+
+    return path;
+}
+
+bool WebExtension::hasResourceForPath(const String& originalPath)
+{
+    ASSERT(originalPath);
+
+    String path = originalPath;
+    if (path.startsWith('/'))
+        path = path.substring(1);
+
+    if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
+        return true;
+
+    auto resourceKey = resourceKeyForPath(originalPath);
+    if (m_stringResources.contains(resourceKey) || m_dataResources.contains(resourceKey))
+        return true;
+
+    return !resourceFileURLForPath(path).isEmpty();
+}
+
 String WebExtension::resourceMIMETypeForPath(const String& path)
 {
     auto dataPrefix = "data:"_s;
@@ -581,12 +609,14 @@ std::expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(co
     if (path == generatedBackgroundPageFilename || path == generatedBackgroundServiceWorkerFilename)
         return generatedBackgroundContent();
 
-    if (auto maybeString = m_stringResources.getOptional(path))
+    auto resourceKey = resourceKeyForPath(originalPath);
+
+    if (auto maybeString = m_stringResources.getOptional(resourceKey))
         return *maybeString;
 
-    if (auto maybeData = m_dataResources.getOptional(path)) {
+    if (auto maybeData = m_dataResources.getOptional(resourceKey)) {
         auto string = String::fromUTF8(maybeData->get().span());
-        m_stringResources.set(path, string);
+        m_stringResources.set(resourceKey, string);
         return string;
     }
 
@@ -600,16 +630,16 @@ std::expected<String, RefPtr<API::Error>> WebExtension::resourceStringForPath(co
         return emptyString();
 
     auto mimeType = MIMETypeRegistry::mimeTypeForPath(path);
-    RefPtr decoder = TextResourceDecoder::create(mimeType, PAL::UTF8Encoding());
+    RefPtr decoder = TextResourceDecoder::create(TextResourceDecoder::contentTypeForMIMEType(mimeType), PAL::UTF8Encoding());
 
     auto result = decoder->decode(data->span());
     if (cacheResult == CacheResult::Yes)
-        m_stringResources.set(path, result);
+        m_stringResources.set(resourceKey, result);
 
     return result;
 }
 
-static int LEGACY_NODELETE toAPI(WebExtension::Error error)
+NODELETE static int toAPI(WebExtension::Error error)
 {
     switch (error) {
     case WebExtension::Error::Unknown:
@@ -1090,7 +1120,7 @@ const String& WebExtension::generatedBackgroundContent()
 
     StringBuilder generatedBackgroundContent;
     if (!isServiceWorker)
-        generatedBackgroundContent.append("<!DOCTYPE html>\n<body>\n"_s);
+        generatedBackgroundContent.append("<!DOCTYPE html>\n<meta charset=\"utf-8\">\n<body>\n"_s);
 
     for (auto& scriptPath : scripts)
         generatedBackgroundContent.append(scriptPath, "\n"_s);
@@ -1191,15 +1221,18 @@ void WebExtension::populateBackgroundPropertiesIfNeeded()
     }
 
     if (!preferredEnvironments.size()) {
-        // Page takes precedence over service worker.
-        if (!m_backgroundPagePath.isEmpty())
-            m_backgroundServiceWorkerPath = nullString();
+        // Page takes precedence over scripts and service worker.
+        if (!m_backgroundPagePath.isEmpty()) {
+            if (!m_backgroundScriptPaths.isEmpty())
+                recordError(createError(Error::InvalidBackgroundContent, WEB_UI_STRING("Manifest `background` entry has both `page` and `scripts` keys. The `page` key is used and `scripts` is ignored.", "WKWebExtensionErrorInvalidBackgroundContent description for both background page and scripts keys")));
 
-        // Scripts takes precedence over page and service worker.
-        if (!m_backgroundScriptPaths.isEmpty()) {
+            m_backgroundScriptPaths = { };
             m_backgroundServiceWorkerPath = nullString();
-            m_backgroundPagePath = nullString();
         }
+
+        // Scripts takes precedence over service worker.
+        if (!m_backgroundScriptPaths.isEmpty())
+            m_backgroundServiceWorkerPath = nullString();
 
         m_backgroundContentEnvironment = !m_backgroundServiceWorkerPath.isEmpty() ? Environment::ServiceWorker : Environment::Document;
 
@@ -1655,6 +1688,9 @@ const WebExtension::PermissionsSet& WebExtension::supportedPermissions()
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
         WebExtensionPermission::offscreen(),
 #endif
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionSupportedPermissionsAdditions.h>)
+#include <WebKitAdditions/WebExtensionSupportedPermissionsAdditions.h>
+#endif
     };
     return permissions;
 }
@@ -1879,8 +1915,15 @@ void WebExtension::populateActionPropertiesIfNeeded()
             actionObject = manifestObject->getObject(pageActionManifestKey);
     }
 
-    if (!actionObject)
+    if (!actionObject) {
+        if (supportsManifestVersion(3)) {
+            if (manifestObject->getValue(browserActionManifestKey) || manifestObject->getValue(pageActionManifestKey))
+                recordError(createError(Error::InvalidAction, WEB_UI_STRING("The `browser_action` and `page_action` manifest entries require manifest version 2 or lower.", "WKWebExtensionErrorInvalidManifestEntry description for browser_action or page_action in manifest version 3")));
+        } else if (manifestObject->getValue(actionManifestKey))
+            recordError(createError(Error::InvalidAction, WEB_UI_STRING("The `action` manifest entry requires manifest version 3 or higher.", "WKWebExtensionErrorInvalidManifestEntry description for action in manifest version 2")));
+
         return;
+    }
 
     // Look for the "default_icon" as a string, which is useful for SVG icons. Only supported by Firefox currently.
     if (auto defaultIconPath = actionObject->getString(defaultIconManifestKey); !defaultIconPath.isEmpty()) {
@@ -2067,8 +2110,14 @@ RefPtr<WebCore::Icon> WebExtension::bestIconForManifestKey(const JSON::Object& o
         return *std::get_if<RefPtr<WebCore::Icon>>(&*cacheResult);
 
     RefPtr iconObject = object.getObject(manifestKey);
-    if (!iconObject)
+    if (!iconObject) {
+        // A string `default_icon` is loaded and reported by populateActionPropertiesIfNeeded().
+        RefPtr value = object.getValue(manifestKey);
+        if (value && !(manifestKey == defaultIconManifestKey && value->type() == JSON::Value::Type::String))
+            recordError(createError(error));
+
         return nullptr;
+    }
 
     RefPtr result = bestIcon(iconObject, idealSize, [&](Ref<API::Error> error) {
         recordError(error);
@@ -2122,8 +2171,19 @@ RefPtr<JSON::Object> WebExtension::bestIconVariantJSONObject(RefPtr<JSON::Array>
     if (!variants || !variants->length())
         return nullptr;
 
-    if (variants->length() == 1)
-        return variants->get(0)->asObject();
+    // A variant with an unknown property is skipped entirely, so a later variant can match instead.
+    auto hasOnlyKnownProperties = [](const JSON::Object& variantObject) {
+        for (auto key : variantObject.keys()) {
+            if (key == anyManifestKey || key == colorSchemesManifestKey || key == colorSchemesAPIKey)
+                continue;
+
+            auto size = parseInteger<size_t>(key);
+            if (!size || !*size)
+                return false;
+        }
+
+        return true;
+    };
 
     RefPtr<JSON::Object> bestVariant;
     RefPtr<JSON::Object> fallbackVariant;
@@ -2134,10 +2194,10 @@ RefPtr<JSON::Object> WebExtension::bestIconVariantJSONObject(RefPtr<JSON::Array>
 
     // Pick the first variant matching color scheme and/or size.
     for (Ref variant : *variants) {
-        if (!variant)
+        RefPtr variantObject = variant->asObject();
+        if (!variantObject || !hasOnlyKnownProperties(*variantObject))
             continue;
 
-        RefPtr variantObject = variant->asObject();
         auto colorSchemes = toColorSchemes(variantObject ? variantObject->getValue(colorSchemesManifestKey) ?: variantObject->getValue(colorSchemesAPIKey) : nullptr);
         auto currentBestSize = bestIconSize(*variantObject, idealPixelSize);
 
@@ -2182,6 +2242,11 @@ RefPtr<WebCore::Icon> WebExtension::bestIconVariantForManifestKey(const JSON::Ob
         return *std::get_if<RefPtr<WebCore::Icon>>(&*cacheResult);
 
     RefPtr iconArray = object.getArray(manifestKey);
+    if (!iconArray) {
+        recordError(createError(error));
+        return nullptr;
+    }
+
     RefPtr result = bestIconVariant(iconArray, idealSize, [&](Ref<API::Error> error) {
         recordError(error);
     });
@@ -2337,8 +2402,14 @@ void WebExtension::populateCommandsIfNeeded()
                 continue;
             }
 
+            bool isActionCommand = false;
+            if (supportsManifestVersion(3) && commandIdentifier == "_execute_action"_s)
+                isActionCommand = true;
+            else if (!supportsManifestVersion(3) && (commandIdentifier == "_execute_browser_action"_s || commandIdentifier == "_execute_page_action"_s))
+                isActionCommand = true;
+
             RefPtr commandObject = commandsObject->getObject(commandIdentifier);
-            if (!commandObject || !commandObject->size()) {
+            if (!commandObject || (!commandObject->size() && !isActionCommand)) {
                 error = WEB_UI_STRING("Empty or invalid command in the `commands` manifest entry.", "WKWebExtensionErrorInvalidManifestEntry description for invalid command");
                 continue;
             }
@@ -2347,12 +2418,6 @@ void WebExtension::populateCommandsIfNeeded()
             commandData.identifier = commandIdentifier;
             commandData.activationKey = emptyString();
             commandData.modifierFlags = { };
-
-            bool isActionCommand = false;
-            if (supportsManifestVersion(3) && commandData.identifier == "_execute_action"_s)
-                isActionCommand = true;
-            else if (!supportsManifestVersion(3) && (commandData.identifier == "_execute_browser_action"_s || commandData.identifier == "_execute_page_action"_s))
-                isActionCommand = true;
 
             if (isActionCommand && !hasActionCommand)
                 hasActionCommand = true;

@@ -3843,9 +3843,8 @@ bool DynamicDescriptorPool::allocateFromExistingPool(ErrorContext *context,
                                                      const DescriptorSetLayout &descriptorSetLayout,
                                                      DescriptorSetPointer *descriptorSetOut)
 {
-    for (size_t poolIndex = 0; poolIndex < mDescriptorPools.size(); ++poolIndex)
+    for (DescriptorPoolPointer &pool : mDescriptorPools)
     {
-        DescriptorPoolPointer &pool = mDescriptorPools[poolIndex];
         if (!pool || !pool->valid())
         {
             continue;
@@ -4132,7 +4131,7 @@ void DynamicDescriptorPool::destroyUnusedPool(Renderer *renderer,
 void DynamicDescriptorPool::checkAndDestroyUnusedPool(Renderer *renderer)
 {
     ASSERT(renderer->getFeatures().descriptorSetCache.enabled);
-    for (auto pool : mDescriptorPools)
+    for (const DescriptorPoolPointer &pool : mDescriptorPools)
     {
         pool->cleanupPendingGarbage();
     }
@@ -6095,6 +6094,13 @@ angle::Result ImageHelper::initExternal(ErrorContext *context,
                     imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
                 }
             }
+            else if (renderer->getFeatures().simulateTileMemoryTransferSrcForTesting.enabled)
+            {
+                // Use SwiftShader to test VK_IMAGE_USAGE_TRANSFER_SRC_BIT capability
+                ASSERT(renderer->getFeatures().simulateTileMemoryForTesting.enabled);
+                mTileMemorySupportsTransferSrc = true;
+                imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            }
             mUseTileMemory = true;
         }
         else
@@ -6732,6 +6738,12 @@ angle::Result ImageHelper::fallbackFromTileMemory(ContextVk *contextVk)
 
         if (prevImage->mTileMemorySupportsTransferSrc)
         {
+            // If image has depth and stencil, copy to each individually per Vulkan spec
+            // VUID-VkImageMemoryBarrier-image-03320.
+            if (isCombinedDepthStencilFormat())
+            {
+                aspectFlags = kDepthStencilAspects;
+            }
             // Use vkCmdCopyImage for a bit-exact copy instead of sampling tile memory through a
             // shader.
             CommandResources resources;
@@ -6754,6 +6766,15 @@ angle::Result ImageHelper::fallbackFromTileMemory(ContextVk *contextVk)
 
             commandBuffer->copyImage(prevImage->getImage(), prevImage->getCurrentLayout(renderer),
                                      getImage(), getCurrentLayout(renderer), 1, &region);
+
+            // Seal mOutsideRenderPassCommands so the copy lands in the same vkQueueSubmit as
+            // the tile memory render pass (mirrors what copyImageFromTileMemory does below).
+            ANGLE_TRY(contextVk->flushCommandsAndEndRenderPassWithoutSubmit(
+                RenderPassClosureReason::TileMemorySimulatedClear));
+
+            // Restore the added extra content defined bits due to extra aspectFlags for copyImage.
+            mVkImageContentDefined[0]        = prevImage->mVkImageContentDefined[0];
+            mVkImageStencilContentDefined[0] = prevImage->mVkImageStencilContentDefined[0];
         }
         else
         {
@@ -8362,9 +8383,53 @@ angle::Result ImageHelper::CopyImageSubData(const gl::Context *context,
         ASSERT(dstImage->getCurrentImageAccess() == ImageAccess::TransferDst ||
                dstImage->getCurrentImageAccess() == ImageAccess::TransferSrcDst);
 
-        commandBuffer->copyImage(srcImage->getImage(), srcImage->getCurrentLayout(renderer),
-                                 dstImage->getImage(), dstImage->getCurrentLayout(renderer), 1,
-                                 &region);
+        // Some drivers copy wrong data when the formats differ and the region covers more than
+        // one layer; issue one copy per layer instead.  No barriers are needed between them.
+        const bool splitPerLayer =
+            renderer->getFeatures().splitCrossFormatLayeredImageCopy.enabled &&
+            srcImage->getActualFormatID() != dstImage->getActualFormatID() &&
+            !srcImage->getActualFormat().isBlock && !dstImage->getActualFormat().isBlock &&
+            srcDepth > 1 && !(isSrc3D && isDst3D);
+
+        if (!splitPerLayer)
+        {
+            commandBuffer->copyImage(srcImage->getImage(), srcImage->getCurrentLayout(renderer),
+                                     dstImage->getImage(), dstImage->getCurrentLayout(renderer), 1,
+                                     &region);
+        }
+        else
+        {
+            VkImageCopy layerRegion               = region;
+            layerRegion.srcSubresource.layerCount = 1;
+            layerRegion.dstSubresource.layerCount = 1;
+            layerRegion.extent.depth              = 1;
+
+            for (uint32_t layer = 0; layer < static_cast<uint32_t>(srcDepth); ++layer)
+            {
+                // copyImage() records a single region, so issue one call per layer.
+                commandBuffer->copyImage(srcImage->getImage(), srcImage->getCurrentLayout(renderer),
+                                         dstImage->getImage(), dstImage->getCurrentLayout(renderer),
+                                         1, &layerRegion);
+
+                if (isSrc3D)
+                {
+                    ++layerRegion.srcOffset.z;
+                }
+                else
+                {
+                    ++layerRegion.srcSubresource.baseArrayLayer;
+                }
+
+                if (isDst3D)
+                {
+                    ++layerRegion.dstOffset.z;
+                }
+                else
+                {
+                    ++layerRegion.dstSubresource.baseArrayLayer;
+                }
+            }
+        }
     }
     else if (!srcImage->getIntendedFormat().isBlock && !dstImage->getIntendedFormat().isBlock)
     {
@@ -9357,10 +9422,8 @@ angle::Result ImageHelper::reformatStagedImageUpdates(ContextVk *contextVk,
     VkDeviceSize readbackBatchCapacity = 0;
 
     // Bound readback batches by staging allocation capacity and mip level.
-    for (size_t level = 0; level < mSubresourceUpdates.size(); ++level)
+    for (SubresourceUpdates &levelUpdates : mSubresourceUpdates)
     {
-        SubresourceUpdates &levelUpdates = mSubresourceUpdates[level];
-
         for (SubresourceUpdate &update : levelUpdates)
         {
             if (update.updateSource != UpdateSource::Image ||
@@ -11437,7 +11500,7 @@ angle::Result ImageHelper::copyImageDataToBuffer(ContextVk *contextVk,
     return angle::Result::Continue;
 }
 
-angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
+angle::Result ImageHelper::copySurfaceImageToBuffer(ErrorContext *context,
                                                     gl::OwnerLevel sourceLevelGL,
                                                     uint32_t layerCount,
                                                     gl::OwnerLayer baseLayer,
@@ -11446,7 +11509,7 @@ angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ImageHelper::copySurfaceImageToBuffer");
 
-    Renderer *renderer = displayVk->getRenderer();
+    Renderer *renderer = context->getRenderer();
 
     VkBufferImageCopy region               = {};
     region.bufferOffset                    = 0;
@@ -11464,31 +11527,31 @@ angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
     ScopedPrimaryCommandBuffer scopedCommandBuffer(renderer->getDevice());
-    ANGLE_TRY(renderer->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected,
+    ANGLE_TRY(renderer->getCommandBufferOneOff(context, ProtectionType::Unprotected,
                                                &scopedCommandBuffer));
     PrimaryCommandBuffer &primaryCommandBuffer = scopedCommandBuffer.get();
 
     VkSemaphore acquireNextImageSemaphore;
     recordBarrierOneOffImpl(renderer, getAspectFlags(), ImageAccess::TransferSrc,
-                            displayVk->getDeviceQueueIndex(), &primaryCommandBuffer,
+                            context->getDeviceQueueIndex(), &primaryCommandBuffer,
                             &acquireNextImageSemaphore);
     primaryCommandBuffer.copyImageToBuffer(mImage, getCurrentLayout(renderer),
                                            bufferHelper->getBuffer().getHandle(), 1, &region);
 
     renderer->insertSubmitDebugMarkerInCommandBuffer(primaryCommandBuffer,
                                                      QueueSubmitReason::CopySurfaceImageToBuffer);
-    ANGLE_VK_TRY(displayVk, primaryCommandBuffer.end());
+    ANGLE_VK_TRY(context, primaryCommandBuffer.end());
 
     QueueSerial submitQueueSerial;
     ANGLE_TRY(renderer->queueSubmitOneOff(
-        displayVk, std::move(scopedCommandBuffer), ProtectionType::Unprotected,
+        context, std::move(scopedCommandBuffer), ProtectionType::Unprotected,
         egl::ContextPriority::Medium, acquireNextImageSemaphore,
         kSwapchainAcquireImageWaitStageFlags, &submitQueueSerial));
 
-    return renderer->finishQueueSerial(displayVk, submitQueueSerial);
+    return renderer->finishQueueSerial(context, submitQueueSerial);
 }
 
-angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
+angle::Result ImageHelper::copyBufferToSurfaceImage(ErrorContext *context,
                                                     gl::OwnerLevel sourceLevelGL,
                                                     uint32_t layerCount,
                                                     gl::OwnerLayer baseLayer,
@@ -11497,7 +11560,7 @@ angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "ImageHelper::copyBufferToSurfaceImage");
 
-    Renderer *renderer = displayVk->getRenderer();
+    Renderer *renderer = context->getRenderer();
 
     VkBufferImageCopy region               = {};
     region.bufferOffset                    = 0;
@@ -11515,28 +11578,28 @@ angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
     ScopedPrimaryCommandBuffer scopedCommandBuffer(renderer->getDevice());
-    ANGLE_TRY(renderer->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected,
+    ANGLE_TRY(renderer->getCommandBufferOneOff(context, ProtectionType::Unprotected,
                                                &scopedCommandBuffer));
     PrimaryCommandBuffer &commandBuffer = scopedCommandBuffer.get();
 
     VkSemaphore acquireNextImageSemaphore;
     recordBarrierOneOffImpl(renderer, getAspectFlags(), ImageAccess::TransferDst,
-                            displayVk->getDeviceQueueIndex(), &commandBuffer,
+                            context->getDeviceQueueIndex(), &commandBuffer,
                             &acquireNextImageSemaphore);
     commandBuffer.copyBufferToImage(bufferHelper->getBuffer().getHandle(), mImage,
                                     getCurrentLayout(renderer), 1, &region);
 
     renderer->insertSubmitDebugMarkerInCommandBuffer(commandBuffer,
                                                      QueueSubmitReason::CopyBufferToSurfaceImage);
-    ANGLE_VK_TRY(displayVk, commandBuffer.end());
+    ANGLE_VK_TRY(context, commandBuffer.end());
 
     QueueSerial submitQueueSerial;
     ANGLE_TRY(renderer->queueSubmitOneOff(
-        displayVk, std::move(scopedCommandBuffer), ProtectionType::Unprotected,
+        context, std::move(scopedCommandBuffer), ProtectionType::Unprotected,
         egl::ContextPriority::Medium, acquireNextImageSemaphore,
         kSwapchainAcquireImageWaitStageFlags, &submitQueueSerial));
 
-    return renderer->finishQueueSerial(displayVk, submitQueueSerial);
+    return renderer->finishQueueSerial(context, submitQueueSerial);
 }
 
 // static

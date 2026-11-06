@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2022, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,7 +67,7 @@ bool SharedVideoFrameWriter::wait(NOESCAPE const Function<void(IPC::Semaphore&)>
         newSemaphoreCallback(m_semaphore.get());
         return true;
     }
-    return !WTF::atomicLoad(&m_isDisabled, std::memory_order_relaxed) && m_semaphore->waitFor(defaultTimeout);
+    return !WTF::atomicLoad<MemoryOrder::Relaxed>(&m_isDisabled) && m_semaphore->waitFor(defaultTimeout);
 }
 
 bool SharedVideoFrameWriter::allocateStorage(size_t size, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
@@ -113,7 +113,7 @@ std::optional<SharedVideoFrame> SharedVideoFrameWriter::write(const VideoFrame& 
     auto buffer = writeBuffer(frame, newSemaphoreCallback, newMemoryCallback);
     if (!buffer)
         return { };
-    return SharedVideoFrame { frame.presentationTime(), frame.isMirrored(), frame.rotation(), frame.colorSpace(), WTF::move(*buffer) };
+    return SharedVideoFrame { frame.presentationTime(), frame.isMirrored(), frame.rotation(), frame.colorSpace(), frame.shouldIgnoreAlpha(), WTF::move(*buffer) };
 }
 
 std::optional<SharedVideoFrame::Buffer> SharedVideoFrameWriter::writeBuffer(const VideoFrame& frame, NOESCAPE const Function<void(IPC::Semaphore&)>& newSemaphoreCallback, NOESCAPE const Function<void(SharedMemory::Handle&&)>& newMemoryCallback)
@@ -201,7 +201,7 @@ void SharedVideoFrameWriter::signalInCaseOfError()
 
 void SharedVideoFrameWriter::disable()
 {
-    WTF::atomicStore(&m_isDisabled, true, std::memory_order_relaxed);
+    WTF::atomicStore<MemoryOrder::Relaxed>(&m_isDisabled, true);
     m_semaphore->signal();
 }
 
@@ -297,7 +297,7 @@ RefPtr<VideoFrame> SharedVideoFrameReader::read(SharedVideoFrame&& sharedVideoFr
     if (!pixelBuffer)
         return nullptr;
 
-    return VideoFrameCV::create(sharedVideoFrame.time, sharedVideoFrame.mirrored, sharedVideoFrame.rotation, WTF::move(pixelBuffer), WTF::move(sharedVideoFrame.colorSpace));
+    return VideoFrameCV::create(sharedVideoFrame.time, sharedVideoFrame.mirrored, sharedVideoFrame.rotation, WTF::move(pixelBuffer), WTF::move(sharedVideoFrame.colorSpace), sharedVideoFrame.shouldIgnoreAlpha ? VideoFrameCV::ShouldIgnoreAlpha::Yes : VideoFrameCV::ShouldIgnoreAlpha::No);
 }
 
 CVPixelBufferPoolRef SharedVideoFrameReader::pixelBufferPool(const SharedVideoFrameInfo& info)

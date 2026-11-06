@@ -95,7 +95,9 @@ public:
                     continue;
                 addOverride(
                     block, branch->child(0),
-                    Override::nonZero(block->successorBlock(0)));
+                    branch->child(0)->returnsBool()
+                        ? Override::constant(block->successorBlock(0), 1)
+                        : Override::nonZero(block->successorBlock(0)));
                 addOverride(
                     block, branch->child(0),
                     Override::constant(block->successorBlock(1), 0));
@@ -212,7 +214,7 @@ private:
         {
         }
 
-        static Override LEGACY_NODELETE constant(BasicBlock* block, int64_t value)
+        NODELETE static Override constant(BasicBlock* block, int64_t value)
         {
             Override result;
             result.block = block;
@@ -223,7 +225,7 @@ private:
             return result;
         }
 
-        static Override LEGACY_NODELETE nonZero(BasicBlock* block)
+        NODELETE static Override nonZero(BasicBlock* block)
         {
             Override result;
             result.block = block;
@@ -231,7 +233,7 @@ private:
             return result;
         }
 
-        bool LEGACY_NODELETE isBetterThan(const Override& override)
+        NODELETE bool isBetterThan(const Override& override)
         {
             if (hasValue && !override.hasValue)
                 return true;

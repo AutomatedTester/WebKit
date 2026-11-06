@@ -36,18 +36,18 @@
 
 namespace WebGPU::Metal {
 
-Ref<ExternalTexture> Device::importExternalTexture(const WebGPU::ExternalTextureDescriptor& descriptor)
+RefPtr<WebGPU::ExternalTexture> Device::importExternalTexture(const WebGPU::ExternalTextureDescriptor& descriptor)
 {
     if (!isValid())
         return ExternalTexture::createInvalid(*this);
 
     // The external texture keeps the C API color space, which the pixel buffer conversions take.
-    return ExternalTexture::create(descriptor.pixelBuffer.get(), toAPI(descriptor.colorSpace), simd::uint2 { descriptor.visibleSize.width, descriptor.visibleSize.height }, *this);
+    return ExternalTexture::create(descriptor.pixelBuffer.get(), descriptor.colorSpace, simd::uint2 { descriptor.visibleSize.width, descriptor.visibleSize.height }, *this);
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ExternalTexture);
 
-ExternalTexture::ExternalTexture(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace, simd::uint2 visibleSize, Device& device)
+ExternalTexture::ExternalTexture(CVPixelBufferRef pixelBuffer, WebGPU::PredefinedColorSpace colorSpace, simd::uint2 visibleSize, Device& device)
     : m_pixelBuffer(pixelBuffer)
     , m_colorSpace(colorSpace)
     , m_visibleSize(visibleSize)
@@ -77,7 +77,10 @@ void ExternalTexture::destroy()
 
 void ExternalTexture::undestroy()
 {
-    m_commandEncoders.clear();
+    if (!m_destroyed)
+        return;
+
+    m_device->makeSubmitInvalidClearingEncoders(m_commandEncoders);
     m_destroyed = false;
 }
 
@@ -125,27 +128,21 @@ size_t ExternalTexture::openCommandEncoderCount() const
 
 #pragma mark WGPU Stubs
 
-void LEGACY_NODELETE wgpuExternalTextureAddRef(WGPUExternalTexture externalTexture)
+NODELETE void wgpuExternalTextureAddRef(WGPUExternalTexture externalTexture)
 {
     WebGPU::Metal::fromAPI(externalTexture).ref();
 }
 
 void wgpuExternalTextureRelease(WGPUExternalTexture externalTexture)
 {
-    WebGPU::Metal::fromAPI(externalTexture).deref();
+    @autoreleasepool {
+        WebGPU::Metal::fromAPI(externalTexture).deref();
+    }
 }
 
 void wgpuExternalTextureDestroy(WGPUExternalTexture externalTexture)
 {
-    protect(WebGPU::Metal::fromAPI(externalTexture))->destroy();
-}
-
-void wgpuExternalTextureUndestroy(WGPUExternalTexture externalTexture)
-{
-    protect(WebGPU::Metal::fromAPI(externalTexture))->undestroy();
-}
-
-void wgpuExternalTextureUpdate(WGPUExternalTexture externalTexture, CVPixelBufferRef pixelBuffer)
-{
-    protect(WebGPU::Metal::fromAPI(externalTexture))->update(pixelBuffer);
+    @autoreleasepool {
+        protect(WebGPU::Metal::fromAPI(externalTexture))->destroy();
+    }
 }

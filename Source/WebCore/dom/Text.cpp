@@ -54,6 +54,11 @@ Ref<Text> Text::createEditingText(Document& document, String&& data)
 
 Text::~Text() = default;
 
+RenderText* Text::renderer() const
+{
+    return downcast<RenderText>(Node::renderer());
+}
+
 ExceptionOr<Ref<Text>> Text::splitText(unsigned offset)
 {
     if (offset > length())
@@ -79,7 +84,7 @@ ExceptionOr<Ref<Text>> Text::splitText(unsigned offset)
     return newText;
 }
 
-static const Text* LEGACY_NODELETE earliestLogicallyAdjacentTextNode(const Text* text)
+NODELETE static const Text* earliestLogicallyAdjacentTextNode(const Text* text)
 {
     const Node* node = text;
     while ((node = node->previousSibling())) {
@@ -91,7 +96,7 @@ static const Text* LEGACY_NODELETE earliestLogicallyAdjacentTextNode(const Text*
     return text;
 }
 
-static const Text* LEGACY_NODELETE latestLogicallyAdjacentTextNode(const Text* text)
+NODELETE static const Text* latestLogicallyAdjacentTextNode(const Text* text)
 {
     const Node* node = text;
     while ((node = node->nextSibling())) {
@@ -162,14 +167,14 @@ SerializedNode Text::serializeNode(CloningOperation) const
     return { SerializedNode::Text { data() } };
 }
 
-static bool LEGACY_NODELETE isSVGShadowText(const Text& text)
+NODELETE static bool isSVGShadowText(const Text& text)
 {
     ASSERT(text.parentNode());
     auto* parentShadowRoot = dynamicDowncast<ShadowRoot>(*text.parentNode());
     return parentShadowRoot && parentShadowRoot->host()->hasTagName(SVGNames::trefTag);
 }
 
-static bool LEGACY_NODELETE isSVGText(const Text& text)
+NODELETE static bool isSVGText(const Text& text)
 {
     ASSERT(text.parentNode());
     auto* parentElement = dynamicDowncast<SVGElement>(*text.parentNode());

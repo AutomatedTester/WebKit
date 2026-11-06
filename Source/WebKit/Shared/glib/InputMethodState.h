@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/AutocapitalizeTypes.h>
+#include <WebCore/EnterKeyHint.h>
 #include <WebCore/InputMode.h>
 #include <wtf/OptionSet.h>
 
@@ -59,7 +60,8 @@ struct InputMethodState {
         UppercaseChars = 1 << 2,
         UppercaseWords = 1 << 3,
         UppercaseSentences = 1 << 4,
-        InhibitOnScreenKeyboard = 1 << 5
+        InhibitOnScreenKeyboard = 1 << 5,
+        Private = 1 << 6,
     };
 
     void setPurposeOrHintForInputMode(WebCore::InputMode);
@@ -69,6 +71,7 @@ struct InputMethodState {
     friend bool operator==(const InputMethodState&, const InputMethodState&) = default;
 
     Purpose purpose { Purpose::FreeForm };
+    WebCore::EnterKeyHint enterKeyHint { WebCore::EnterKeyHint::Unspecified };
     OptionSet<Hint> hints;
 };
 

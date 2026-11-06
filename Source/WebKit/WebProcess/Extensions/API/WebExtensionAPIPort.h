@@ -58,6 +58,7 @@ public:
 
     void postMessage(WebFrame&, const String&, NSString **outExceptionString);
     void disconnect();
+    void fireDisconnectEventIfNeeded();
 
     bool isDisconnected() const { return m_disconnected; }
 #endif
@@ -140,8 +141,7 @@ private:
     void remove();
 
 #if PLATFORM(COCOA)
-    void fireMessageEventIfNeeded(id message, bool userGesture);
-    void fireDisconnectEventIfNeeded();
+    void fireMessageEventIfNeeded(JSStringRef messageJSON, bool userGesture);
 #endif
 
     WebExtensionContentWorldType m_targetContentWorldType;

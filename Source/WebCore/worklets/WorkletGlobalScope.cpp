@@ -55,11 +55,12 @@ static std::atomic<unsigned> gNumberOfWorkletGlobalScopes { 0 };
 WorkletGlobalScope::WorkletGlobalScope(WorkerOrWorkletThread& thread, Ref<JSC::VM>&& vm, const WorkletParameters& parameters)
     : WorkerOrWorkletGlobalScope(WorkerThreadType::Worklet, parameters.sessionID, WTF::move(vm), parameters.referrerPolicy, &thread, parameters.noiseInjectionHashSalt, parameters.advancedPrivacyProtections)
     , m_topOrigin(SecurityOrigin::createOpaque())
-    , m_url(parameters.windowURL)
+    , m_url(parameters.windowURL.isolatedCopy())
     , m_jsRuntimeFlags(parameters.jsRuntimeFlags)
-    , m_settingsValues(parameters.settingsValues)
-    , m_agentClusterID(parameters.agentClusterID)
-    , m_networkLoadPolicy(parameters.networkLoadPolicy)
+    , m_settingsValues(parameters.settingsValues.isolatedCopy())
+    , m_agentClusterID(parameters.agentClusterID.isolatedCopy())
+    , m_canBeCrossOriginIsolated(parameters.canBeCrossOriginIsolated)
+    , m_networkLoadPolicy(parameters.networkLoadPolicy.isolatedCopy())
 {
     ++gNumberOfWorkletGlobalScopes;
 
@@ -77,6 +78,7 @@ WorkletGlobalScope::WorkletGlobalScope(Document& document, Ref<JSC::VM>&& vm, Sc
     , m_code(WTF::move(code))
     , m_settingsValues(document.settingsValues().isolatedCopy())
     , m_agentClusterID(document.agentClusterID())
+    , m_canBeCrossOriginIsolated(document.crossOriginIsolated() ? CanBeCrossOriginIsolated::Yes : CanBeCrossOriginIsolated::No)
     , m_networkLoadPolicy(document.networkLoadPolicy().isolatedCopy())
 {
     ++gNumberOfWorkletGlobalScopes;

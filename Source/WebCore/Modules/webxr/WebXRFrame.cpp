@@ -47,6 +47,10 @@
 #include "WebXRTransientInputHitTestResult.h"
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+#include "WebXRPlaneSet.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebXRFrame);
@@ -229,7 +233,7 @@ ExceptionOr<RefPtr<WebXRViewerPose>> WebXRFrame::getViewerPose(const Document& d
             return TransformationMatrix::fromProjection(fov, aspect, near, far).toColumnMajorFloatArray();
         });
 
-        Ref xrView = WebXRView::create(protect(*this), view.eye, WTF::move(transform), Float32Array::create(projection.data(), projection.size()));
+        Ref xrView = WebXRView::create(protect(*this), view.eye, Ref { view.underlyingView }, WTF::move(transform), Float32Array::create(projection.data(), projection.size()));
         xrView->setViewportModifiable(m_session->supportsViewportScaling());
 
         //  8.8. Append xrview to xrviews
@@ -424,6 +428,19 @@ ExceptionOr<Vector<Ref<WebXRTransientInputHitTestResult>>> WebXRFrame::getHitTes
         results.append(WebXRTransientInputHitTestResult::create(inputSource.releaseNonNull(), WTF::move(hitTestResults)));
     }
     return results;
+}
+#endif
+
+#if ENABLE(WEBXR_PLANE_DETECTION)
+// https://immersive-web.github.io/plane-detection/#dom-xrframe-detectedplanes
+ExceptionOr<Ref<WebXRPlaneSet>> WebXRFrame::detectedPlanes()
+{
+    if (!m_active)
+        return Exception { ExceptionCode::InvalidStateError, "Frame is not active"_s };
+
+    if (!m_detectedPlanes)
+        m_detectedPlanes = WebXRPlaneSet::create(m_session->detectedPlanes());
+    return Ref { *m_detectedPlanes };
 }
 #endif
 

@@ -46,7 +46,7 @@
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/text/MakeString.h>
 
-#import "PDFKitSoftLink.h"
+#import <pal/cocoa/PDFKitSoftLink.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -67,8 +67,8 @@ public:
     {
     }
 
-    NetscapePlugInStreamLoader* LEGACY_NODELETE streamLoader() { return m_streamLoader; }
-    void LEGACY_NODELETE setStreamLoader(NetscapePlugInStreamLoader& loader) { m_streamLoader = loader; }
+    NODELETE NetscapePlugInStreamLoader* streamLoader() { return m_streamLoader; }
+    NODELETE void setStreamLoader(NetscapePlugInStreamLoader& loader) { m_streamLoader = loader; }
     void clearStreamLoader();
     void addData(std::span<const uint8_t> data) { m_accumulatedData.append(data); }
 
@@ -77,10 +77,10 @@ public:
     bool completeIfPossible(PDFIncrementalLoader&);
     void completeUnconditionally(PDFIncrementalLoader&);
 
-    uint64_t LEGACY_NODELETE position() const { return m_position; }
-    size_t LEGACY_NODELETE count() const { return m_count; }
+    NODELETE uint64_t position() const { return m_position; }
+    NODELETE size_t count() const { return m_count; }
 
-    const Vector<uint8_t>& LEGACY_NODELETE accumulatedData() const { return m_accumulatedData; };
+    NODELETE const Vector<uint8_t>& accumulatedData() const { return m_accumulatedData; };
 
 private:
     uint64_t m_position { 0 };
@@ -799,7 +799,7 @@ void PDFIncrementalLoader::threadEntry(Ref<PDFIncrementalLoader>&& loader)
 
     RetainPtr dataProvider = adoptCF(CGDataProviderCreateMultiRangeDirectAccess(this, kCGDataProviderIndeterminateSize, &dataProviderCallbacks));
     CGDataProviderSetProperty(dataProvider.get(), kCGDataProviderHasHighLatency, kCFBooleanTrue);
-    m_backgroundThreadDocument = adoptNS([allocPDFDocumentInstance() initWithProvider:dataProvider.get()]);
+    m_backgroundThreadDocument = adoptNS([PAL::allocPDFDocumentInstance() initWithProvider:dataProvider.get()]);
 
     // [PDFDocument initWithProvider:] will return nil in cases where the PDF is non-linearized.
     // In those cases we'll just keep buffering the entire PDF on the main thread.

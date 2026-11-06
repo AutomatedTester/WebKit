@@ -130,6 +130,7 @@
 #include "ResourceLoadObserver.h"
 #include "ScheduledAction.h"
 #include "Screen.h"
+#include "ScriptDisallowedScope.h"
 #include "ScrollAnimator.h"
 #include "ScrollToOptions.h"
 #include "SecurityOrigin.h"
@@ -201,7 +202,7 @@ using namespace Inspector;
 
 static constexpr Seconds defaultTransientActivationDuration { 5_s };
 
-static WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>& LEGACY_NODELETE windowsInterestedInStorageEvents()
+NODELETE static WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>& windowsInterestedInStorageEvents()
 {
     static MainThreadNeverDestroyed<WeakHashSet<LocalDOMWindow, WeakPtrImplWithEventTargetData>> set;
     return set;
@@ -213,7 +214,7 @@ void LocalDOMWindow::forEachWindowInterestedInStorageEvents(NOESCAPE const Funct
         apply(window);
 }
 
-static std::optional<Seconds>& LEGACY_NODELETE transientActivationDurationOverrideForTesting()
+NODELETE static std::optional<Seconds>& transientActivationDurationOverrideForTesting()
 {
     static NeverDestroyed<std::optional<Seconds>> overrideForTesting;
     return overrideForTesting;
@@ -230,13 +231,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LocalDOMWindow);
 
 typedef HashCountedSet<LocalDOMWindow*> LocalDOMWindowSet;
 
-static LocalDOMWindowSet& LEGACY_NODELETE windowsWithUnloadEventListeners()
+NODELETE static LocalDOMWindowSet& windowsWithUnloadEventListeners()
 {
     static NeverDestroyed<LocalDOMWindowSet> windowsWithUnloadEventListeners;
     return windowsWithUnloadEventListeners;
 }
 
-static LocalDOMWindowSet& LEGACY_NODELETE windowsWithBeforeUnloadEventListeners()
+NODELETE static LocalDOMWindowSet& windowsWithBeforeUnloadEventListeners()
 {
     static NeverDestroyed<LocalDOMWindowSet> windowsWithBeforeUnloadEventListeners;
     return windowsWithBeforeUnloadEventListeners;
@@ -278,7 +279,7 @@ static void removeAllBeforeUnloadEventListeners(LocalDOMWindow* domWindow)
         domWindow->enableSuddenTermination();
 }
 
-static bool LEGACY_NODELETE allowsBeforeUnloadListeners(LocalDOMWindow* window)
+NODELETE static bool allowsBeforeUnloadListeners(LocalDOMWindow* window)
 {
     ASSERT_ARG(window, window);
     auto* frame = window->frame();
@@ -324,8 +325,7 @@ bool LocalDOMWindow::dispatchAllPendingBeforeUnloadEvents()
 
 unsigned LocalDOMWindow::pendingUnloadEventListeners() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
+    return windowsWithUnloadEventListeners().count(const_cast<LocalDOMWindow*>(this));
 }
 
 void LocalDOMWindow::dispatchAllPendingUnloadEvents()
@@ -670,11 +670,11 @@ CustomElementRegistry& LocalDOMWindow::ensureCustomElementRegistry()
 {
     if (!m_customElementRegistry) {
         m_customElementRegistry = CustomElementRegistry::create(protect(*scriptExecutionContext()), *this);
+        ScriptDisallowedScope::InMainThread scriptDisallowedScope;
         for (Ref shadowRoot : document()->inDocumentShadowRoots()) {
             if (shadowRoot->mode() == ShadowRootMode::UserAgent || shadowRoot->hasScopedCustomElementRegistry())
                 continue;
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
+            const_cast<ShadowRoot&>(shadowRoot.get()).setCustomElementRegistry(*m_customElementRegistry);
         }
         protect(document())->setCustomElementRegistry(*m_customElementRegistry);
     }
@@ -1111,7 +1111,7 @@ void LocalDOMWindow::postMessageFromRemoteFrame(JSC::JSGlobalObject& lexicalGlob
     if (userGestureToForward && userGestureToForward->hasExpired(UserGestureToken::maximumIntervalForUserGestureForwarding))
         userGestureToForward = std::nullopt;
 
-    auto userGestureIndicator = userGestureToForward ? UserGestureIndicator(*userGestureToForward, protect(frame()->document())) : UserGestureIndicator(std::nullopt);
+    auto userGestureIndicator = userGestureToForward ? UserGestureIndicator(*userGestureToForward, *protect(frame())) : UserGestureIndicator(std::nullopt);
 
     processPostMessage(lexicalGlobalObject, sourceOrigin.securityOrigin(), message, WTF::move(source), WTF::move(targetOrigin));
 }
@@ -1221,10 +1221,10 @@ void LocalDOMWindow::print()
         return;
 
     if (auto* loader = frame->loader().activeDocumentLoader(); loader && loader->isLoading()) {
-        m_shouldPrintWhenFinishedLoading = true;
+        m_shouldPrintWhenLoaded = true;
         return;
     }
-    m_shouldPrintWhenFinishedLoading = false;
+    m_shouldPrintWhenLoaded = false;
     page->chrome().print(*frame);
 }
 
@@ -1237,7 +1237,7 @@ void LocalDOMWindow::stop()
     SetForScope isStopping { m_isStopping, true };
     // We must check whether the load is complete asynchronously, because we might still be parsing
     // the document until the callstack unwinds.
-    frame->loader().stopForUserCancel(true);
+    frame->loader().stopForUserCancel(DeferCheckLoadComplete::Yes);
 }
 
 void LocalDOMWindow::alert(const String& message)
@@ -2551,6 +2551,18 @@ void LocalDOMWindow::dispatchLoadEvent()
 
 void LocalDOMWindow::dispatchEvent(Event& event, EventTarget* target)
 {
+    if (RefPtr document = this->document(); document && document->shouldDeferLifecycleEventForDebugger(event)) [[unlikely]] {
+        document->queueTaskToDispatchDeferredLifecycleEvent(*document, [protectedThis = Ref { *this }, event = Ref { event }, target = RefPtr { target }](Node&) {
+            protectedThis->dispatchEventWithoutDebuggerDeferral(event, target.get());
+        });
+        return;
+    }
+
+    dispatchEventWithoutDebuggerDeferral(event, target);
+}
+
+void LocalDOMWindow::dispatchEventWithoutDebuggerDeferral(Event& event, EventTarget* target)
+{
     // FIXME: It's confusing to have both the inherited EventTarget::dispatchEvent function
     // and this function, which does something nearly identical but subtly different if
     // called with a target of null. Most callers pass the document as the target, though.
@@ -2635,10 +2647,10 @@ void LocalDOMWindow::releaseEvents()
     // Not implemented.
 }
 
-void LocalDOMWindow::finishedLoading()
+void LocalDOMWindow::runPrintWhenLoadedSteps()
 {
-    if (m_shouldPrintWhenFinishedLoading) {
-        m_shouldPrintWhenFinishedLoading = false;
+    if (m_shouldPrintWhenLoaded) {
+        m_shouldPrintWhenLoaded = false;
         if (RefPtr loader = frame()->loader().activeDocumentLoader(); !loader || loader->mainDocumentError().isNull())
             print();
     }
@@ -2923,7 +2935,7 @@ void LocalDOMWindow::finalizeAndQueueEventTimingEntries()
     m_performanceEventTimingCandidates.clear();
 }
 
-void LocalDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, SetLocationLocking locking, CanNavigateState navigationState)
+void LocalDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior historyHandling, ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded, SetLocationLocking locking, CanNavigateState navigationState)
 {
     if (!passesSetLocationSecurityChecks(activeWindow, completedURL, navigationState))
         return;
@@ -2950,7 +2962,7 @@ void LocalDOMWindow::setLocation(LocalDOMWindow& activeWindow, const URL& comple
         // FIXME: What if activeDocument()->frame() is 0?
         completedURL, protect(activeDocument->frame()->loader())->outgoingReferrer(),
         lockHistory, lockBackForwardList,
-        historyHandling);
+        historyHandling, replaceIfNotCompletelyLoaded);
 }
 
 ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString, const AtomString& frameName, const WindowFeatures& initialWindowFeatures, LocalDOMWindow& activeWindow, LocalFrame& firstFrame, LocalFrame& openerFrame, NOESCAPE const Function<void(LocalDOMWindow&)>& prepareDialogFunction)
@@ -2979,6 +2991,8 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
         resourceRequest.setIsAppInitiated(openerDocumentLoader->lastNavigationWasAppInitiated());
     FrameLoadRequest frameLoadRequest { *activeDocument, protect(activeDocument->securityOrigin()), WTF::move(resourceRequest), frameName, initiatedByMainFrame };
     frameLoadRequest.setShouldOpenExternalURLsPolicy(activeDocument->shouldOpenExternalURLsPolicyToPropagate());
+    RegistrableDomain openedByScriptDomain { protect(openerFrame.document())->currentSourceURL(ScriptExecutionContext::CallStackPosition::TopMost) };
+    frameLoadRequest.setOpenedByScriptDomain(RegistrableDomain { openedByScriptDomain });
 
     // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
     if (protect(openerFrame.document())->shouldForceNoOpenerBasedOnCOOP()) {
@@ -3015,7 +3029,7 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
         if (RefPtr page = newFrame->page()) {
             page->setOpenedByDOM();
             if (openerDocument)
-                page->setOpenedByScriptDomain(RegistrableDomain { openerDocument->currentSourceURL(ScriptExecutionContext::CallStackPosition::TopMost) });
+                page->setOpenedByScriptDomain(WTF::move(openedByScriptDomain));
         }
     }
 

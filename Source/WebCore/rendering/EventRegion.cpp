@@ -110,7 +110,7 @@ bool EventRegionContext::contains(const IntRect& rect) const
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
 
-static std::optional<FloatRect> guardRectForRegionBounds(const InteractionRegion& region)
+static std::optional<FloatRect> guardRectForRegionBounds(const InteractionRegion& region, bool shapeIsInset)
 {
     constexpr int minimumSize = 20;
     constexpr int occlusionMargin = 10;
@@ -133,7 +133,7 @@ static std::optional<FloatRect> guardRectForRegionBounds(const InteractionRegion
         isSmallRect = true;
     }
 
-    if (isSmallRect || isComplexShape)
+    if (isSmallRect || isComplexShape || shapeIsInset)
         return guardRect;
 
     return std::nullopt;
@@ -144,62 +144,65 @@ void EventRegionContext::uniteInteractionRegions(const RenderObject& renderer, c
     if (!renderer.page().shouldBuildInteractionRegions())
         return;
 
-    if (auto interactionRegion = interactionRegionForRenderedRegion(renderer, layerBounds, clipOffset, transform)) {
-        auto rectForTracking = enclosingIntRect(interactionRegion->rectInLayerCoordinates);
+    if (auto renderedRegion = interactionRegionForRenderedRegion(renderer, layerBounds, clipOffset, transform)) {
+        auto& [interactionRegion, shapeIsInset, hasNoVisualBorders] = *renderedRegion;
+        auto rectForTracking = enclosingIntRect(interactionRegion.rectInLayerCoordinates);
 
-        if (interactionRegion->type == InteractionRegion::Type::Occlusion) {
+        if (interactionRegion.type == InteractionRegion::Type::Occlusion) {
             auto result = m_occlusionRects.add(rectForTracking);
             if (!result.isNewEntry)
                 return;
 
-            m_interactionRegions.append(*interactionRegion);
+            m_interactionRegions.append(interactionRegion);
             return;
         }
 
-        if (interactionRegion->type == InteractionRegion::Type::Guard) {
+        if (interactionRegion.type == InteractionRegion::Type::Guard) {
             auto result = m_guardRects.add(rectForTracking, Inflated::No);
             if (!result.isNewEntry)
                 return;
 
-            m_interactionRegions.append(*interactionRegion);
+            m_interactionRegions.append(interactionRegion);
             return;
         }
 
-        auto result = m_interactionRectsAndContentHints.set(rectForTracking, interactionRegion->contentHint);
-        if (!result.isNewEntry)
-            return;
+        auto result = m_interactionRectsAndContentHints.set(rectForTracking, interactionRegion.contentHint);
+        bool defaultContentHint = interactionRegion.contentHint == InteractionRegion::ContentHint::Default;
+        if (!result.isNewEntry) {
+            if (!defaultContentHint || !sharesRectWithContainerAncestor(renderer, rectForTracking, interactionRegion.nodeIdentifier))
+                return;
+            m_hasRegionSharingRectWithContainer = true;
+        }
 
-        bool defaultContentHint = interactionRegion->contentHint == InteractionRegion::ContentHint::Default;
-        if (defaultContentHint && shouldConsolidateInteractionRegion(renderer, rectForTracking, interactionRegion->nodeIdentifier)) {
-            m_consolidatedElements.add(interactionRegion->nodeIdentifier);
+        if (defaultContentHint && shouldConsolidateInteractionRegion(renderer, rectForTracking, interactionRegion.nodeIdentifier)) {
+            m_consolidatedElements.add(interactionRegion.nodeIdentifier);
             return;
         }
 
         // This region might be a container we can remove later.
-        bool hasNoVisualBorders = !renderer.hasVisibleBoxDecorations();
         if (hasNoVisualBorders) {
             if (auto* renderElement = dynamicDowncast<RenderElement>(renderer))
                 m_containerRemovalCandidates.add(renderElement->element()->nodeIdentifier());
         }
 
-        auto discoveredAddResult = m_discoveredRegionsByElement.add(interactionRegion->nodeIdentifier, Vector<InteractionRegion>());
-        discoveredAddResult.iterator->value.append(*interactionRegion);
+        auto discoveredAddResult = m_discoveredRegionsByElement.add(interactionRegion.nodeIdentifier, Vector<InteractionRegion>());
+        discoveredAddResult.iterator->value.append(interactionRegion);
         if (!discoveredAddResult.isNewEntry)
             return;
 
-        auto guardRect = guardRectForRegionBounds(*interactionRegion);
+        auto guardRect = guardRectForRegionBounds(interactionRegion, shapeIsInset);
         if (guardRect) {
             auto result = m_guardRects.add(enclosingIntRect(guardRect.value()), Inflated::Yes);
             if (result.isNewEntry) {
                 m_interactionRegions.append({
                     InteractionRegion::Type::Guard,
-                    interactionRegion->nodeIdentifier,
+                    interactionRegion.nodeIdentifier,
                     guardRect.value()
                 });
             }
         }
 
-        m_interactionRegions.append(*interactionRegion);
+        m_interactionRegions.append(interactionRegion);
     }
 }
 
@@ -261,6 +264,33 @@ bool EventRegionContext::shouldConsolidateInteractionRegion(const RenderObject& 
             m_containersToRemove.add(ancestorElementIdentifier);
 
         return false;
+    }
+
+    return false;
+}
+
+bool EventRegionContext::sharesRectWithContainerAncestor(const RenderObject& renderer, const IntRect& bounds, const NodeIdentifier& nodeIdentifier) const
+{
+    if (!renderer.hasVisibleBoxDecorations())
+        return false;
+
+    for (auto& ancestor : ancestorsOfType<RenderElement>(renderer)) {
+        if (!ancestor.element())
+            continue;
+
+        auto ancestorElementIdentifier = ancestor.element()->nodeIdentifier();
+        auto discoveredIterator = m_discoveredRegionsByElement.find(ancestorElementIdentifier);
+        if (discoveredIterator == m_discoveredRegionsByElement.end()) {
+            if (ancestor.hasVisibleBoxDecorations())
+                return false;
+            continue;
+        }
+
+        auto& discoveredRegions = discoveredIterator->value;
+        return nodeIdentifier != ancestorElementIdentifier
+            && m_containerRemovalCandidates.contains(ancestorElementIdentifier)
+            && discoveredRegions.size() == 1
+            && enclosingIntRect(discoveredRegions.first().rectInLayerCoordinates) == bounds;
     }
 
     return false;
@@ -351,6 +381,11 @@ void EventRegionContext::shrinkWrapInteractionRegions()
                     Path path;
                     path.addContinuousRoundedRect(discoveredRegion.rectInLayerCoordinates, discoveredRegion.cornerRadius);
                     discoveredClipPaths.append(path);
+                } else if (discoveredRegion.cornerRadius != region.cornerRadius && discoveredRegion.maskedCorners.isEmpty()) {
+                    // Shrink wrapping uses the merged region's corner radius.
+                    Path path;
+                    path.addRoundedRect(rect, { discoveredRegion.cornerRadius, discoveredRegion.cornerRadius });
+                    discoveredClipPaths.append(path);
                 } else
                     discoveredRects.append(rect);
             }
@@ -438,11 +473,24 @@ void EventRegionContext::removeSuperfluousInteractionRegions()
     });
 }
 
+void EventRegionContext::removeInteractionRegionsWithDuplicatedRects()
+{
+    HashSet<IntRect> interactionRects;
+    m_interactionRegions.removeAllMatching([&](auto& region) {
+        if (region.type != InteractionRegion::Type::Interaction)
+            return false;
+        return !interactionRects.add(enclosingIntRect(region.rectInLayerCoordinates)).isNewEntry;
+    });
+}
+
 void EventRegionContext::copyInteractionRegionsToEventRegion(float minimumCornerRadius)
 {
     resolveGuardContainers(minimumCornerRadius);
     removeSuperfluousInteractionRegions();
     shrinkWrapInteractionRegions();
+    // A region that shares its container's rect duplicates the container's region if the container was kept.
+    if (m_hasRegionSharingRectWithContainer)
+        removeInteractionRegionsWithDuplicatedRects();
     m_eventRegion.appendInteractionRegions(m_interactionRegions);
 }
 

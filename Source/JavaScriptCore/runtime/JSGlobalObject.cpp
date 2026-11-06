@@ -205,6 +205,7 @@
 #include "JSWebAssemblyModule.h"
 #include "JSWebAssemblyRuntimeError.h"
 #include "JSWebAssemblyStruct.h"
+#include "JSWebAssemblySuspendingWrapper.h"
 #include "JSWebAssemblyTable.h"
 #include "JSWebAssemblyTag.h"
 #include "JSWithScope.h"
@@ -235,7 +236,6 @@
 #include "ProfilerSupport.h"
 #include "ProxyConstructorInlines.h"
 #include "ProxyObjectInlines.h"
-#include "ProxyRevokeInlines.h"
 #include "ReflectObjectInlines.h"
 #include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
@@ -1301,9 +1301,9 @@ void JSGlobalObject::init(VM& vm)
             bool isCallable = true;
             init.set(ProxyObject::createStructure(init.vm, init.owner, jsNull(), isCallable));
         });
-    m_proxyRevokeStructure.initLater(
+    m_proxyRevocableResultStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            init.set(ProxyRevoke::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+            init.set(createProxyRevocableResultStructure(init.vm, *init.owner));
         });
 
     m_parseIntFunction.initLater(
@@ -2438,7 +2438,7 @@ void JSGlobalObject::notifyArrayBufferDetachingSlow()
     m_arrayBufferDetachWatchpointSet->fireAll(vm(), "ArrayBuffer detached");
 }
 
-static inline JSObject* LEGACY_NODELETE lastInPrototypeChain(JSObject* object)
+NODELETE static inline JSObject* lastInPrototypeChain(JSObject* object)
 {
     JSObject* o = object;
     while (o->getPrototypeDirect().isObject())
@@ -2523,7 +2523,7 @@ public:
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, JSGlobalObject*);
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, UncheckedKeyHashSet<JSGlobalObject*>&);
 
-    bool LEGACY_NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
+    NODELETE bool needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
 private:
@@ -2549,12 +2549,12 @@ ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWith
 {
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(IndexingType type)
+NODELETE inline bool hasBrokenIndexing(IndexingType type)
 {
     return type && !hasSlowPutArrayStorage(type);
 }
 
-inline bool LEGACY_NODELETE hasBrokenIndexing(JSObject* object)
+NODELETE inline bool hasBrokenIndexing(JSObject* object)
 {
     IndexingType type = object->indexingType();
     return hasBrokenIndexing(type);
@@ -2904,6 +2904,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_defaultDateFormat.visit(visitor);
     thisObject->m_defaultTimeFormat.visit(visitor);
     thisObject->m_defaultNumberFormat.visit(visitor);
+    visitor.append(thisObject->m_cachedToLocaleStringNumberFormat);
     thisObject->m_collatorStructure.visit(visitor);
     thisObject->m_displayNamesStructure.visit(visitor);
     thisObject->m_durationFormatStructure.visit(visitor);
@@ -3050,7 +3051,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_moduleNamespaceObjectStructure.visit(visitor);
     thisObject->m_proxyObjectStructure.visit(visitor);
     thisObject->m_callableProxyObjectStructure.visit(visitor);
-    thisObject->m_proxyRevokeStructure.visit(visitor);
+    thisObject->m_proxyRevocableResultStructure.visit(visitor);
     thisObject->m_sharedArrayBufferStructure.visit(visitor);
     thisObject->m_disposableStackStructure.visit(visitor);
     thisObject->m_asyncDisposableStackStructure.visit(visitor);
@@ -3130,7 +3131,7 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     String localeString = locale->value(this);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (m_cachedLocaleCompareCollator && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
+    if (m_cachedLocaleCompareCollator && !vm.intlCache().hasLanguageChange() && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
         return m_cachedLocaleCompareCollator.get();
 
     IntlCollator* collator = IntlCollator::create(vm, collatorStructure());
@@ -3141,6 +3142,27 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     m_cachedLocaleCompareCollatorLanguagesEpoch = vm.intlCache().languagesEpoch();
     m_cachedLocaleCompareCollator.set(vm, this, collator);
     return collator;
+}
+
+IntlNumberFormat* JSGlobalObject::cachedToLocaleStringNumberFormat(JSString* locale)
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String localeString = locale->value(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (m_cachedToLocaleStringNumberFormat && !vm.intlCache().hasLanguageChange() && m_cachedToLocaleStringNumberFormatLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedToLocaleStringNumberFormatLocale == localeString)
+        return m_cachedToLocaleStringNumberFormat.get();
+
+    IntlNumberFormat* numberFormat = IntlNumberFormat::create(vm, numberFormatStructure());
+    numberFormat->initializeNumberFormat(this, locale, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    m_cachedToLocaleStringNumberFormatLocale = WTF::move(localeString);
+    m_cachedToLocaleStringNumberFormatLanguagesEpoch = vm.intlCache().languagesEpoch();
+    m_cachedToLocaleStringNumberFormat.set(vm, this, numberFormat);
+    return numberFormat;
 }
 
 SUPPRESS_ASAN void JSGlobalObject::exposeDollarVM(VM& vm)
@@ -3594,7 +3616,7 @@ void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
         installObjectAdaptiveStructureWatchpoint(condition, m_propertyDescriptorFastPathWatchpointSet);
 }
 
-void LEGACY_NODELETE slowValidateCell(JSGlobalObject* globalObject)
+NODELETE void slowValidateCell(JSGlobalObject* globalObject)
 {
     RELEASE_ASSERT(globalObject->isGlobalObject());
     ASSERT_GC_OBJECT_INHERITS(globalObject, JSGlobalObject::info());
@@ -3800,6 +3822,14 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
     init(vm);
     setGlobalThis(vm, thisValue);
     ASSERT(type() == GlobalObjectType);
+}
+
+void JSGlobalObject::exposeSharedArrayBuffer()
+{
+    if (!Options::allowSharedArrayBuffer() || Options::useSharedArrayBuffer())
+        return;
+    VM& vm = this->vm();
+    putDirect(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 #ifdef JSC_GLIB_API_ENABLED
