@@ -2614,8 +2614,7 @@ void Page::updateRendering()
     });
 
     runProcessingStep(RenderingUpdateStep::Images, [] (Document& document) {
-        for (auto& image : protect(document.cachedResourceLoader())->allCachedSVGImages())
-            image->updateRendering();
+        protect(document.cachedResourceLoader())->updateRenderingOfImages();
     });
 
     runProcessingStep(RenderingUpdateStep::UpdateValidationMessagePositions, [] (Document& document) {
@@ -5032,7 +5031,7 @@ void Page::applicationWillResignActive()
 #endif
 }
 
-NODELETE void Page::applicationDidEnterBackground()
+void Page::applicationDidEnterBackground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -5040,7 +5039,7 @@ NODELETE void Page::applicationDidEnterBackground()
 #endif
 }
 
-NODELETE void Page::applicationWillEnterForeground()
+void Page::applicationWillEnterForeground()
 {
 #if ENABLE(WEBXR)
     if (auto session = this->activeImmersiveXRSession())
@@ -5962,7 +5961,7 @@ RefPtr<WebXRSession> Page::activeImmersiveXRSession() const
         if (!navigator)
             continue;
 
-        if (auto xrSystem = NavigatorWebXR::xrIfExists(*navigator))
+        if (RefPtr xrSystem = NavigatorWebXR::xrIfExists(*navigator))
             return xrSystem->activeImmersiveSession();
     }
 

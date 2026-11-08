@@ -109,7 +109,6 @@ set(_webkit_c_api_headers
     UIProcess/API/C/WKUserContentExtensionStoreRef.h
     UIProcess/API/C/WKUserMediaPermissionRequest.h
     UIProcess/API/C/WKUserScriptRef.h
-    UIProcess/API/C/WKViewportAttributes.h
     UIProcess/API/C/WKWebsiteDataStoreConfigurationRef.h
     UIProcess/API/C/WKWebsiteDataStoreRef.h
     UIProcess/API/C/WKWebsitePolicies.h
@@ -584,6 +583,8 @@ set(WebKit_PROJECT_HEADERS
 
     WebKitSwift/TextAnimation/WKSTextStyleSourceDelegate.h
     WebKitSwift/TextAnimation/WKTextAnimationManagerIOS.h
+
+    WebKitSwift/WebXR/WKWebXRImmersiveSpaceHost.h
 
     WebKitSwift/WritingTools/WKIntelligenceReplacementTextEffectCoordinator.h
     WebKitSwift/WritingTools/WKIntelligenceSmartReplyTextEffectCoordinator.h

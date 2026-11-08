@@ -1111,8 +1111,10 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
 
     list(APPEND ${_output_source}
         ${WebKit_DERIVED_SOURCES_DIR}/MessageArgumentDescriptions.cpp
-        ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp
     )
+    if (NOT WebKit_USE_PLATFORM_SUBTARGET)
+        list(APPEND ${_output_source} ${WebKit_DERIVED_SOURCES_DIR}/MessageNames.cpp)
+    endif ()
 
     set(_messages_stage_dir ${WebKit_DERIVED_SOURCES_DIR}/.messages-stage)
     # copy_if_different (rather than copy_directory_if_different, which is unavailable on
@@ -1566,13 +1568,8 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
         ${WebKit_DERIVED_SOURCES_DIR}/WebBackForwardListMessageReceiver.swift
         ${WEBKIT_DIR}/Platform/Logging.swift
         ${WEBKIT_DIR}/Shared/API/APIArray.swift
-        ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift
-    )
-endif ()
-
-if (ENABLE_BACK_FORWARD_LIST_SWIFT OR APPLE)
-    list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/UIProcess/StdlibExtras.swift
+        ${WEBKIT_DIR}/UIProcess/WebBackForwardList.swift
     )
 endif ()
 

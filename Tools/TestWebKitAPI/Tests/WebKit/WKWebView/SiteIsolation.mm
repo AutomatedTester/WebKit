@@ -1811,6 +1811,69 @@ TEST(SiteIsolation, PushStateAfterSuspendingReusedMainFrame)
     checkSameDocumentNavigationAfterSuspendingReusedMainFrame(@"history.pushState(null, null, '/same_document')");
 }
 
+static void checkExplicitOpenDuringCrossSiteNavigation(TestWKWebView *webView, TestNavigationDelegate *navigationDelegate)
+{
+    // Call document.open() in the current process while the load is provisional in another one.
+    navigationDelegate.decidePolicyForNavigationResponse = ^(WKNavigationResponse *, void (^completionHandler)(WKNavigationResponsePolicy)) {
+        [webView evaluateJavaScript:@"document.open(); true" completionHandler:^(id, NSError *error) {
+            EXPECT_NULL(error);
+            completionHandler(WKNavigationResponsePolicyAllow);
+        }];
+    };
+    // A script navigation keeps an opened page in its browsing context group, so it reuses its main frame.
+    [webView evaluateJavaScript:@"location.href = 'https://apple.com/destination'" completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+    navigationDelegate.decidePolicyForNavigationResponse = nil;
+
+    EXPECT_WK_STREQ(webView.URL.absoluteString, @"https://apple.com/destination");
+    EXPECT_WK_STREQ([webView _mainFrameURL].absoluteString, @"https://apple.com/destination");
+    auto pidAfterNavigation = [webView _webProcessIdentifier];
+
+    [webView objectByEvaluatingJavaScript:@"history.replaceState(null, null, '/same_document')"];
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([&] {
+        return [webView.URL.absoluteString isEqualToString:@"https://apple.com/same_document"];
+    }));
+    EXPECT_EQ(pidAfterNavigation, [webView _webProcessIdentifier]);
+}
+
+static HTTPServer::ResponseMap explicitOpenDuringCrossSiteNavigationResponses()
+{
+    HTTPServer::ResponseMap responses;
+    responses.add("/example"_s, HTTPResponse("<script>w = window.open('https://webkit.org/webkit')</script>"_s));
+    responses.add("/webkit"_s, HTTPResponse("webkit"_s));
+    responses.add("/destination"_s, HTTPResponse("destination"_s));
+    return responses;
+}
+
+TEST(SiteIsolation, ExplicitOpenDuringCrossSiteNavigation)
+{
+    HTTPServer server(explicitOpenDuringCrossSiteNavigationResponses(), HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/webkit"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkExplicitOpenDuringCrossSiteNavigation(webView.get(), navigationDelegate.get());
+}
+
+TEST(SiteIsolation, ExplicitOpenDuringCrossSiteNavigationWithoutSiteIsolation)
+{
+    HTTPServer server(explicitOpenDuringCrossSiteNavigationResponses(), HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = viewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/webkit"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    checkExplicitOpenDuringCrossSiteNavigation(webView.get(), navigationDelegate.get());
+}
+
+TEST(SiteIsolation, ExplicitOpenDuringCrossSiteNavigationOfReusedMainFrame)
+{
+    HTTPServer server(explicitOpenDuringCrossSiteNavigationResponses(), HTTPServer::Protocol::HttpsProxy);
+    auto [opener, opened] = openerAndOpenedViews(server);
+    EXPECT_WK_STREQ([opened.webView _mainFrameURL].absoluteString, @"https://webkit.org/webkit");
+
+    checkExplicitOpenDuringCrossSiteNavigation(opened.webView.get(), opened.navigationDelegate.get());
+}
+
 void pollUntilOpenedWindowIsClosed(RetainPtr<WKWebView> webView, bool& finished)
 {
     [webView evaluateJavaScript:@"openedWindow.closed" completionHandler:makeBlockPtr([webView, &finished](id result, NSError *error) {
@@ -8134,6 +8197,203 @@ TEST(SiteIsolation, BFCacheCrossSitePageKeepsTopDocumentURL)
     [navigationDelegate waitForDidFinishNavigation];
 
     checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 2, @"https://a.com/withframe");
+}
+
+static std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(const HTTPServer& server)
+{
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    setFeatureEnabled(configuration.get(), @"SiteIsolationInPlaceBackForwardCacheEnabled", true);
+    return siteIsolatedViewAndDelegate(configuration);
+}
+
+static HTTPServer serverForInPlaceBackForwardCache()
+{
+    return HTTPServer({
+        { "/main"_s, { "<script>window.token = Math.random()</script>main"_s } },
+        { "/main2"_s, { "<script>window.token = Math.random()</script>main2"_s } },
+        { "/page"_s, { "page"_s } },
+        { "/frame"_s, { "<script>alert('loaded')</script>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+}
+
+// Loads requested by the client always get a new browsing context group, so navigate from the page.
+static void navigateFromPage(TestWKWebView *webView, TestNavigationDelegate *navigationDelegate, NSString *url)
+{
+    [webView evaluateJavaScript:[NSString stringWithFormat:@"location.href = '%@'", url] completionHandler:nil];
+    [navigationDelegate waitForDidFinishNavigation];
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheKeepsDocumentLeftForCrossSiteNavigation)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t mainProcess = [webView _webProcessIdentifier];
+    RetainPtr token = [webView objectByEvaluatingJavaScript:@"String(window.token)"];
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+    EXPECT_NE([webView _webProcessIdentifier], mainProcess);
+
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 1, @"https://b.com/page");
+    EXPECT_EQ(countWebPages(webView), 2u);
+
+    // FIXME: Restore documents cached in place.
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"document.body.textContent"], "main");
+    EXPECT_FALSE([[webView objectByEvaluatingJavaScript:@"String(window.token)"] isEqualToString:token.get()]);
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheFrameLoadsInProcessOfCachedDocument)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t mainProcess = [webView _webProcessIdentifier];
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+
+    [webView evaluateJavaScript:@"document.body.appendChild(document.createElement('iframe')).src = 'https://a.com/frame'" completionHandler:nil];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "loaded");
+    EXPECT_EQ([webView firstChildFrame]._processIdentifier, mainProcess);
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 1, @"https://b.com/page");
+
+    [webView _clearBackForwardCache];
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 0, nil);
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"location.pathname" inFrame:[webView firstChildFrame]], "/frame");
+    EXPECT_EQ([webView firstChildFrame]._processIdentifier, mainProcess);
+    EXPECT_EQ(countWebPages(webView), 2u);
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheEvictionClosesWebPageWithoutFrames)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+    EXPECT_EQ(countWebPages(webView), 2u);
+
+    [webView _clearBackForwardCache];
+    EXPECT_TRUE(Util::waitFor([&] {
+        return countWebPages(webView) == 1;
+    }));
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheProcessCrash)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t mainProcess = [webView _webProcessIdentifier];
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+
+    kill(mainProcess, SIGKILL);
+    while (processStillRunning(mainProcess))
+        Util::spinRunLoop();
+
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"document.body.textContent"], "page");
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"document.body.textContent"], "main");
+    EXPECT_NE([webView _webProcessIdentifier], mainProcess);
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheEarlierDocumentSharingCachedMainFrame)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t mainProcess = [webView _webProcessIdentifier];
+    RetainPtr token = [webView objectByEvaluatingJavaScript:@"String(window.token)"];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main2"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_EQ([webView _webProcessIdentifier], mainProcess);
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 1, @"https://b.com/page");
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -2, 1, @"https://b.com/page");
+
+    [webView goToBackForwardListItem:[webView backForwardList].backList.firstObject];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_EQ([webView _webProcessIdentifier], mainProcess);
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"document.body.textContent"], "main");
+    EXPECT_FALSE([[webView objectByEvaluatingJavaScript:@"String(window.token)"] isEqualToString:token.get()]);
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheCrossSiteNavigationClearsWindowName)
+{
+    auto server = serverForInPlaceBackForwardCache();
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"window.name = 'secret'; window.name"], "secret");
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+    EXPECT_WK_STREQ([webView objectByEvaluatingJavaScript:@"window.name"], "");
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheUncacheableDocumentDiscardsEntry)
+{
+    HTTPServer server({
+        { "/main"_s, { "main"_s } },
+        { "/nostore"_s, { { { "Cache-Control"_s, "no-store"_s } }, "<iframe src='https://b.com/frame'></iframe>"_s } },
+        { "/frame"_s, { "frame"_s } },
+        { "/page"_s, { "page"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t mainProcess = [webView _webProcessIdentifier];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/nostore"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    EXPECT_EQ([webView _webProcessIdentifier], mainProcess);
+    EXPECT_NE([webView firstChildFrame]._processIdentifier, mainProcess);
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 1, @"https://a.com/nostore");
+    EXPECT_EQ(countWebPages(webView), 2u);
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://c.com/page");
+    EXPECT_NE([webView _webProcessIdentifier], mainProcess);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return countWebPages(webView) == 1;
+    }));
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 0, nil);
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -2, 0, nil);
+}
+
+TEST(SiteIsolation, InPlaceBackForwardCacheSkippedWhenNewMainFrameProcessHostsFrame)
+{
+    HTTPServer server({
+        { "/main"_s, { "<iframe src='https://b.com/frame'></iframe>"_s } },
+        { "/frame"_s, { "frame"_s } },
+        { "/page"_s, { "page"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegateWithInPlaceBackForwardCache(server);
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://a.com/main"]]];
+    [navigationDelegate waitForDidFinishNavigationAndLoadInSubframe];
+    pid_t iframeProcess = [webView firstChildFrame]._processIdentifier;
+    EXPECT_NE([webView _webProcessIdentifier], iframeProcess);
+
+    navigateFromPage(webView.get(), navigationDelegate.get(), @"https://b.com/page");
+    EXPECT_EQ([webView _webProcessIdentifier], iframeProcess);
+    checkTopDocumentURLsInBackForwardCacheAtIndex(webView.get(), -1, 0, nil);
+    EXPECT_TRUE(Util::waitFor([&] {
+        return countWebPages(webView) == 1;
+    }));
 }
 
 TEST(SiteIsolation, NavigateNestedIframeSameOriginBackForward)
@@ -17866,7 +18126,10 @@ static void checkIsSessionSupportedSettlesInCrossOriginIFrame(bool siteIsolation
         { "/subframe"_s, { subframeHTML } }
     }, HTTPServer::Protocol::HttpsProxy);
 
-    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server.httpsProxyConfiguration(), CGRectZero, siteIsolationEnabled);
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    // WebXR is built on macOS but off by default there, so don't rely on the platform default.
+    setFeatureEnabled(configuration.get(), @"WebXREnabled", true);
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configuration, CGRectZero, siteIsolationEnabled);
 
     RetainPtr uiDelegate = adoptNS([TestUIDelegate new]);
     [webView setUIDelegate:uiDelegate.get()];
@@ -21415,15 +21678,45 @@ static void computePagesForPrinting(TestWKWebView *webView)
     Util::run(&done);
 }
 
-static void createPDF(WKWebView *webView)
+static RetainPtr<NSData> createPDF(WKWebView *webView)
 {
+    __block RetainPtr<NSData> result;
     __block bool done = false;
     [webView createPDFWithConfiguration:nil completionHandler:^(NSData *data, NSError *error) {
         EXPECT_NULL(error);
         EXPECT_NOT_NULL(data);
+        result = data;
         done = true;
     }];
     Util::run(&done);
+    return result;
+}
+
+static std::pair<NSUInteger, NSUInteger> printProcessDrawingCounts(WKWebView *webView)
+{
+    __block std::pair<NSUInteger, NSUInteger> result;
+    __block bool done = false;
+    [webView _printProcessDrawingCountsForTesting:^(NSUInteger drawnInPrintProcess, NSUInteger drawnAfterPrintProcessFailed) {
+        result = { drawnInPrintProcess, drawnAfterPrintProcessFailed };
+        done = true;
+    }];
+    Util::run(&done);
+    return result;
+}
+
+static RetainPtr<NSData> drawPagesToPDFSynchronously(TestWKWebView *webView)
+{
+    computePagesForPrinting(webView);
+    return [webView _drawPagesToPDFSynchronouslyForTesting:[[webView mainFrame].info _handle] pageCount:1];
+}
+
+static void expectPDFText(NSData *data, NSArray<NSString *> *strings)
+{
+    RetainPtr document = adoptNS([[TestPDFDocument alloc] initFromData:data]);
+    EXPECT_EQ([document pageCount], 1);
+    RetainPtr text = [[document pageAtIndex:0] text];
+    for (NSString *string in strings)
+        EXPECT_TRUE([text containsString:string]);
 }
 
 TEST(SiteIsolation, PrintProcessIsDedicated)
@@ -21595,6 +21888,127 @@ TEST(SiteIsolation, PrintProcessIsRelaunchedAfterCrash)
     auto newPrintProcess = printProcessIdentifier(webView.get());
     EXPECT_NE(newPrintProcess, 0);
     EXPECT_NE(newPrintProcess, printProcess);
+}
+
+TEST(SiteIsolation, PrintProcessDrawsCreatedPDF)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    auto [drawnInPrintProcess, drawnAfterPrintProcessFailed] = printProcessDrawingCounts(webView.get());
+    RetainPtr data = createPDF(webView.get());
+    ASSERT_NOT_NULL(data.get());
+    expectPDFText(data.get(), @[ @"Mainframe", @"Subframe" ]);
+
+    auto counts = printProcessDrawingCounts(webView.get());
+    EXPECT_EQ(counts.first, drawnInPrintProcess + 1);
+    EXPECT_EQ(counts.second, drawnAfterPrintProcessFailed);
+}
+
+TEST(SiteIsolation, PrintProcessDrawsLikeGPUProcess)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin:0;print-color-adjust:exact'><div style='width:100px;height:50px;background:rgb(255,0,0)'></div><div style='width:200px;height:50px;background:linear-gradient(to right, blue, yellow)'></div><div style='width:100px;height:50px;border:5px dashed rgb(0,0,255);border-radius:20px'></div>Mainframe<br><iframe style='border:0;width:400px;height:200px' src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body style='margin:0;print-color-adjust:exact'><div style='width:100px;height:50px;background:rgb(0,128,0);box-shadow:10px 10px 5px rgb(128,0,128)'></div>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto print = [&](bool enablePrintProcess) {
+        auto [webView, navigationDelegate] = loadPageForPrintProcess(server, enablePrintProcess);
+        if (enablePrintProcess) {
+            computePagesForPrinting(webView.get());
+            EXPECT_NE(printProcessIdentifier(webView.get()), 0);
+        }
+        auto [drawnInPrintProcess, drawnAfterPrintProcessFailed] = printProcessDrawingCounts(webView.get());
+        RetainPtr data = drawPagesToPDFSynchronously(webView.get());
+        auto counts = printProcessDrawingCounts(webView.get());
+        EXPECT_EQ(counts.first, drawnInPrintProcess + (enablePrintProcess ? 1 : 0));
+        EXPECT_EQ(counts.second, drawnAfterPrintProcessFailed);
+        return data;
+    };
+
+    RetainPtr gpuProcessData = print(false);
+    RetainPtr printProcessData = print(true);
+    ASSERT_NOT_NULL(gpuProcessData.get());
+    ASSERT_NOT_NULL(printProcessData.get());
+    expectPDFText(printProcessData.get(), @[ @"Mainframe", @"Subframe" ]);
+
+    auto isCloseTo = [](std::array<uint8_t, 3> color, std::array<uint8_t, 3> expected) {
+        for (size_t i = 0; i < 3; ++i) {
+            if (std::abs(color[i] - expected[i]) > 2)
+                return false;
+        }
+        return true;
+    };
+    unsigned nonWhitePoints = 0;
+    bool sawMainFrameRed = false;
+    bool sawSubframeGreen = false;
+    for (CGFloat y = 5; y < 600; y += 25) {
+        for (CGFloat x = 5; x < 400; x += 25) {
+            auto point = CGPointMake(x, y);
+            auto color = pdfPageColorAtPoint(gpuProcessData.get(), 1, point);
+            ASSERT_TRUE(color);
+            EXPECT_TRUE(pdfPageHasColorAtPoint(printProcessData.get(), 1, point, *color)) << "at (" << x << ", " << y << ")";
+            if (!isCloseTo(*color, { 255, 255, 255 }))
+                ++nonWhitePoints;
+            sawMainFrameRed |= isCloseTo(*color, { 255, 0, 0 });
+            sawSubframeGreen |= isCloseTo(*color, { 0, 128, 0 });
+        }
+    }
+    EXPECT_GE(nonWhitePoints, 20u);
+    EXPECT_TRUE(sawMainFrameRed);
+    EXPECT_TRUE(sawSubframeGreen);
+}
+
+TEST(SiteIsolation, PrintProcessDrawsDuringDOMPrint)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body style='margin:0'>Mainframe<br><iframe style='border:0;width:400px;height:200px' src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body style='margin:0'>Subframe</body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+    RetainPtr uiDelegate = adoptNS([DeferredPrintUIDelegate new]);
+    [webView setUIDelegate:uiDelegate.get()];
+
+    [webView evaluateJavaScript:@"window.print()" completionHandler:nil];
+    RetainPtr<_WKFrameHandle> frame = [uiDelegate waitForPrintFrame];
+
+    __block bool computedPages = false;
+    [webView _computePagesForPrinting:frame.get() completionHandler:^{
+        computedPages = true;
+    }];
+    Util::run(&computedPages);
+    EXPECT_NE(printProcessIdentifier(webView.get()), 0);
+
+    auto [drawnInPrintProcess, drawnAfterPrintProcessFailed] = printProcessDrawingCounts(webView.get());
+    RetainPtr data = [webView _drawPagesToPDFSynchronouslyForTesting:frame.get() pageCount:1];
+    [uiDelegate finishPrinting];
+    ASSERT_NOT_NULL(data.get());
+    expectPDFText(data.get(), @[ @"Mainframe", @"Subframe" ]);
+
+    auto counts = printProcessDrawingCounts(webView.get());
+    EXPECT_EQ(counts.first, drawnInPrintProcess + 1);
+    EXPECT_EQ(counts.second, drawnAfterPrintProcessFailed);
+}
+
+TEST(SiteIsolation, GPUProcessDrawsWhatPrintProcessCannot)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<body>Mainframe<iframe src='https://b.com/subframe'></iframe></body>"_s } },
+        { "/subframe"_s, { "<body>Subframe<canvas id='canvas' width='50' height='50'></canvas><script>document.getElementById('canvas').getContext('2d').fillRect(0, 0, 50, 50)</script></body>"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+    auto [webView, navigationDelegate] = loadPageForPrintProcess(server);
+
+    auto [drawnInPrintProcess, drawnAfterPrintProcessFailed] = printProcessDrawingCounts(webView.get());
+    RetainPtr data = createPDF(webView.get());
+    ASSERT_NOT_NULL(data.get());
+    expectPDFText(data.get(), @[ @"Mainframe", @"Subframe" ]);
+
+    auto counts = printProcessDrawingCounts(webView.get());
+    EXPECT_EQ(counts.first, drawnInPrintProcess);
+    EXPECT_EQ(counts.second, drawnAfterPrintProcessFailed + 1);
 }
 
 #endif // HAVE(PDFKIT)

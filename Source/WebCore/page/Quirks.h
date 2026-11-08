@@ -178,8 +178,14 @@ public:
     WEBCORE_EXPORT bool needsPointerTouchCompatibility(const Element&) const;
 #endif
 
+    bool shouldNotMoveFocusWhenMutatingSelectionRange() const;
+
     bool needsAmazonDesignMenuViewportUnitQuirk(const Style::ComputedStyle&, const Style::ComputedStyle& parentStyle) const;
     bool needsClaudeSidebarViewportUnitQuirk(Element&, const Style::ComputedStyle&) const;
+    struct OpenRiceAdPopupHeight {
+        std::optional<float> clampedHeight;
+    };
+    std::optional<OpenRiceAdPopupHeight> needsOpenRiceAdPopupHeightQuirk(Element&, const Style::ComputedStyle&) const;
     bool needsChromeOSNavigatorUserAgentQuirk(const Document&) const;
 
     NODELETE WEBCORE_EXPORT bool shouldAvoidStartingSelectionOnMouseDownOverPointerCursor(const Node&) const;

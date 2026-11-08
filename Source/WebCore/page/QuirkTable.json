@@ -891,6 +891,11 @@
             "behaviors": [{ "id": "IsNeverRichlyEditableForTouchBarQuirk" }]
         },
         {
+            "bugs": ["rdar://189705627"],
+            "matches": ["*://*.openrice.com/*"],
+            "behaviors": [{ "id": "NeedsOpenRiceAdPopupHeightQuirk", "elementSelector": ".popup-ad-subview-container" }]
+        },
+        {
             "bugs": ["https://webkit.org/b/296989"],
             "matches": ["*://*.madisoncity.k12.al.us/*"],
             "behaviors": [{ "id": "NeedsFormControlToBeMouseFocusableQuirk" }]
@@ -1418,6 +1423,12 @@
                     "elementSelector": ".DPvwYc.sm8sCf, .vjs-subs-cap-button.vjs-menu-button"
                 }
             ]
+        },
+        {
+            "bugs": ["rdar://177395486"],
+            "comment": "FIXME: Remove once Yelp stops covering the top of the video lightbox with a pointer-event-eating Share/Report bar.",
+            "matches": ["*://*.yelp.com/*"],
+            "behaviors": [{ "id": "NeedsStyleSheetInjectedQuirk", "styleSheet": "div:has(button[aria-label=\"Share\"]):has(button[aria-label=\"Report\"]):not(:has(video)) { pointer-events: none; } button[aria-label=\"Share\"], button[aria-label=\"Report\"] { pointer-events: auto; }" }]
         },
         {
             "bugs": ["rdar://127246368"],

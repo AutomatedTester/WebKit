@@ -364,7 +364,7 @@ public:
     void establishesTopLayerWillChange();
     void establishesTopLayerDidChange();
 
-    static void markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBlock* containingBlockBeforeStyleResolution);
+    static void markRendererDirtyAfterTopLayerChange(RenderElement* renderer, RenderBoxModelObject* containingBlockBeforeStyleResolution);
 
     void clearNeedsLayoutForSkippedContent();
 
@@ -406,6 +406,8 @@ public:
     WritingMode writingMode() const { return style().writingMode(); }
 
     bool addReferencedSVGResourceIfNeeded(SVGElement&, const AtomString&);
+
+    void scheduleRenderingUpdateForImage(CachedImage&) final;
 
 protected:
     RenderElement(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
@@ -492,7 +494,6 @@ private:
     VisibleInViewportState imageVisibleInViewport(const Document&) const final;
     void didRemoveCachedImageClient(CachedImage&) final;
     void imageContentChanged(CachedImage&) final;
-    void scheduleRenderingUpdateForImage(CachedImage&) final;
 
     bool getLeadingCorner(FloatPoint& output, bool& insideFixed) const;
     bool getTrailingCorner(FloatPoint& output, bool& insideFixed) const;

@@ -99,6 +99,7 @@ class RenderText;
 class RenderWidget;
 class Scrollbar;
 class ScrollView;
+class SelectPopoverElement;
 class SpinButtonElement;
 class VisiblePosition;
 class Widget;
@@ -386,6 +387,7 @@ public:
     void onScrollbarFrameRectChange(const Scrollbar&);
     void onSelectedOptionChanged(Element&);
     void onSelectedOptionChanged(HTMLSelectElement&, int optionIndex);
+    void onSelectPickerStyleChange(HTMLSelectElement&);
     void onSelectedTextChanged(const VisiblePositionRange&, AccessibilityObject* = nullptr);
 #if PLATFORM(MAC)
     // Posts AXSelectedTextChanged on this cache's root web area for a selection change in a cross-site frame, relayed
@@ -1003,6 +1005,9 @@ private:
 #endif
     void handleDeferredNotification(const DeferredNotificationData&);
     void handleDeferredPopoverToggle(AccessibilityObject&);
+    void handleSelectPickerToggle(SelectPopoverElement&);
+    void removeSelectPickerObjects(SelectPopoverElement&);
+    void handleDeferredSelectPickerToggle(AccessibilityObject&);
 
     // aria-modal or modal <dialog> related
     bool isModalElement(Element&) const;
@@ -1192,6 +1197,8 @@ private:
 #endif
     Vector<DeferredNotificationData> m_deferredNotifications;
     Vector<Ref<AccessibilityObject>> m_deferredToggledPopovers;
+    // The objects of the selects whose base-appearance picker toggled. The picker has no object while it's closed.
+    Vector<Ref<AccessibilityObject>> m_deferredToggledSelectPickers;
 
     const Ref<AXGeometryManager> m_geometryManager;
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)

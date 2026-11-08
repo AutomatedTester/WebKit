@@ -1115,6 +1115,17 @@ bool Quirks::needsPointerTouchCompatibility(const Element& target) const
 
 #endif
 
+// Gmail app rdar://183372156
+bool Quirks::shouldNotMoveFocusWhenMutatingSelectionRange() const
+{
+#if PLATFORM(IOS_FAMILY)
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+    return WTF::IOSApplication::isGmail();
+#else
+    return false;
+#endif
+}
+
 // facebook.com rdar://141103350
 bool Quirks::needsFacebookStoriesCreationFormQuirk(const Element& element, const Style::ComputedStyle& computedStyle) const
 {
@@ -1183,6 +1194,32 @@ bool Quirks::needsClaudeSidebarViewportUnitQuirk(Element& element, const Style::
     }
 
     return false;
+}
+
+std::optional<Quirks::OpenRiceAdPopupHeight> Quirks::needsOpenRiceAdPopupHeightQuirk(Element& element, const Style::ComputedStyle& style) const
+{
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(std::nullopt);
+
+    if (!m_quirksData.isBehaviorEnabled(QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk))
+        return std::nullopt;
+
+    auto fixedHeight = style.height().tryFixed();
+    if (!fixedHeight)
+        return std::nullopt;
+
+    if (!behaviorAppliesToNode(QuirkBehaviorID::NeedsOpenRiceAdPopupHeightQuirk, &element))
+        return std::nullopt;
+
+    CheckedPtr renderView = m_document->renderView();
+    if (!renderView)
+        return std::nullopt;
+
+    auto viewportHeight = renderView->sizeForCSSDynamicViewportUnits().height();
+    auto zoom = style.usedZoomForLength();
+    if (viewportHeight <= 0 || fixedHeight->resolveZoom(zoom) <= viewportHeight)
+        return OpenRiceAdPopupHeight { };
+
+    return OpenRiceAdPopupHeight { viewportHeight / zoom.value };
 }
 
 // amazon.design rdar://175953409

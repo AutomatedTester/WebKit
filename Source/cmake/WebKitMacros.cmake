@@ -876,11 +876,12 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
             VERBATIM
             COMMENT "Code signing ${_target}")
         # A POST_BUILD command only re-runs when the target relinks, so make a
-        # change to the entitlements force a relink; otherwise editing the
-        # entitlements would leave the binary signed with the stale set.
-        if (_entitlements_path)
+        # change to any signing input, like the entitlements or the
+        # ${_target}_CODE_SIGN_INPUTS, force a relink; otherwise the binary
+        # would stay signed with the stale inputs.
+        if (_arg_DEPENDS)
             set_property(TARGET ${_target} APPEND PROPERTY
-                LINK_DEPENDS ${_entitlements_path})
+                LINK_DEPENDS ${_arg_DEPENDS})
         endif ()
         # Preserve a named ${_target}_CodeSign target so ordering edges elsewhere
         # (e.g. WebKit.framework signing after its XPC services) keep resolving.
@@ -1061,7 +1062,7 @@ function(WEBKIT_COPY_FILES target_name)
         if (opt_COMMAND)
             set(command ${opt_COMMAND})
         elseif (APPLE AND NOT opt_NO_SYMLINK)
-            set(command ${CMAKE_COMMAND} -E create_symlink)
+            set(command ln -sfn)
         else ()
             set(command ${CMAKE_COMMAND} -E copy_if_different)
         endif ()
@@ -1098,8 +1099,13 @@ function(WEBKIT_SYMLINK_FILES target_name)
             file(MAKE_DIRECTORY ${opt_DESTINATION}/${file_dir})
             set(dst_file ${opt_DESTINATION}/${file})
         endif ()
+        if (CMAKE_HOST_UNIX)
+            set(command ln -sfn)
+        else ()
+            set(command ${CMAKE_COMMAND} -E create_symlink)
+        endif ()
         add_custom_command(OUTPUT ${dst_file}
-            COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
+            COMMAND ${command} ${src_file} ${dst_file}
             MAIN_DEPENDENCY ${src_file}
             VERBATIM
         )
@@ -1333,9 +1339,7 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
         -DWTF_EXPORT_PRIVATE=${_dllimport_decl}
         -D__WEBGPU__
     )
-    # iOS WebKit_Internal headers gate textual #imports behind this macro that
-    # trip strict cross-module-import-visibility checks (bug 312083).
-    if (WEBKIT_SDK_IS_MACOS)
+    if (APPLE)
         list(APPEND _flags -DWK_SUPPORTS_SWIFT_OBJCXX_INTEROP=1)
     endif ()
     # -fexperimental-bounds-safety-attributes belongs to this hash-normalizing

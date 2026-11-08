@@ -439,6 +439,9 @@ bool WebPageProxy::requestAutocorrectionContextAndWaitForReply(Seconds timeout)
     RefPtr frame = focusedOrMainFrame();
     auto frameID = frame ? std::optional(frame->frameID()) : std::nullopt;
     Ref process = processContainingFrame(frameID);
+    if (!process->hasConnection())
+        return false;
+
     auto pageID = webPageIDInProcessForFrame(frameID);
     process->send(Messages::WebPage::HandleAutocorrectionContextRequest(), pageID);
     return protect(process->connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAutocorrectionContext>(pageID, timeout, IPC::WaitForOption::DispatchIncomingSyncMessagesWhileWaiting) == IPC::Error::NoError;
@@ -446,6 +449,10 @@ bool WebPageProxy::requestAutocorrectionContextAndWaitForReply(Seconds timeout)
 
 void WebPageProxy::handleAutocorrectionContext(const WebAutocorrectionContext& context)
 {
+    RefPtr frame = focusedOrMainFrame();
+    if (context.frameID != (frame ? std::optional(frame->frameID()) : std::nullopt))
+        return;
+
     if (RefPtr pageClient = this->pageClient())
         pageClient->handleAutocorrectionContext(context);
 }
@@ -1066,7 +1073,7 @@ std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToPDFiOS(FrameIde
     auto snapshotIdentifier = generateRemoteSnapshotIdentifier();
     Ref gpuProcess = GPUProcessProxy::getOrCreate();
     Ref drawing = PendingSnapshotDrawing::create(snapshotIdentifier);
-    auto sinkReplyID = gpuProcess->sinkCompletedSnapshotToPDF(snapshotIdentifier, frameID, drawing->completionHandler(launchPrintProcessForDrawingIfNeeded(frame.get(), WTF::move(completionHandler))));
+    auto sinkReplyID = gpuProcess->sinkCompletedSnapshotToPDF(snapshotIdentifier, frameID, printProcessIdentifier(frame.get()), drawing->completionHandler(launchPrintProcessForDrawingIfNeeded(frame.get(), WTF::move(completionHandler))));
     auto replyID = sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPrintingPagesToSnapshotiOS(snapshotIdentifier, frameID, printInfo, pageCount), gpuProcess->releaseSnapshotIfRootFails(snapshotIdentifier));
     if (replyID)
         drawing->setReply<Messages::GPUProcess::SinkCompletedSnapshotToPDF>(gpuProcess.get(), sinkReplyID, *replyID);
@@ -1324,10 +1331,10 @@ void WebPageProxy::didConcludeDrop()
 #endif
 
 #if ENABLE(MODEL_PROCESS)
-void WebPageProxy::didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
+void WebPageProxy::didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 {
     if (RefPtr pageClient = this->pageClient())
-        pageClient->didReceiveInteractiveModelElement(nodeID);
+        pageClient->didReceiveInteractiveModelElement(frameID, nodeID);
 }
 #endif
 

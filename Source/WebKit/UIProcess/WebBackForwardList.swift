@@ -1318,9 +1318,13 @@ final class WebBackForwardList {
     func backForwardGoToItem(connection: IPC.Connection, itemID: WebCore.BackForwardItemIdentifier) throws(InvalidMessage) {
         // On process swap, we tell the previous process to ignore the load, which causes it to restore its current back forward item to its previous
         // value. Since the load is really going on in a new provisional process, we want to ignore such requests from the committed process.
-        // Any real new load in the committed process would have cleared m_provisionalPage.
-        if let webPageProxy = page.get(), webPageProxy.hasProvisionalPage() {
-            return
+        // The first message naming the target of a main frame traversal the UI process dispatched to the sender is
+        // that traversal's answer, not such a restore, so accept it even with a provisional page.
+        if let webPageProxy = page.get() {
+            let answersDispatchedTraversal = webPageProxy.takeCursorMoveForDispatchedTraversal(connection, itemID)
+            if webPageProxy.hasProvisionalPage() && !answersDispatchedTraversal {
+                return
+            }
         }
 
         try goToItemInternal(itemID: itemID)
@@ -1383,13 +1387,15 @@ final class WebBackForwardList {
         connection: IPC.Connection,
         frameID: WebCore.FrameIdentifier
     ) -> WebKit.VectorRefFrameState {
-        guard frameOnPage(frameID) != nil else {
+        guard let webPageProxy = page.get(), frameOnPage(frameID) != nil else {
             return WebKit.VectorRefFrameState(array: [])
         }
+
+        let process = WebKit.WebProcessProxy.fromConnection(connection)
         var frameStates: [WebKit.FrameState] = []
         for item in entries {
             if let frameItem = item.mainFrameItem().childItemForFrameID(frameID) {
-                frameStates.append(frameItem.copyFrameStateWithChildren().ptr())
+                frameStates.append(frameItem.copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
             }
         }
         return WebKit.VectorRefFrameState(array: frameStates)
@@ -1401,16 +1407,17 @@ final class WebBackForwardList {
         delta: Int32,
         frameID: WebCore.FrameIdentifier
     ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
-        try itemAtIndexForWebContent(delta: delta, frameID: frameID)
+        try itemAtIndexForWebContent(connection: connection, delta: delta, frameID: frameID)
     }
 
     private func itemAtIndexForWebContent(
+        connection: IPC.Connection,
         delta: Int32,
         frameID: WebCore.FrameIdentifier
     ) throws(InvalidMessage) -> WebKit.RefPtrFrameState {
         try messageCheck { delta != Int32.min }
 
-        guard let frame = frameOnPage(frameID) else {
+        guard let webPageProxy = page.get(), let frame = frameOnPage(frameID) else {
             return WebKit.RefPtrFrameState()
         }
 
@@ -1418,14 +1425,15 @@ final class WebBackForwardList {
         guard let item = entryAtDeltaFromCurrentIndex(delta: delta, allowSkipping: false) else {
             return WebKit.RefPtrFrameState()
         }
+        let process = WebKit.WebProcessProxy.fromConnection(connection)
         guard let frameItem = item.mainFrameItem().childItemForFrameID(frameID) else {
             // Entries can lack the main frame's current ID (after session restore or a process swap).
             guard frame.isMainFrame() else {
                 return WebKit.RefPtrFrameState()
             }
-            return WebKit.RefPtrFrameState(item.copyMainFrameStateWithChildren().ptr())
+            return WebKit.RefPtrFrameState(item.mainFrameItem().copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
         }
-        return WebKit.RefPtrFrameState(frameItem.copyFrameStateWithChildren().ptr())
+        return WebKit.RefPtrFrameState(frameItem.copyFrameStateWithChildrenForProcess(webPageProxy, process.ptr()).ptr())
     }
 
     @MainActor

@@ -390,6 +390,7 @@ struct SleepDisablerIdentifierType;
 struct SpeechRecognitionError;
 struct SnapshotIdentifierType;
 struct SystemPreviewInfo;
+struct TargetedElementInfo;
 struct TargetedElementRequest;
 struct TextAlternativeWithRange;
 struct TextCheckingResult;
@@ -543,6 +544,7 @@ class CallbackID;
 class ContextMenuContextData;
 class DownloadProxy;
 class DrawingAreaProxy;
+class FrameProcess;
 class FrameState;
 class GamepadData;
 class GeolocationPermissionRequestManagerProxy;
@@ -657,6 +659,7 @@ class PortalPresentationManagerProxy;
 #endif
 
 struct AppPrivacyReportTestingData;
+struct BackForwardItemIdentifiers;
 struct DataDetectionResult;
 struct DocumentEditingContext;
 struct DocumentEditingContextRequest;
@@ -1091,6 +1094,10 @@ public:
     void enqueueHistoryTraversalToItem(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&);
     int32_t inFlightTraversalDirection() const;
 
+    // Whether a cursor move to itemID from the connection's process answers a main frame traversal that
+    // goToBackForwardItem() dispatched to that process, and is the first to; marks the traversal answered if so.
+    bool takeCursorMoveForDispatchedTraversal(const IPC::Connection&, WebCore::BackForwardItemIdentifier);
+
     bool shouldKeepCurrentBackForwardListItemInList(WebBackForwardListItem&);
 
     NODELETE bool willHandleHorizontalScrollEvents() const;
@@ -1195,7 +1202,7 @@ public:
 #endif
 
 #if ENABLE(MODEL_PROCESS)
-    bool hasModelElement() const { return m_hasModelElement; }
+    bool hasModelElement() const;
     void setHasModelElement(bool);
 #endif
 
@@ -1417,10 +1424,10 @@ public:
 
 #if ENABLE(MODEL_PROCESS)
     void requestInteractiveModelElementAtPoint(WebCore::IntPoint);
-    void didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier>);
-    void stageModeSessionDidBegin(WebCore::NodeIdentifier, const WebCore::TransformationMatrix&);
-    void stageModeSessionDidUpdate(std::optional<WebCore::NodeIdentifier>, const WebCore::TransformationMatrix&);
-    void stageModeSessionDidEnd(std::optional<WebCore::NodeIdentifier>);
+    void didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::NodeIdentifier>);
+    void stageModeSessionDidBegin(std::optional<WebCore::FrameIdentifier>, WebCore::NodeIdentifier, const WebCore::TransformationMatrix&);
+    void stageModeSessionDidUpdate(std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::NodeIdentifier>, const WebCore::TransformationMatrix&);
+    void stageModeSessionDidEnd(std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::NodeIdentifier>);
 #endif
 
 #if PLATFORM(COCOA)
@@ -3263,6 +3270,8 @@ private:
 
     void sendCORSDisablingPatternsToNetworkProcessIfNecessary();
     void requestTargetedElementForText(WebCore::TargetedElementRequest&&, CompletionHandler<void(const Vector<Ref<API::TargetedElementInfo>>&)>&&);
+    void completeTargetedElementRequest(Vector<WebCore::TargetedElementInfo>&&, CompletionHandler<void(const Vector<Ref<API::TargetedElementInfo>>&)>&&);
+    void mergeContentFromRemoteFrames(Vector<WebCore::TargetedElementInfo>&&, CompletionHandler<void(Vector<WebCore::TargetedElementInfo>&&)>&&);
     std::optional<WebCore::RegistrableDomain> unpartitionedStorageSiteForNavigation(const WebFrameProxy&, const URL&) const;
 
     void getWebCryptoMasterKey(CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
@@ -3286,6 +3295,11 @@ private:
     void dragEndedInFrame(const std::optional<WebCore::FrameIdentifier>&, const WebCore::IntPoint& clientPosition, const WebCore::IntPoint& globalPosition, OptionSet<WebCore::DragOperation>, CompletionHandler<void(std::optional<WebCore::FrameIdentifier>)>&&);
 #endif
 
+#if ENABLE(MODEL_PROCESS)
+    bool isValidStageModeFrame(std::optional<WebCore::FrameIdentifier>) const;
+    void requestInteractiveModelElementAtPointInFrame(std::optional<WebCore::FrameIdentifier>, WebCore::IntPoint clientPosition, WebCore::IntPoint interactionLocation);
+#endif
+
     bool canCreateFrame(WebCore::FrameIdentifier) const;
     Ref<WebPageProxy> downloadOriginatingPage(const API::Navigation*);
     Ref<WebPageProxy> navigationOriginatingPage(const FrameInfoData&);
@@ -3304,6 +3318,7 @@ private:
 
     bool suspendCurrentPageIfPossible(API::Navigation&, const ProvisionalPageProxy&, RefPtr<WebFrameProxy>&& mainFrame);
     RefPtr<WebBackForwardListItem> backForwardItemForCachingOutgoingDocument(API::Navigation&);
+    std::optional<BackForwardItemIdentifiers> cacheOutgoingDocumentInPlaceIfPossible(API::Navigation&, const ProvisionalPageProxy&, WebFrameProxy& mainFrame, FrameProcess& previousMainFrameProcess);
 
     enum class ResetStateReason : uint8_t {
         PageInvalidated,
@@ -3365,6 +3380,8 @@ private:
     bool shouldLaunchPrintProcess(const WebFrameProxy* rootFrame);
     void launchPrintProcessIfNeeded(const WebFrameProxy* rootFrame);
     CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)> launchPrintProcessForDrawingIfNeeded(const WebFrameProxy* rootFrame, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
+    std::optional<WebCore::ProcessIdentifier> printProcessIdentifier(const WebFrameProxy* rootFrame);
+    void drawToPDF(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground, std::optional<WebCore::ProcessIdentifier> printProcessIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 #else
     void didGeneratePageLoadTiming(const WebPageLoadTiming&) { }
 #endif
@@ -4309,7 +4326,7 @@ private:
     bool m_registeredForFullSpeedUpdates { false };
 
 #if ENABLE(MODEL_PROCESS)
-    bool m_hasModelElement { false };
+    bool m_hasModelElementForMainFrameProcess { false };
 #endif
 
     bool m_shouldSuppressAppLinksInNextNavigationPolicyDecision { false };
