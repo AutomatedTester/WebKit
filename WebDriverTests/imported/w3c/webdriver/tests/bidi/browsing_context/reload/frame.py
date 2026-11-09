@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from webdriver.bidi.modules.script import ContextTarget
@@ -60,3 +61,25 @@ async def test_reload_resets_iframe_location(bidi_session, new_tab, inline, doma
         await_promise=False,
     )
     assert result["value"] == "about:blank"
+
+
+async def test_frame_reload_is_a_reload(bidi_session, new_tab, inline):
+    frame_url = inline("frame")
+    parent_url = inline(f"<iframe src='{frame_url}'></iframe>")
+    contexts = await navigate_and_assert(bidi_session, new_tab, parent_url)
+    frame = contexts[0]["children"][0]
+
+    await reload_and_assert(bidi_session, frame, url=frame_url)
+
+    # The frame's document came from a reload of its previous document, so it keeps its referrer and its
+    # navigation timing type is "reload" rather than "navigate".
+    result = await bidi_session.script.evaluate(
+        expression="""(() => {
+            const frameWindow = document.querySelector('iframe').contentWindow;
+            return JSON.stringify([frameWindow.document.referrer, frameWindow.performance.getEntriesByType('navigation')[0].type]);
+        })()""",
+        target=ContextTarget(new_tab["context"]),
+        await_promise=False,
+    )
+    assert result["type"] == "string"
+    assert json.loads(result["value"]) == [parent_url, "reload"]
