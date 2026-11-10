@@ -177,7 +177,7 @@ public:
 
     // Resolve auto margins in the inline direction of the containing block so that objects can be pushed to the start, middle or end
     // of the containing block.
-    void computeInlineDirectionMargins(const RenderBlock& containingBlock, LayoutUnit containerWidth, std::optional<LayoutUnit> availableSpaceAdjustedWithFloats, LayoutUnit childWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const;
+    void computeInlineDirectionMargins(const RenderBoxModelObject& containingBlock, LayoutUnit containerWidth, std::optional<LayoutUnit> availableSpaceAdjustedWithFloats, LayoutUnit childWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const;
 
     // Used to resolve margins in the containing block's block-flow direction.
     void computeBlockDirectionMargins(const RenderBlock& containingBlock, LayoutUnit& marginBefore, LayoutUnit& marginAfter) const;
@@ -506,7 +506,7 @@ public:
     LayoutSize offsetFromContainer(const RenderElement&, const LayoutPoint&, bool* offsetDependsOnPoint = nullptr) const override;
     LayoutRect firstFragmentBorderBoxRect() const override;
 
-    NODELETE LayoutPoint blockStartRelativeToPhysicalForChild(const RenderBox& child, const LayoutPoint&) const;
+    NODELETE LayoutPoint blockStartRelativeToPhysicalForChild(const RenderBox& child, const LayoutPoint&) const final;
 
     // The block axis coordinate (x for vertical, y for horizontal writing modes) of geometry inside this box is measured from its
     // block-start border edge, while painting, hit testing and layers use physical coordinates. The two differ only in vertical-rl

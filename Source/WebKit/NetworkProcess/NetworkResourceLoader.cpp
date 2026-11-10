@@ -124,6 +124,7 @@
 #endif
 
 #if PLATFORM(COCOA)
+#include "NetworkDataTaskCocoa.h"
 #include "PathsBlockedForSandboxExtensions.h"
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
@@ -221,6 +222,7 @@ NetworkResourceLoader::~NetworkResourceLoader()
 {
     ASSERT(RunLoop::isMain());
     ASSERT(!m_networkLoad);
+    ASSERT(!m_serviceWorkerFetchTask);
     ASSERT(!isSynchronous() || !m_synchronousLoadData->delayedReply);
     ASSERT(m_fileReferences.isEmpty());
 #if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
@@ -503,6 +505,7 @@ void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoa
         parameters.compressionDictionary = CompressionDictionaryParameters { destination, { } };
 
         // https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
+        // To be added with https://github.com/whatwg/fetch/pull/1854
         // 8. Let bestMatch be the result of finding the best matching dictionary in
         //    compressionDictionaryCache for request.
         // 9. If bestMatch is null, then return the result of running fallback.
@@ -516,8 +519,12 @@ void NetworkResourceLoader::startNetworkLoad(ResourceRequest&& request, FirstLoa
 }
 
 // https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
+// To be added with https://github.com/whatwg/fetch/pull/1854
 bool NetworkResourceLoader::shouldFetchWithCompressionDictionary(const ResourceRequest& request) const
 {
+    CheckedPtr networkSession = protect(connectionToWebProcess())->networkSession();
+    if (!networkSession || !networkSession->hasCompressionDictionarySupport())
+        return false;
     if (!connectionToWebProcess().compressionDictionaryEnabled() || !canUseCache(request))
         return false;
 
@@ -688,6 +695,8 @@ void NetworkResourceLoader::cleanup(LoadResult result)
     ASSERT(RunLoop::isMain());
     LOADER_RELEASE_LOG("cleanup: (result=%u)", static_cast<unsigned>(result));
 
+    m_isDone = true;
+
     NetworkActivityTracker::CompletionCode code { };
     switch (result) {
     case LoadResult::Unknown:
@@ -714,6 +723,9 @@ void NetworkResourceLoader::cleanup(LoadResult result)
     if (RefPtr networkLoad = std::exchange(m_networkLoad, nullptr))
         networkLoad->clearClient();
 
+    if (RefPtr task = std::exchange(m_serviceWorkerFetchTask, { }))
+        task->cancelFromClient();
+
     // This will cause NetworkResourceLoader to be destroyed and therefore we do it last.
     connection->didCleanupResourceLoader(*this);
 }
@@ -722,9 +734,11 @@ void NetworkResourceLoader::convertToDownload(DownloadID downloadID, const Resou
 {
     LOADER_RELEASE_LOG("convertToDownload: (downloadID=%" PRIu64 ", hasNetworkLoad=%d, pendingResponseCompletionHandlers=%zu)", downloadID.toUInt64(), !!m_networkLoad, m_responseCompletionHandlers.size());
 
-    RefPtr task = m_serviceWorkerFetchTask;
-    if (task && task->convertToDownload(protect(protect(NetworkProcess::singleton())->downloadManager()), downloadID, request, response))
-        return;
+    if (RefPtr task = std::exchange(m_serviceWorkerFetchTask, { })) {
+        if (task->convertToDownload(protect(protect(NetworkProcess::singleton())->downloadManager()), downloadID, request, response))
+            return;
+        task->cancelFromClient();
+    }
 
     // This can happen if the resource came from the disk cache.
     if (!m_networkLoad) {
@@ -758,7 +772,7 @@ void NetworkResourceLoader::abort()
         return;
     }
 
-    if (auto task = WTF::move(m_serviceWorkerFetchTask)) {
+    if (RefPtr task = std::exchange(m_serviceWorkerFetchTask, { })) {
         LOADER_RELEASE_LOG("abort: Cancelling pending service worker fetch task (fetchIdentifier=%" PRIu64 ")", task->fetchIdentifier().toUInt64());
         task->cancelFromClient();
     }
@@ -1118,6 +1132,7 @@ static const String* stringBareItem(const RFC8941::ItemOrInnerList& value)
 }
 
 // https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch step 14-15.
+// To be added with https://github.com/whatwg/fetch/pull/1854
 static bool isCompressionDictionaryEncoded(const ResourceResponse& response)
 {
     auto contentEncoding = response.httpHeaderField(HTTPHeaderName::ContentEncoding);
@@ -1535,6 +1550,8 @@ void NetworkResourceLoader::continueDidReceiveResponseAfterLocalNetworkAccessChe
     }
 
     // https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
+    // To be added with https://github.com/whatwg/fetch/pull/1854
+    //
     // 15. If codings is null or does not contain `dcb` or `dcz`, then return response.
     // A load that was never eligible handed the network layer no dictionary, so it decoded nothing
     // and the codings have to be left alone for the consumer to reject.
@@ -2223,6 +2240,10 @@ void NetworkResourceLoader::continueWillSendRequest(ResourceRequest&& newRequest
         if (CheckedPtr session = protect(connectionToWebProcess())->networkSession()) {
             if (RefPtr server = session->swServer(); server && !server->isImportCompletedForOrigin(topOrigin)) {
                 server->importRegistrationsForOrigin(topOrigin, [this, protectedThis = Ref { *this }, newRequest = WTF::move(newRequest), isAllowedToAskUserForCredentials, completionHandler = WTF::move(completionHandler)]() mutable {
+                    if (m_isDone) {
+                        LOADER_RELEASE_LOG("continueWillSendRequest: Load was cleaned up while importing registrations");
+                        return completionHandler({ });
+                    }
                     continueWillSendRequest(WTF::move(newRequest), isAllowedToAskUserForCredentials, WTF::move(completionHandler));
                 });
                 return;
@@ -2984,6 +3005,11 @@ void NetworkResourceLoader::startWithServiceWorker()
         if (request.isNull())
             return;
 
+        if (protectedThis->m_isDone) {
+            LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "startWithServiceWorker: Load was cleaned up while waiting, not starting");
+            return;
+        }
+
         ASSERT(!protectedThis->m_serviceWorkerFetchTask);
         protectedThis->m_serviceWorkerFetchTask = protect(protectedThis->connectionToWebProcess())->createFetchTask(protectedThis, request);
         if (protectedThis->m_serviceWorkerFetchTask) {
@@ -3166,7 +3192,7 @@ void NetworkResourceLoader::cancelMainResourceLoadForContentFilter(const WebCore
 
 void NetworkResourceLoader::handleProvisionalLoadFailureFromContentFilter(const URL& blockedPageURL, WebCore::SubstituteData&& substituteData)
 {
-    protect(NetworkProcess::singleton())->addAllowedFirstPartyForCookies(m_connection->webProcessIdentifier(), RegistrableDomain { WebCore::ContentFilter::blockedPageURL() }, LoadedWebArchive::No, [] { });
+    protect(NetworkProcess::singleton())->addAllowedFirstPartyDomainForCookies(m_connection->webProcessIdentifier(), RegistrableDomain { WebCore::ContentFilter::blockedPageURL() }, LoadedWebArchive::No, [] { });
     send(Messages::WebResourceLoader::ContentFilterDidBlockLoad(m_unblockHandler, m_unblockRequestDeniedScript, m_contentFilter->blockedError(), blockedPageURL, substituteData));
 }
 

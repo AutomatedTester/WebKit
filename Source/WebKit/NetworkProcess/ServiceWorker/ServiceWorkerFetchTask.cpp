@@ -384,7 +384,10 @@ void ServiceWorkerFetchTask::didReceiveFormData(const IPC::FormDataReference& fo
 void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetrics)
 {
     ASSERT(!m_timeoutTimer || !m_timeoutTimer->isActive());
-    SWFETCH_RELEASE_LOG("didFinish:");
+    SWFETCH_RELEASE_LOG("didFinish: (m_isDone=%d)", m_isDone);
+
+    if (m_isDone)
+        return;
 
     m_isDone = true;
     if (m_timeoutTimer)
@@ -401,6 +404,9 @@ void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetr
 
 void ServiceWorkerFetchTask::didFail(const ResourceError& error)
 {
+    if (m_isDone)
+        return;
+
     m_isDone = true;
     if (m_timeoutTimer && m_timeoutTimer->isActive()) {
         m_timeoutTimer->stop();
@@ -443,6 +449,8 @@ void ServiceWorkerFetchTask::usePreload()
     }
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
     protect(m_loader)->serviceWorkerDidNotHandle(this);
 }
 
@@ -463,6 +471,8 @@ void ServiceWorkerFetchTask::cancelFromClient()
         return;
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
 
     if (m_isLoadingFromPreloader) {
         cancelPreloadIfNecessary();
@@ -500,6 +510,7 @@ void ServiceWorkerFetchTask::continueFetchTaskWith(ResourceRequest&& request)
     SWFETCH_RELEASE_LOG("continueFetchTaskWith: (hasServiceWorkerConnection=%d)", !!m_serviceWorkerConnection);
     Ref loader = *m_loader;
     if (!m_serviceWorkerConnection) {
+        m_isDone = true;
         loader->serviceWorkerDidNotHandle(this);
         return;
     }
@@ -513,7 +524,10 @@ void ServiceWorkerFetchTask::timeoutTimerFired()
 {
     ASSERT(!m_isDone);
     ASSERT(!m_wasHandled);
-    SWFETCH_RELEASE_LOG_ERROR("timeoutTimerFired: (hasServiceWorkerConnection=%d)", !!m_serviceWorkerConnection);
+    SWFETCH_RELEASE_LOG_ERROR("timeoutTimerFired: (hasServiceWorkerConnection=%d, hasLoader=%d)", !!m_serviceWorkerConnection, !!m_loader);
+
+    if (!m_loader)
+        return;
 
     softUpdateIfNeeded();
 
@@ -680,6 +694,8 @@ bool ServiceWorkerFetchTask::convertToDownload(DownloadManager& manager, Downloa
         return false;
 
     m_isDone = true;
+    if (m_timeoutTimer)
+        m_timeoutTimer->stop();
 
     // FIXME: We might want to keep the service worker alive until the download ends.
     RefPtr<ServiceWorkerDownloadTask> serviceWorkerDownloadTask;

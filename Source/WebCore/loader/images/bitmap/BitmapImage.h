@@ -59,7 +59,7 @@ public:
 
     // Decoding
     bool isLargeForDecoding() const { return m_source->isLargeForDecoding(); }
-    void stopDecodingWorkQueue() { m_source->stopDecodingWorkQueue(); }
+    void cancelPendingDecodingRequests() { m_source->cancelPendingDecodingRequests(); }
     void decode(Function<void(DecodingStatus)>&& decodeCallback) { m_source->decode(WTF::move(decodeCallback)); }
 
     // Current ImageFrame
@@ -147,6 +147,10 @@ private:
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     bool isPanorama() const final { return m_source->isPanorama(); }
+#endif
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    std::optional<float> focalLengthIn35mm() const final { return m_source->focalLengthIn35mm(); }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_CONTROLS)

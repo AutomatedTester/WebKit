@@ -424,9 +424,9 @@ void WebProcessProxy::forWebPagesWithOrigin(PAL::SessionID sessionID, const Secu
     }
 }
 
-void WebProcessProxy::addAllowedFirstPartyForCookies(const WebCore::RegistrableDomain& domain, LoadedWebArchive loadedWebArchive)
+void WebProcessProxy::addAllowedFirstPartyForCookies(const WebCore::Site& site, LoadedWebArchive loadedWebArchive)
 {
-    m_allowedFirstPartiesForCookies.second.add(domain);
+    m_allowedFirstPartiesForCookies.second.add(site);
     if (loadedWebArchive == LoadedWebArchive::Yes)
         m_allowedFirstPartiesForCookies.first = LoadedWebArchive::Yes;
 }
@@ -1885,6 +1885,8 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
         return provisionalPages;
     }();
 
+    const auto remotePages = copyToVectorOf<Ref<RemotePageProxy>>(m_remotePages);
+
     auto isResponsiveCallbacks = std::exchange(m_isResponsiveCallbacks, { });
     for (auto& callback : borrow(isResponsiveCallbacks))
         callback(false);
@@ -1920,8 +1922,13 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     for (auto& page : pages)
         page->dispatchProcessDidTerminate(*this, reason);
 
-    for (Ref remotePage : m_remotePages)
+    for (auto& remotePage : remotePages) {
+        if (remotePage->isDisconnected())
+            continue;
+        if (RefPtr page = remotePage->page(); !page || page->isClosed())
+            continue;
         remotePage->processDidTerminate(*this, reason);
+    }
 }
 
 void WebProcessProxy::didReceiveInvalidMessage(IPC::Connection& connection, IPC::MessageName messageName, const Vector<uint32_t>& indexOfObjectFailingDecoding)

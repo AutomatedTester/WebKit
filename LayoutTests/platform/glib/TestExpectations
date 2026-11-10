@@ -359,7 +359,7 @@ imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-004.html [
 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-005.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-007.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-009.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-predefined-color-spaces.html [ Pass ]
+webkit.org/b/316997 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-eval-predefined-color-spaces.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-infinity-001.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-images/gradient/gradient-infinity-002.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-images/gradient/oklab-gradient.html [ Pass ]
@@ -383,8 +383,6 @@ imported/w3c/web-platform-tests/css/css-masking/clip-path/animations/clip-path-a
 imported/w3c/web-platform-tests/css/css-masking/mask-svg-content/mask-with-filter.svg [ Pass ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/webkit-line-clamp-018.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-overflow/single-axis-overflow-clip-rtl.html [ Pass ]
-[ x86_64 ] imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-018.html [ Pass ]
-[ x86_64 ] imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-019.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-position/multicol/vlr-rtl-rtl-in-multicols.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-position/multicol/vrl-rtl-rtl-in-multicols.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-position/position-absolute-dynamic-overflow-002.html [ Pass ]
@@ -637,6 +635,9 @@ webkit.org/b/315030 media/media-source/media-source-webm-seek-singlekeyframe.htm
 
 webkit.org/b/329406 media/media-source/media-source-seek-unbuffered-readystate.html [ Failure Timeout Pass ]
 webkit.org/b/329406 imported/w3c/web-platform-tests/media-source/mediasource-seek-unbuffered-readystate.html [ Failure Timeout Pass ]
+
+# MSE in worker requires a thread-safe MediaSource implementation, which the GStreamer ports lack.
+webkit.org/b/329641 imported/w3c/web-platform-tests/media-source/dedicated-worker/managed [ Failure ]
 
 # NOTIFICATION_EVENT tests
 http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
@@ -1001,6 +1002,12 @@ imported/w3c/web-platform-tests/css/css-pseudo/marker-content-012.html [ Pass ]
 
 # Only implemented with libsoup for now.
 imported/w3c/web-platform-tests/fetch/compression-dictionary [ Pass ]
+
+imported/w3c/web-platform-tests/css/css-inline/text-box-trim/text-box-trim-inline-box-text-decoration-001.html?class=vrl,text [ Pass ]
+imported/w3c/web-platform-tests/css/css-text-decor/text-decoration-inset-svg-fragment-001.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-text-decor/text-decoration-inset-svg-fragment-002.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-writing-modes/text-combine-upright-compression-006a.html [ Pass ]
+imported/w3c/web-platform-tests/webcodecs/video-encoder-canvasImageSource.https.html [ Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests.
@@ -2198,6 +2205,8 @@ webkit.org/b/329575 storage/indexeddb/clear-data-with-stalled-abort-crash.html [
 webkit.org/b/329575 storage/indexeddb/close-database-with-stalled-abort-crash.html [ Skip ]
 webkit.org/b/329575 storage/indexeddb/delete-database-with-stalled-abort-crash.html [ Skip ]
 
+webkit.org/b/330949 http/tests/IndexedDB/transaction-commit-pending-requests-stop.html [ Failure Pass ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of IndexedDB-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -2678,6 +2687,8 @@ webkit.org/b/323852 webanimations/combining-transform-animations-with-different-
 webkit.org/b/323852 webanimations/combining-transform-animations-with-different-acceleration-capabilities-7.html [ Skip ]
 webkit.org/b/323852 webanimations/transform-animation-with-steps-timing-function-not-accelerated.html [ Skip ]
 
+webkit.org/b/330317 webanimations/accelerated-backdrop-filter.html [ ImageOnlyFailure Pass ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 
 webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-ignored.html [ Skip ]
@@ -3054,6 +3065,7 @@ webkit.org/b/320603 webrtc/multi-video.html [ Failure Pass ]
 webkit.org/b/329574 webrtc/captureCanvas-webrtc-with-video-scaling-adaptation.html [ Failure Pass ]
 webkit.org/b/296344 imported/w3c/web-platform-tests/webrtc/RTCRtpSender-replaceTrack.https.html?interop-2026 [ Failure Pass ]
 webkit.org/b/324256 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-videoDetectorTest.html [ Failure Pass ]
+webkit.org/b/330950 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-GC.https.html [ Failure Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebRTC-related bugs
@@ -5078,7 +5090,6 @@ webkit.org/b/319310 [ Debug ] fast/repaint/iframe-avoid-redundant-repaint.html [
 webkit.org/b/319311 [ Debug ] fast/repaint/missing-out-of-flow-repaint-on-destroy.html [ Pass ImageOnlyFailure ]
 webkit.org/b/319312 [ Debug ] workers/bomb.html [ Skip ]
 
-[ x86_64 ] imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-023.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/line-clamp/block-ellipsis-028.html [ ImageOnlyFailure ]
 
 

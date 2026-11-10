@@ -25,12 +25,12 @@
 
 import Foundation
 import struct Foundation.URL
-@_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
+@_spi(Testing) import WebKit
 import SwiftUI
 import struct Swift.String
 import struct TestWebKitAPILibrary.DOMRect
 import Testing
-import TestWebKitAPILibrary
+@_spi(WebKitAdditions_Testing) import TestWebKitAPILibrary
 import Recap
 private import AppKit_Private.NSMenu_Private
 private import IOKit.hid
@@ -43,7 +43,10 @@ actor Recap {
             guard let composer else {
                 preconditionFailure()
             }
-            composer.senderProperties = ._wk_trackpadSender()
+            let displayUUID = unsafe CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID())?.takeRetainedValue()
+            composer.senderProperties = .touchScreenDigitizerSender(
+                forDisplayUUID: displayUUID.map { CFUUIDCreateString(nil, $0) as String }
+            )
             events(composer)
         }
 

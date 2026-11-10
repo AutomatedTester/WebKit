@@ -64,6 +64,7 @@ Helpers/cocoa/MouseSupportUIDelegate.mm @nonARC
 Helpers/cocoa/PasteboardUtilities.mm @nonARC
 Helpers/cocoa/PDFTestHelpers.mm @nonARC
 Helpers/cocoa/PrivateFindSPITester.mm @nonARC
+Helpers/cocoa/ProcessTerminationTestUtilities.mm @nonARC
 Helpers/cocoa/PublicFindAPITester.mm @nonARC
 Helpers/cocoa/SiteIsolationTestUtilities.mm @nonARC
 Helpers/cocoa/SiteIsolationUtilities.mm @nonARC
@@ -111,6 +112,7 @@ Tests/WebKit/WKWebView/ClipboardTests.mm @nonARC
 Tests/WebKit/WKWebView/CloseWebViewAfterEnterFullscreen.mm @nonARC
 Tests/WebKit/WKWebView/CloseWebViewDuringEnterFullscreen.mm @nonARC
 Tests/WebKit/WKWebView/CommandBackForward.mm @nonARC
+Tests/WebKit/WKWebView/CompressionDictionary.mm @nonARC
 Tests/WebKit/WKWebView/Configuration.mm @nonARC
 Tests/WebKit/WKWebView/ContentFiltering.mm @nonARC
 Tests/WebKit/WKWebView/ContentRuleListNotification.mm @nonARC
@@ -313,6 +315,7 @@ Tests/WebKit/WKWebView/ScriptTrackingPrivacyTests.mm @nonARC
 Tests/WebKit/WKWebView/ServiceWorkerBasic.mm @nonARC
 Tests/WebKit/WKWebView/ServiceWorkerModuleUnregisterDuringLoad.mm @nonARC
 Tests/WebKit/WKWebView/SessionStorage.mm @nonARC
+Tests/WebKit/WKWebView/SharedWorker.mm @nonARC
 Tests/WebKit/WKWebView/ShouldGoToBackForwardListItem.mm @nonARC
 Tests/WebKit/WKWebView/ShouldOpenExternalURLsInNewWindowActions.mm @nonARC
 Tests/WebKit/WKWebView/ShrinkToFit.mm @nonARC

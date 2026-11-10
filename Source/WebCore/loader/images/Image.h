@@ -140,9 +140,6 @@ public:
     // Brings the image up to date for a rendering update it asked for through ImageObserver::scheduleRenderingUpdate().
     virtual void updateRendering() { }
 
-    static bool systemAllowsAnimationControls() { return gSystemAllowsAnimationControls; }
-    NODELETE WEBCORE_EXPORT static void setSystemAllowsAnimationControls(bool allowsControls);
-
     // Typically the CachedImage that owns us.
     NODELETE RefPtr<ImageObserver> imageObserver() const;
     NODELETE void setImageObserver(RefPtr<ImageObserver>&&);
@@ -174,6 +171,9 @@ public:
 #endif
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     virtual bool isPanorama() const { return false; }
+#endif
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    virtual std::optional<float> focalLengthIn35mm() const { return std::nullopt; }
 #endif
 
 #if ENABLE(SPATIAL_IMAGE_DETECTION)
@@ -212,7 +212,6 @@ private:
     // A value of true or false will override the default Page::imageAnimationEnabled state.
     ImageAnimationOverride m_animationOverride { ImageAnimationOverride::None };
     const std::unique_ptr<Timer> m_animationStartTimer;
-    WEBCORE_EXPORT static bool gSystemAllowsAnimationControls;
 };
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const Image&);

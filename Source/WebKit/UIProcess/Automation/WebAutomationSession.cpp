@@ -980,7 +980,7 @@ void WebAutomationSession::willShowJavaScriptDialog(WebPageProxy& page, const St
         std::optional<API::AutomationSessionClient::JavaScriptDialogType> apiDialogType = m_client->typeOfCurrentJavaScriptDialogOnPage(*this, page);
         auto userPromptType = toProtocolUserPromptType(apiDialogType.value_or(API::AutomationSessionClient::JavaScriptDialogType::Prompt));
 
-        // FIXME: propagate the 'userPromptHandler' from session capabilities.
+        // FIXME: propagate the 'userPromptHandler' from session capabilities. <https://webkit.org/b/291666>
         auto userPromptHandlerType = Inspector::Protocol::BidiSession::UserPromptHandlerType::Accept;
         m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::UserPromptOpened, { handleForWebPageProxy(page) }, [&] {
             m_bidiProcessor->browsingContextDomainNotifier().userPromptOpened(handleForWebPageProxy(page), userPromptType, userPromptHandlerType, message, m_client->defaultTextOfCurrentJavaScriptDialogOnPage(*this, page).value_or(defaultText.value_or(emptyString())));
@@ -1737,6 +1737,21 @@ void WebAutomationSession::handleRunOpenPanel(const WebPageProxy& page, const We
 
 void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&& callback)
 {
+    evaluateJavaScriptFunction(browsingContextHandle, frameHandle, function, WTF::move(arguments), WTF::move(expectsImplicitCallbackArgument), WTF::move(forceUserGesture), WTF::move(callbackTimeout), UserPromptEndsEvaluation::Yes, WTF::move(callback));
+}
+
+void WebAutomationSession::evaluateJavaScriptFunctionForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& forceUserGesture, Inspector::CommandCallback<String>&& callback)
+{
+    evaluateJavaScriptFunction(browsingContextHandle, frameHandle, function, WTF::move(arguments), false, WTF::move(forceUserGesture), std::nullopt, UserPromptEndsEvaluation::No, WTF::move(callback));
+}
+
+HashMap<uint64_t, Inspector::CommandCallback<String>>& WebAutomationSession::evaluateJavaScriptFunctionCallbacks(UserPromptEndsEvaluation userPromptEndsEvaluation)
+{
+    return userPromptEndsEvaluation == UserPromptEndsEvaluation::Yes ? m_evaluateJavaScriptFunctionCallbacks : m_evaluateBidiScriptCallbacks;
+}
+
+void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, UserPromptEndsEvaluation userPromptEndsEvaluation, Inspector::CommandCallback<String>&& callback)
+{
     auto page = webPageProxyForHandle(browsingContextHandle);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
@@ -1749,10 +1764,10 @@ void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol:
     });
 
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
-    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+    evaluateJavaScriptFunctionCallbacks(userPromptEndsEvaluation).set(callbackID, WTF::move(callback));
 
-    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInProcessForFrame(frameID), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInProcessForFrame(frameID), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID, userPromptEndsEvaluation](String&& result, String&& errorType) {
+        auto callback = protectedThis->evaluateJavaScriptFunctionCallbacks(userPromptEndsEvaluation).take(callbackID);
         if (!callback)
             return;
 
@@ -2886,10 +2901,10 @@ void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automat
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(frameNotFound, FrameNotFound);
 
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
-    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+    m_evaluateBidiScriptCallbacks.set(callbackID, WTF::move(callback));
 
     page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, maxObjectDepth, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+        auto callback = protectedThis->m_evaluateBidiScriptCallbacks.take(callbackID);
         if (!callback)
             return;
 
@@ -3370,6 +3385,28 @@ void WebAutomationSession::takeScreenshot(const Inspector::Protocol::Automation:
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
+void WebAutomationSession::captureBidiScreenshot(const Inspector::Protocol::Automation::BrowsingContextHandle& handle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, bool documentOrigin, std::optional<WebCore::FloatRect>&& clip, std::optional<double>&& maxWidth, std::optional<double>&& maxHeight, CommandCallback<String>&& callback)
+{
+    auto page = webPageProxyForHandle(handle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
+
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(frameNotFound, FrameNotFound);
+
+    // The capture is painted in the process that hosts the navigable's document, so it can cover a
+    // child navigable, or the whole document, rather than only what the top-level viewport shows.
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::CaptureBidiScreenshot(page->webPageIDInProcessForFrame(frameID), frameID, documentOrigin, WTF::move(clip), WTF::move(maxWidth), WTF::move(maxHeight)), CompletionHandler<void(String&&, String&&)> { [callback = WTF::move(callback)](String&& data, String&& errorType) mutable {
+        if (!errorType.isEmpty())
+            return callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_MESSAGE(errorType)));
+
+        // An empty reply with no error means the WebContent process went away before answering.
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(data.isEmpty(), InternalError);
+
+        callback(WTF::move(data));
+    } });
+}
+
 static String logEntryLevelForMessage(const JSC::MessageType& messageType, const MessageLevel& messageLevel)
 {
     if (messageType == JSC::MessageType::Assert || messageLevel == JSC::MessageLevel::Error)

@@ -394,6 +394,10 @@
 #include <WebCore/MHTMLArchive.h>
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+#include "ImmersiveElementDetails.h"
+#endif
+
 #if ENABLE(POINTER_LOCK)
 #include <WebCore/PointerLockController.h>
 #endif
@@ -2631,7 +2635,7 @@ bool WebPage::suspendForProcessSwap()
     if (!currentHistoryItem)
         return false;
 
-    if (!BackForwardCache::singleton().addIfCacheable(currentHistoryItem->frameItemID(), *page))
+    if (!BackForwardCache::singleton().addIfCacheable(currentHistoryItem->frameItemID(), *page, LoadWillContinueInAnotherProcess::Yes))
         return false;
 
     // Back/forward cache does not break the opener link for the main frame (only does so for the subframes) because the
@@ -5822,9 +5826,12 @@ void WebPage::updatePreferences(const WebPreferencesStore& store)
 #if ENABLE(IPC_TESTING_API)
     if ((m_ipcTestingAPIEnabled = store.getBoolValueForKey(WebPreferencesKey::ipcTestingAPIEnabledKey()))) {
         protect(WebProcess::singleton().parentProcessConnection())->setIgnoreInvalidMessageForTesting();
+#if ENABLE(GPU_PROCESS)
         assertIsMainRunLoop();
         if (auto* gpuProcessConnection = WebProcess::singleton().existingGPUProcessConnection())
             gpuProcessConnection->connection().setIgnoreInvalidMessageForTesting();
+#endif // ENABLE(GPU_PROCESS)
+
 #if ENABLE(MODEL_PROCESS)
         if (auto* modelProcessConnection = WebProcess::singleton().existingModelProcessConnection())
             modelProcessConnection->connection().setIgnoreInvalidMessageForTesting();
@@ -7178,12 +7185,37 @@ void WebPage::addPluginView(PluginView& pluginView)
 {
     ASSERT(!m_pluginViews.contains(pluginView));
     m_pluginViews.add(pluginView);
+    updateFrameHasPDFPlugin(pluginView.frameID());
 }
 
 void WebPage::removePluginView(PluginView& pluginView)
 {
     ASSERT(m_pluginViews.contains(pluginView));
     m_pluginViews.remove(pluginView);
+    updateFrameHasPDFPlugin(pluginView.frameID());
+}
+
+bool WebPage::frameHasPDFPlugin(LocalFrame& frame) const
+{
+    RefPtr document = frame.document();
+    if (!document)
+        return false;
+
+    for (auto& pluginView : m_pluginViews) {
+        if (&pluginView.pluginElement().document() == document)
+            return true;
+    }
+    return false;
+}
+
+void WebPage::updateFrameHasPDFPlugin(FrameIdentifier frameID)
+{
+    RefPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame)
+        return;
+
+    RefPtr localFrame = frame->coreLocalFrame();
+    send(Messages::WebPageProxy::SetFrameHasPDFPlugin(frameID, localFrame && frameHasPDFPlugin(*localFrame)));
 }
 
 #endif // ENABLE(PDF_PLUGIN)
@@ -8741,6 +8773,16 @@ void WebPage::didCommitLoad(WebFrame* frame)
     else if (m_textManipulationIncludesSubframes)
         startTextManipulationForFrame(*protect(frame->coreLocalFrame()));
 
+#if ENABLE(PDF_PLUGIN)
+    if (RefPtr coreFrame = frame->coreLocalFrame()) {
+        for (RefPtr<Frame> descendant = coreFrame; descendant; descendant = descendant->tree().traverseNext(coreFrame.get())) {
+            RefPtr localDescendant = dynamicDowncast<LocalFrame>(*descendant);
+            if (localDescendant && frameHasPDFPlugin(*localDescendant))
+                send(Messages::WebPageProxy::SetFrameHasPDFPlugin(localDescendant->frameID(), true));
+        }
+    }
+#endif
+
     if (!frame->isRootFrame())
         return;
 
@@ -9092,9 +9134,46 @@ void WebPage::allowImmersiveElement(CompletionHandler<void(bool)>&& completion)
     sendWithAsyncReply(Messages::WebPageProxy::AllowImmersiveElement(), WTF::move(completion));
 }
 
-void WebPage::presentImmersiveElement(const LayerHostingContextIdentifier contextID, CompletionHandler<void(bool)>&& completion)
+static std::optional<ImmersiveElementDetails> immersiveElementDetails(ImmersiveElement& element)
 {
-    sendWithAsyncReply(Messages::WebPageProxy::PresentImmersiveElement(contextID), WTF::move(completion));
+    Ref htmlElement = element.asHTMLElement();
+    if (RefPtr modelElement = dynamicDowncast<HTMLModelElement>(htmlElement)) {
+        auto contextID = modelElement->immersiveContextID();
+        if (!contextID)
+            return std::nullopt;
+
+        return ImmersiveElementDetails { *contextID };
+    }
+
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(htmlElement)) {
+        CheckedPtr renderImage = dynamicDowncast<RenderImage>(imageElement->renderer());
+        if (!renderImage)
+            return std::nullopt;
+
+        RefPtr bitmap = renderImage->createShareableBitmapForFullScreen();
+        if (!bitmap)
+            return std::nullopt;
+
+        auto imageHandle = bitmap->createReadOnlyHandle();
+        if (!imageHandle)
+            return std::nullopt;
+
+        RefPtr image = imageElement->image();
+        return ImmersiveElementDetails { ImmersiveImageDetails { WTF::move(*imageHandle), image ? image->focalLengthIn35mm() : std::nullopt } };
+    }
+#endif
+
+    return std::nullopt;
+}
+
+void WebPage::presentImmersiveElement(ImmersiveElement& element, CompletionHandler<void(bool)>&& completion)
+{
+    auto details = immersiveElementDetails(element);
+    if (!details)
+        return completion(false);
+
+    sendWithAsyncReply(Messages::WebPageProxy::PresentImmersiveElement(WTF::move(*details)), WTF::move(completion));
 }
 
 void WebPage::dismissImmersiveElement(CompletionHandler<void()>&& completion)
@@ -9542,7 +9621,7 @@ void WebPage::suspendWithFrameItem(BackForwardFrameItemIdentifier identifier, Co
     unfreezeLayerTree(LayerTreeFreezeReason::BackgroundApplication);
     flushDeferredDidReceiveMouseEvent();
 
-    if (!BackForwardCache::singleton().addIfCacheable(identifier, *page)) {
+    if (!BackForwardCache::singleton().addIfCacheable(identifier, *page, LoadWillContinueInAnotherProcess::Yes)) {
         WEBPAGE_RELEASE_LOG_ERROR(ProcessSwapping, "suspendWithFrameItem: addIfCacheable failed");
         return completionHandler(false);
     }
@@ -10961,7 +11040,10 @@ void WebPage::generateTestReport(String&& message, String&& group)
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void WebPage::updateImageAnimationEnabled()
 {
-    protect(corePage())->setImageAnimationEnabled(WebProcess::singleton().imageAnimationEnabled());
+    Ref page = *corePage();
+    auto imageAnimationEnabled = WebProcess::singleton().imageAnimationEnabled();
+    page->setSystemImageAnimationEnabled(imageAnimationEnabled);
+    page->setImageAnimationEnabled(imageAnimationEnabled);
 }
 
 void WebPage::pauseAllAnimations(CompletionHandler<void()>&& completionHandler)
@@ -11166,6 +11248,13 @@ void WebPage::frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdenti
         }
     }
     focusController->setFocusedFrame(coreFrame.get(), WebCore::BroadcastFocusedFrame::No);
+}
+
+void WebPage::focusedFrameProcessDidTerminate(WebCore::FrameIdentifier frameID)
+{
+    CheckedRef focusController { corePage()->focusController() };
+    if (RefPtr focusedFrame = focusController->focusedFrame(); focusedFrame && focusedFrame->frameID() == frameID)
+        focusController->setFocusedFrame(nullptr, WebCore::BroadcastFocusedFrame::No);
 }
 
 void WebPage::remotePostMessage(WebCore::FrameIdentifier source, const WebCore::SecurityOriginData& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts& message, std::optional<WebCore::UserGestureTokenData>&& userGestureToken)

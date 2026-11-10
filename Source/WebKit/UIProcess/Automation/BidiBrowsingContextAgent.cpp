@@ -184,8 +184,8 @@ void BidiBrowsingContextAgent::captureScreenshot(const BrowsingContext& browsing
     ASYNC_FAIL_IF_UNEXPECTED_RESULT(handles);
     auto [pageHandle, frameHandle] = handles.value();
 
-    // FIXME: implement the `document` origin; captures are always relative to the viewport. <https://webkit.org/b/323419>
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!optionalOrigin.isNull() && optionalOrigin != "viewport"_s && optionalOrigin != "document"_s, InvalidParameter);
+    bool documentOrigin = optionalOrigin == "document"_s;
 
     if (optionalFormat) {
         // https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextimageformat
@@ -202,23 +202,25 @@ void BidiBrowsingContextAgent::captureScreenshot(const BrowsingContext& browsing
         // FIXME: honor the requested image format and quality; captures are always encoded as PNG. <https://webkit.org/b/323422>
     }
 
+    std::optional<double> maxWidth;
+    std::optional<double> maxHeight;
     if (optionalImageSize) {
         // https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextimagesize
-        for (auto key : { "maxWidth"_s, "maxHeight"_s }) {
+        for (auto [key, maxDimension] : { std::pair { "maxWidth"_s, &maxWidth }, std::pair { "maxHeight"_s, &maxHeight } }) {
             if (RefPtr value = optionalImageSize->getValue(key)) {
-                // maxWidth and maxHeight are js-uint (0..2^53-1) constrained to be greater than 1.
+                // maxWidth and maxHeight are js-uint (0..2^53-1) constrained to be at least 1.
                 // asInteger() truncates a JSON double, so validate integrality and both bounds
                 // against the raw double, matching the js-uint handling in getTree above.
                 auto doubleValue = value->asDouble();
                 ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!doubleValue, InvalidParameter);
                 ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(std::floor(*doubleValue) != *doubleValue, InvalidParameter);
-                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(*doubleValue <= 1 || *doubleValue > JSC::maxSafeInteger(), InvalidParameter);
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(*doubleValue < 1 || *doubleValue > JSC::maxSafeInteger(), InvalidParameter);
+                *maxDimension = *doubleValue;
             }
         }
-
-        // FIXME: honor the requested image size; the captured image is never downscaled. <https://webkit.org/b/323419>
     }
 
+    std::optional<WebCore::FloatRect> clip;
     if (optionalClip) {
         // https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextcliprectangle
         RefPtr clipTypeValue = optionalClip->getValue("type"_s);
@@ -260,15 +262,14 @@ void BidiBrowsingContextAgent::captureScreenshot(const BrowsingContext& browsing
             auto height = *optionalClip->getDouble("height"_s);
             ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!width || !height, ScreenshotError);
 
-            // FIXME: apply the clip rectangle to the captured image. <https://webkit.org/b/323419>
+            // Clamp rather than convert, so a huge double cannot become an infinite float whose
+            // sum with an opposite infinity is NaN when the clip is intersected.
+            clip = WebCore::FloatRect(clampTo<float>(*optionalClip->getDouble("x"_s)), clampTo<float>(*optionalClip->getDouble("y"_s)), clampTo<float>(width), clampTo<float>(height));
         } else
             ASYNC_FAIL_WITH_PREDEFINED_ERROR(InvalidParameter);
     }
 
-    // FIXME: this always captures the full page viewport: the empty node handle, and the
-    // absent scrollIntoViewIfNeeded and clipToViewport arguments, are placeholders until the
-    // origin, clip, and image-size options above are applied. <https://webkit.org/b/323419>
-    session->takeScreenshot(pageHandle, frameHandle, emptyString(), std::nullopt, std::nullopt, WTF::move(callback));
+    session->captureBidiScreenshot(pageHandle, frameHandle, documentOrigin, WTF::move(clip), WTF::move(maxWidth), WTF::move(maxHeight), WTF::move(callback));
 }
 
 void BidiBrowsingContextAgent::close(const BrowsingContext& browsingContext, std::optional<bool>&& optionalPromptUnload, CommandCallback<void>&& callback)
@@ -452,20 +453,29 @@ void BidiBrowsingContextAgent::getTree(const BrowsingContext& optionalRoot, std:
     });
 }
 
-void BidiBrowsingContextAgent::handleUserPrompt(const BrowsingContext& browsingContext, std::optional<bool>&& optionalShouldAccept, const String&, CommandCallback<void>&& callback)
+void BidiBrowsingContextAgent::handleUserPrompt(const BrowsingContext& browsingContext, std::optional<bool>&& optionalShouldAccept, const String& optionalUserText, CommandCallback<void>&& callback)
 {
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-handleUserPrompt
     RefPtr session = m_session.get();
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(browsingContext.isEmpty(), FrameNotFound);
 
-    // FIXME: implement `userText` option.
+    // User prompts belong to the top-level traversable, so a child context handles its page's prompt.
+    auto handles = session->extractBrowsingContextHandles(browsingContext);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(handles);
+    auto& pageHandle = handles.value().first;
 
-    if (optionalShouldAccept && *optionalShouldAccept) {
-        callback(session->acceptCurrentJavaScriptDialog(browsingContext));
+    if (!optionalShouldAccept.value_or(true)) {
+        callback(session->dismissCurrentJavaScriptDialog(pageHandle));
         return;
     }
 
-    // FIXME: this should consider the session's user prompt handler. <https://webkit.org/b/291666>
-    callback(session->dismissCurrentJavaScriptDialog(browsingContext));
+    // A prompt is answered with userText, or the empty string when it is omitted, not with the dialog's default
+    // text. userText only applies to prompt dialogs, so ignore the error that other dialog types report.
+    // Accepting still fails with no such alert when no dialog is showing.
+    std::ignore = session->setUserInputForCurrentJavaScriptPrompt(pageHandle, optionalUserText.isNull() ? emptyString() : optionalUserText);
+
+    callback(session->acceptCurrentJavaScriptDialog(pageHandle));
 }
 
 void BidiBrowsingContextAgent::locateNodes(const BrowsingContext& browsingContext, Ref<JSON::Object>&& locator, std::optional<double>&& optionalMaxNodeCount, RefPtr<JSON::Object>&& optionalSerializationOptions, RefPtr<JSON::Array>&&, CommandCallback<Ref<JSON::ArrayOf<Inspector::Protocol::BidiScript::RemoteValue>>>&& callback)
@@ -537,7 +547,7 @@ void BidiBrowsingContextAgent::locateNodes(const BrowsingContext& browsingContex
     // FIXME: Implement startNodes support. https://bugs.webkit.org/show_bug.cgi?id=288329
     // Inline JavaScript for CSS selector logic. Since _execute uses .apply(null, ...), this wrapper has this=null,
     // so we cannot access proxy methods. Instead, we inline the complete logic here.
-    session->evaluateJavaScriptFunction(topLevelContextHandle, frameHandle,
+    session->evaluateJavaScriptFunctionForBidi(topLevelContextHandle, frameHandle,
         "function(selector, maxCount) { \
             try { \
                 const elements = document.querySelectorAll(selector); \
@@ -566,7 +576,7 @@ void BidiBrowsingContextAgent::locateNodes(const BrowsingContext& browsingContex
                 error.name = 'InvalidSelector'; \
                 throw error; \
             } \
-        }"_s, WTF::move(arguments), false, false, std::nullopt, [callback = WTF::move(callback)](Inspector::CommandResult<String>&& result) mutable {
+        }"_s, WTF::move(arguments), false, [callback = WTF::move(callback)](Inspector::CommandResult<String>&& result) mutable {
         if (!result) {
             callback(makeUnexpected(result.error()));
             return;

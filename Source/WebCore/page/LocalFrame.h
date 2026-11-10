@@ -232,9 +232,11 @@ public:
     WEBCORE_EXPORT void setPageAndTextZoomFactors(float pageZoomFactor, float textZoomFactor);
 
     float pageZoomFactor() const { return m_pageZoomFactor; }
+    // The zoom of this frame's document. Use it to convert between CSS and layout units.
+    float effectiveZoomFactor() const { return m_pageZoomFactor; }
     float textZoomFactor() const { return m_textZoomFactor; }
 
-    float frameScaleFactorForChild(const Frame&) const final;
+    float frameOwnerZoomFactorForChild(const Frame&) const final;
 
     void deviceOrPageScaleFactorChanged();
 

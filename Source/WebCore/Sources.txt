@@ -358,7 +358,6 @@ Modules/permissions/PermissionController.cpp
 Modules/permissions/PermissionStatus.cpp
 Modules/permissions/Permissions.cpp
 Modules/permissions/WorkerNavigatorPermissions.cpp
-Modules/phonenumberpossession/AggregatorResponseData.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionCoordinator.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionCredential.cpp
 Modules/phonenumberpossession/PhoneNumberPossessionRequest.cpp
@@ -2253,6 +2252,7 @@ loader/images/bitmap/BitmapImageDescriptor.cpp
 loader/images/bitmap/BitmapImageSource.cpp
 loader/images/bitmap/ImageFrameAnimator.cpp
 loader/images/bitmap/ImageFrameWorkQueue.cpp
+loader/images/bitmap/ImageFrameWorkQueuePool.cpp
 loader/images/bitmap/ImageSource.cpp
 loader/images/sizing/ImageSizingContext.cpp
 loader/images/sizing/ObjectSizeNegotiation.cpp

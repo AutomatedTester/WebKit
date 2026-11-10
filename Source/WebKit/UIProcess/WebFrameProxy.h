@@ -204,6 +204,10 @@ public:
     bool isDisplayingStandaloneMediaDocument() const;
     bool isDisplayingMarkupDocument() const;
     bool isDisplayingPDFDocument() const;
+#if ENABLE(PDF_PLUGIN)
+    bool hasPDFPlugin() const { return m_hasPDFPlugin; }
+    void setHasPDFPlugin(bool hasPDFPlugin) { m_hasPDFPlugin = hasPDFPlugin; }
+#endif
 
     void getWebArchive(CompletionHandler<void(API::Data*)>&&);
     void getMainResourceData(CompletionHandler<void(API::Data*)>&&);
@@ -278,11 +282,7 @@ public:
     std::optional<WebCore::PageIdentifier> webPageIDInCurrentProcess() const;
     void notifyParentOfLoadCompletion(WebProcessProxy&);
 
-    enum class ClearFrameTreeSyncData : bool {
-        No,
-        Yes
-    };
-    void remoteProcessDidTerminate(WebProcessProxy&, ClearFrameTreeSyncData);
+    void remoteProcessDidTerminate(WebProcessProxy&);
 
     Ref<WebCore::FrameTreeSyncData> calculateFrameTreeSyncData() const;
     void broadcastFrameTreeSyncData(Ref<WebCore::FrameTreeSyncData>&&);
@@ -370,7 +370,7 @@ private:
 
     NODELETE std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
 
-    void updateDocumentSecurityOrigin(WebFrameProxy*);
+    void updateDocumentSecurityOrigin();
     WebCore::SecurityOriginData committedDocumentSecurityOriginData() const;
 
     RefPtr<WebFrameProxy> deepLastChild();
@@ -392,6 +392,9 @@ private:
     String m_title;
     String m_frameName;
     bool m_containsPluginDocument { false };
+#if ENABLE(PDF_PLUGIN)
+    bool m_hasPDFPlugin { false };
+#endif
     WebCore::CertificateInfo m_certificateInfo;
     HashMap<String, WebCore::CertificateInfo> m_hostAndPortToCertificateInfo;
     RefPtr<WebFramePolicyListenerProxy> m_activeListener;

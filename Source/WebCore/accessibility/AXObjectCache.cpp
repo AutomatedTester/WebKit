@@ -113,6 +113,7 @@
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineRunAndOffset.h"
 #include "KeyboardEvent.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "LocalFrame.h"
 #include "Logging.h"
 #include "MathMLElement.h"
@@ -1545,10 +1546,8 @@ void AXObjectCache::setFrameGeometry(LocalFrame& frame, const AXFrameGeometry& g
 
     // Reset to zero to avoid leaving a stale value in the case of a null frame.view().
     m_frameViewOriginScrollPosition = { };
-    if (CheckedPtr view = frame.view()) {
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST m_frameViewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
-    }
+    if (CheckedPtr view = frame.view())
+        m_frameViewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
@@ -4998,14 +4997,14 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
             updateIsolatedTree(protect(get(*element)), AXProperty::SupportsARIAOwns);
 #endif
         auto updateStitchGroups = [&] (const AtomString& ariaOwnsValue) {
-            // Stitch groups are computed by the containing block-flow, so loop over the owned DOM id's
-            // to find the associated element's containing-block flow and mark it dirty.
+            // Stitch groups are computed by the block that establishes the inline formatting context, so loop over the owned DOM id's
+            // to find the block that establishes the associated element's inline formatting context and mark it dirty.
             SpaceSplitString ids(ariaOwnsValue, SpaceSplitString::ShouldFoldCase::No);
             for (auto& id : ids) {
                 if (RefPtr ownsTarget = protect(element->treeScope())->elementByIdResolvingReferenceTarget(id)) {
                     CheckedPtr renderer = ownsTarget->renderer();
-                    if (CheckedPtr containingBlock = renderer ? renderer->containingBlock() : nullptr)
-                        setDirtyStitchGroups(*containingBlock);
+                    if (CheckedPtr formattingContextRoot = renderer ? LayoutIntegration::LineLayout::blockContainer(*renderer) : nullptr)
+                        setDirtyStitchGroups(*formattingContextRoot);
                 }
             }
         };
@@ -7240,8 +7239,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect, c
                         [&](const Style::BasicShapePath& clipPath) {
                             auto borderRect = renderBox->borderBoxRect();
                             borderRect.inflate(shapePathInflationPx);
-                            // FIXME: Remove suppression once rdar://189998444 is fixed.
-                            SUPPRESS_MEMORY_UNSAFE_CAST auto referenceBox = FloatRect(WTF::move(borderRect));
+                            auto referenceBox = FloatRect(WTF::move(borderRect));
                             auto path = Style::path(clipPath.shape(), referenceBox, renderBox->style().usedZoomForLength());
                             mapPathToPaintRect(path);
                             m_geometryManager->cachePathForID(*axID, WTF::makeUnique<Path>(WTF::move(path)));

@@ -39,6 +39,7 @@
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
+#include "WebsiteDataStore.h"
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/SecurityOrigin.h>
 
@@ -48,8 +49,9 @@ namespace WebKit {
 
 using namespace WebCore;
 
-BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode)
+BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode, WebsiteDataStore& websiteDataStore)
     : m_crossOriginMode(crossOriginMode)
+    , m_websiteDataStore(websiteDataStore)
 {
 }
 
@@ -65,6 +67,8 @@ static bool isLoopbackOrLocalNetworkSite(const Site& site, bool localNetworkAcce
 void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataStore, API::WebsitePolicies* websitePolicies, const WebPreferences& preferences, const WebCore::Site& site, const WebCore::Site& mainFrameSite,
     WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, API::PageConfiguration& pageConfiguration, IsMainFrame isMainFrame, CompletionHandler<void(FrameProcess*)>&& completionHandler)
 {
+    ASSERT(&websiteDataStore == m_websiteDataStore.get());
+
     if (!preferences.siteIsolationEnabled() || !preferences.siteIsolationSharedProcessEnabled())
         return completionHandler(nullptr);
 
@@ -138,6 +142,7 @@ bool BrowsingContextGroup::canUseProcessForCrossOriginIsolation(const WebProcess
 Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, const Site& mainFrameSite, WebProcessProxy& process, const WebPreferences& preferences, LoadedWebArchive loadedWebArchive, BrowsingContextGroupUpdate browsingContextGroupUpdate)
 {
     ASSERT(process.isDummyProcessProxy() || canUseProcessForCrossOriginIsolation(process));
+    ASSERT(process.isDummyProcessProxy() || process.websiteDataStore() == m_websiteDataStore.get());
 
     if (preferences.siteIsolationEnabled()) {
         RefPtr sharedProcess = liveSharedProcess();
@@ -163,7 +168,7 @@ RefPtr<FrameProcess> BrowsingContextGroup::liveSharedProcess()
     RefPtr sharedProcess = m_sharedProcess.get();
     if (!sharedProcess)
         return nullptr;
-    if (sharedProcess->process().state() != WebProcessProxy::State::Terminated)
+    if (!sharedProcess->process().wasTerminated())
         return sharedProcess;
     clearSharedProcess();
     return nullptr;
@@ -203,7 +208,7 @@ RefPtr<FrameProcess> BrowsingContextGroup::processForSite(const Site& site, Proc
         process = m_processMap.get({ site, isDocumentIsolationPolicyProcess });
     if (!process)
         return nullptr;
-    if (process->process().state() == WebProcessProxy::State::Terminated)
+    if (process->process().wasTerminated())
         return nullptr;
     return process;
 }
@@ -226,12 +231,16 @@ void BrowsingContextGroup::addFrameProcess(FrameProcess& process)
 void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& process, Function<bool(WebPageProxy&)> functor)
 {
     Ref processProxy = process.process();
+    bool processWasTerminated = processProxy->wasTerminated();
     auto createRemotePageIfNeeded = [&](WebPageProxy& page, const Site& site) {
         if (!functor(page))
             return;
 
         // The process is hosting main frame so it does not need remote page.
         if (page.legacyMainFrameProcess().coreProcessIdentifier() == processProxy->coreProcessIdentifier())
+            return;
+
+        if (processWasTerminated)
             return;
 
         auto& set = m_remotePages.ensure(page, [] {
@@ -252,6 +261,8 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
     };
 
     if (process.isSharedProcess()) {
+        if (processWasTerminated)
+            return;
         // RemotePageProxy currently requires a site, but it has no meaning under shared process mode since
         // one process/RemotePageProxy can represent multiple sites, so we just pick the first site as a
         // placeholder value.
@@ -291,7 +302,7 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
 // this far (see canMoveSiteToEnhancedSecurityProcess in WebPageProxy.cpp).
 static bool canReplaceFrameProcessInProcessMap(const WebCore::Site& site, const FrameProcess& existing)
 {
-    if (existing.process().state() == WebProcessProxy::State::Terminated)
+    if (existing.process().wasTerminated())
         return true;
     if (site.isEmpty())
         return true;
@@ -350,6 +361,8 @@ void BrowsingContextGroup::addPage(WebPageProxy& page)
         // A page whose main frame is already hosted directly by this process doesn't need a
         // RemotePageProxy to reach itself.
         if (page->legacyMainFrameProcess().coreProcessIdentifier() == processProxy.coreProcessIdentifier())
+            return;
+        if (processProxy.wasTerminated())
             return;
         Ref newRemotePage = RemotePageProxy::create(page, processProxy, site);
 #if ASSERT_ENABLED

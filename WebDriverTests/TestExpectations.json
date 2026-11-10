@@ -265,8 +265,6 @@
             "test_set_viewport": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288333"]}}},
             "test_set_viewport_with_device_pixel_ratio": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288333"]}}},
             "test_print_page": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288331"]}}},
-            "test_navigate_back_in_browser_history" : { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/328189"]}}},
-            "test_navigate_forward_in_browser_history" : { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/328189"]}}},
             "test_locate_nodes_with_xpath_locator": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288329"]}}},
             "test_locate_nodes_with_inner_text": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288329"]}}},
             "test_locate_nodes_given_start_nodes": { "expected": { "all": { "status": ["FAIL"], "bug": ["webkit.org/b/296255", "webkit.org/b/288329"]}}}
@@ -640,27 +638,27 @@
             "test_should_fullscreen_the_current_window": {
                 "expected": {
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/188118"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"}
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"}
                 }
             },
             "test_should_minimize_the_current_window": {
                 "expected": {
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"}
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"}
                 }
             },
             "test_should_set_the_rect_of_the_current_window": {
                 "expected": {
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"}
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"}
                 }
             },
             "test_should_set_the_position_of_the_current_window": {
                 "expected": {
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"}
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"}
                 }
             },
             "test_should_set_the_size_of_the_current_window": {
                 "expected": {
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"}
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"}
                 }
             }
 
@@ -711,19 +709,19 @@
                 "expected": {"all": {"status": ["TIMEOUT"], "bug": "webkit.org/b/233391"}}
             },
             "test_dismissed_beforeunload": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_history_pushstate": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_no_top_browsing_context": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_no_browsing_history": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_null_response_value": {
-                "expected": {"wpe": {"status": ["PASS"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["PASS"], "bug": "webkit.org/b/330712"}}
             },
             "test_timeout_page_load_null": {
                 "expected": {"mac": {"status": ["FAIL"], "note": "WebKit doesn't accept null timeouts"}}
@@ -743,7 +741,7 @@
                 "expected": {"all": {"status": ["TIMEOUT"], "bug": "webkit.org/b/233391"}}
             },
             "test_dismissed_beforeunload": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_timeout_page_load_null": {
                 "expected": {"mac": {"status": ["FAIL"], "note": "WebKit doesn't accept null timeouts"}}
@@ -1007,7 +1005,7 @@
     "imported/w3c/webdriver/tests/classic/release_actions/release.py": {
         "subtests": {
             "test_no_browsing_context": {
-                "expected": {"mac": {"status": ["FAIL"], "note": "Simulated input fails on Mac"}, "wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"mac": {"status": ["FAIL"], "note": "Simulated input fails on Mac"}, "wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             }
         }
     },
@@ -1936,7 +1934,7 @@
     "imported/w3c/webdriver/tests/classic/execute_script/execute.py": {
         "subtests": {
             "test_no_top_browsing_context": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             }
         }
     },
@@ -2091,7 +2089,7 @@
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/184964"}}
             },
             "test_no_top_browsing_context": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_no_such_element_with_shadow_root": {
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/230612"}}
@@ -2107,7 +2105,7 @@
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/184964"}}
             },
             "test_no_top_browsing_context": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_no_such_element_with_shadow_root": {
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/230612"}}
@@ -2218,7 +2216,7 @@
                 "expected": {"all": {"status": ["TIMEOUT"], "bug": "webkit.org/b/233391"}}
             },
             "test_no_top_browsing_context": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_same_url_replaces_current_history_entry": {
                 "expected": {"mac": {"status": ["FAIL"], "note": "Fails on Mac, not investigated yet"}}
@@ -2282,22 +2280,22 @@
     "imported/w3c/webdriver/tests/classic/new_window/user_prompts.py": {
         "subtests": {
             "test_accept[capabilities0-alert-None]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_accept[capabilities0-confirm-True]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_accept[capabilities0-prompt-]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_dismiss[capabilities0-alert-None]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_dismiss[capabilities0-confirm-False]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             },
             "test_dismiss[capabilities0-prompt-None]": {
-                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/212950"}}
+                "expected": {"wpe": {"status": ["FAIL"], "bug": "webkit.org/b/330712"}}
             }
         }
     },
@@ -2372,35 +2370,35 @@
             "test_stress[0]": {
                 "expected": {
                     "mac": {"status": ["FAIL"], "note": "MiniBrowser doesn't change window state under automation yet"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"},
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"},
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/320856"}
                 }
             },
             "test_stress[1]": {
                 "expected": {
                     "mac": {"status": ["FAIL"], "note": "MiniBrowser doesn't change window state under automation yet"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"},
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"},
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/320856"}
                 }
             },
             "test_stress[2]": {
                 "expected": {
                     "mac": {"status": ["FAIL"], "note": "MiniBrowser doesn't change window state under automation yet"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"},
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"},
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/320856"}
                 }
             },
             "test_stress[3]": {
                 "expected": {
                     "mac": {"status": ["FAIL"], "note": "MiniBrowser doesn't change window state under automation yet"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"},
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"},
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/320856"}
                 }
             },
             "test_stress[4]": {
                 "expected": {
                     "mac": {"status": ["FAIL"], "note": "MiniBrowser doesn't change window state under automation yet"},
-                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/212950"},
+                    "wpe": {"status": ["SKIP"], "bug": "webkit.org/b/330712"},
                     "gtk": {"status": ["FAIL"], "bug": "webkit.org/b/320856"}
                 }
             }
@@ -3008,7 +3006,7 @@
         "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288104"}},
         "subtests": {
             "test_simple_prompts[alert-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_simple_prompts[alert-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3017,7 +3015,7 @@
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
             },
             "test_simple_prompts[confirm-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_simple_prompts[confirm-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3026,7 +3024,7 @@
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
             },
             "test_simple_prompts[prompt-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_simple_prompts[prompt-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3035,7 +3033,7 @@
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
             },
             "test_default_handler[alert-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_default_handler[alert-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3044,7 +3042,7 @@
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
             },
             "test_default_handler[confirm-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_default_handler[confirm-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3053,7 +3051,7 @@
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
             },
             "test_default_handler[prompt-accept]": {
-                "expected": { "all": { "status": ["PASS"]}}
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/291666", "note": "The session's prompt handler is not applied to WebDriver BiDi prompts, so the prompt stays open and the script.evaluate that opened it is still pending at teardown"}}
             },
             "test_default_handler[prompt-dismiss]": {
                 "expected": { "all": { "status": ["TIMEOUT"], "bug": "webkit.org/b/282981"}}
@@ -3582,22 +3580,14 @@
     },
     "imported/w3c/webdriver/tests/bidi/browsing_context/handle_user_prompt/handle_user_prompt.py": {
         "subtests": {
-            "test_two_top_level_contexts[tab]": {
-                "expected": { "all": { "status": ["PASS"]}}
+            "test_beforeunload[True]": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288344"}}
             },
-            "test_two_top_level_contexts[window]": {
-                "expected": { "all": { "status": ["PASS"]}}
-            }
-        },
-        "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
-    },
-    "imported/w3c/webdriver/tests/bidi/browsing_context/handle_user_prompt/invalid.py": {
-        "subtests": {
-            "test_params_context_invalid_value[]": {
-                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
+            "test_beforeunload[False]": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288344"}}
             },
-            "test_params_context_invalid_value[somestring]": {
-                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/288328"}}
+            "test_multiple_frames": {
+                "expected": { "all": { "status": ["FAIL"], "bug": "webkit.org/b/330714", "note": "Also needs browsingContext.navigate for child frames (WebKit/WebKit#77624)"}}
             }
         }
     },

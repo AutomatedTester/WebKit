@@ -8,12 +8,7 @@ http/tests/security/referrer-policy-header-no-referrer-when-downgrade.html [ Cra
 http/tests/security/referrer-policy-header-no-referrer.html [ Crash ]
 http/tests/security/referrer-policy-header-origin.html [ Crash ]
 http/tests/security/referrer-policy-header-strict-origin.html [ Crash ]
-
-# Debug ASSERT: about:blank loads in its initiator's process, but the UI process gives it its parent's or opener's origin.
-imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-iframe-navigated-by-ancestor.window.html?cross-site&5-last [ Skip ]
-imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-iframe-navigated-by-itself.window.html?cross-site&5-last [ Skip ]
-imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-popup-navigated-by-non-opener.window.html?cross-site&1-4 [ Skip ]
-imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-popup-navigated-by-non-opener.window.html?cross-site&5-last [ Skip ]
+webkit.org/b/330942 [ Debug ] imported/w3c/web-platform-tests/shadow-dom/declarative/declarative-parser-interaction.html [ Pass Crash ]
 
 #######################
 # Tests that time out #
@@ -27,12 +22,19 @@ fast/history/go-back-to-object-subframe.html [ Timeout ]
 fast/history/page-cache-element-state-focused.html [ Timeout ]
 fast/scrolling/overflow-scrollable-after-back.html [ Timeout ]
 fullscreen/exit-full-screen-video-crash.html [ Timeout ]
-http/tests/inspector/dom/cross-domain-inspected-node-access.html [ Timeout ]
 http/tests/local/blob/download-blob-from-iframe.html [ Timeout ]
 http/tests/media/media-stream/enumerate-devices-source-id.html [ Timeout ]
 http/tests/workers/service/resultingClientId.https.html [ Timeout ]
 http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Pass Timeout ]
 imported/w3c/web-platform-tests/css/compositing/mix-blend-mode/mix-blend-mode-video.html [ Pass Timeout ]
+webkit.org/b/329361 inspector/timeline/timeline-layout-events.html [ Timeout ]
+webkit.org/b/329361 inspector/timeline/timeline-layout-events-iframe.html [ Timeout ]
+webkit.org/b/320122 inspector/network/clear-resource-data-on-navigate.html [ Timeout ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-with-error.html [ Timeout ]
+
+# The opener still counts the popup's old child frames after the popup navigates within its own process.
+imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-popup-navigated-by-non-opener.window.html?cross-site&1-4 [ Skip ]
+imported/w3c/web-platform-tests/html/browsers/origin/inheritance/about-blank-popup-navigated-by-non-opener.window.html?cross-site&5-last [ Skip ]
 
 ########################
 # Tests that Text fail #
@@ -74,9 +76,42 @@ imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-setRemoteDescription-tr
 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-audio-jitterBufferTarget-stats.https.html [ Pass Failure ]
 imported/w3c/web-platform-tests/webrtc/RTCRtpReceiver-getSynchronizationSources.https.html [ Pass Failure ]
 inspector/runtime/executionContextCreated-onEnable.html [ Failure ]
-http/tests/inspector/dom/cross-domain-inspected-node-access.html [ Failure ]
+webkit.org/b/316732 http/tests/inspector/dom/cross-domain-inspected-node-access.html [ Failure ]
 webkit.org/b/327622 http/tests/inspector/network/intercept-request-with-response.html [ Failure ]
 webkit.org/b/330198 inspector/timeline/timeline-event-RenderingFrame.html [ Failure ]
+webkit.org/b/330867 http/tests/inspector/network/set-extra-http-headers.html [ Failure ]
+webkit.org/b/330879 fast/history/redirect-via-iframe.html [ Failure ]
+webkit.org/b/330879 fast/history/same-document-iframes-changing-fragment.html [ Failure ]
+webkit.org/b/330879 fast/history/same-document-iframes-changing-pushstate.html [ Failure ]
+webkit.org/b/330882 http/tests/inspector/network/fetch-network-data.html [ Failure ]
+webkit.org/b/330882 http/tests/inspector/network/har/har-page.html [ Failure ]
+webkit.org/b/330882 http/tests/inspector/network/har/har-page-aggressive-gc.html [ Failure ]
+webkit.org/b/330883 http/tests/inspector/worker/blob-script-with-cross-domain-imported-scripts.html [ Failure ]
+webkit.org/b/330956 [ Debug ] imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Pass Failure ]
+webkit.org/b/312828 http/tests/inspector/network/resource-mime-type.html [ Failure Timeout ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-fragment.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-main-resource-with-response.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-main-resource.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-properties.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-subresource-with-response-error-status-code.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-subresource-with-response.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/intercept-request-subresource.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/local-resource-override-basic.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/local-resource-override-main-resource.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/local-resource-override-mapped-to-directory.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/local-resource-override-mapped-to-file.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/local-resource-override-script-tag.html [ Failure ]
+webkit.org/b/327494 http/tests/inspector/network/resource-response-inspector-override.html [ Failure ]
+webkit.org/b/327494 inspector/network/interceptContinue.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/before-load.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/binary.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/client-close.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/send-and-receive.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/send-and-recieve-debugger.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/server-close.html [ Failure ]
+webkit.org/b/327495 http/tests/websocket/tests/hybi/inspector/set-extra-http-headers.html [ Failure ]
+webkit.org/b/327495 webkit.org/b/327496 http/tests/websocket/tests/hybi/inspector/resolveWebSocket.html [ Failure ]
+webkit.org/b/330351 inspector/dom/focus.html [ Failure ]
 
 #########################
 # Tests that Image fail #

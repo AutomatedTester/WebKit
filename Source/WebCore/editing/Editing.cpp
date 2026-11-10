@@ -1188,7 +1188,12 @@ RenderBlock* rendererForCaretPainting(const Node* node)
         if (caretRendersInsideNode(*node))
             return blockFlow;
     }
-    return renderer->containingBlock();
+    // Otherwise by the nearest block in its containing block chain.
+    for (SUPPRESS_UNCHECKED_LOCAL RenderBoxModelObject* containingBlock = renderer->containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
+        if (SUPPRESS_UNCHECKED_LOCAL auto* block = dynamicDowncast<RenderBlock>(*containingBlock))
+            return block;
+    }
+    return nullptr;
 }
 
 LayoutRect localCaretRectInRendererForCaretPainting(const VisiblePosition& caretPosition, RenderBlock*& caretPainter)
@@ -1229,8 +1234,7 @@ IntRect absoluteBoundsForLocalCaretRect(RenderBlock* rendererForCaretPainting, c
 
     LayoutRect localRect(rect);
     rendererForCaretPainting->blockStartRelativeToPhysical(localRect);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
+    return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
 }
 
 HashSet<Ref<HTMLImageElement>> visibleImageElementsInRangeWithNonLoadedImages(const SimpleRange& range)

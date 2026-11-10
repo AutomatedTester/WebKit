@@ -2918,8 +2918,7 @@ ScrollPosition LocalFrameView::unscaledMaximumScrollPosition() const
         unscaledDocumentRect.expand(0, headerHeight() + footerHeight());
         // visibleSize() is zoomed, and everything else here is unscaled, so it would push the maximum too far down.
         auto viewportSize = visibleContentScaleFactor() == 1 ? visibleSize() : sizeForUnobscuredContent();
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST ScrollPosition maximumPosition = ScrollPosition(unscaledDocumentRect.maxXMaxYCorner() - viewportSize).expandedTo({ 0, 0 });
+        ScrollPosition maximumPosition = ScrollPosition(unscaledDocumentRect.maxXMaxYCorner() - viewportSize).expandedTo({ 0, 0 });
         if (m_frame->isMainFrame() && m_scrollPinningBehavior == ScrollPinningBehavior::PinToTop)
             maximumPosition.setY(unscaledMinimumScrollPosition().y());
 
@@ -6461,9 +6460,9 @@ float LocalFrameView::documentToAbsoluteScaleFactor(std::optional<float> usedZoo
     // avoid a performance regression.
     if (usedZoom.has_value()) [[unlikely]]
         return usedZoom.value() * m_frame->frameScaleFactor();
-    return m_frame->pageZoomFactor() * m_frame->frameScaleFactor();
+    return m_frame->effectiveZoomFactor() * m_frame->frameScaleFactor();
 #else
-    return usedZoom.value_or(m_frame->pageZoomFactor()) * m_frame->frameScaleFactor();
+    return usedZoom.value_or(m_frame->effectiveZoomFactor()) * m_frame->frameScaleFactor();
 #endif
 }
 
@@ -6504,7 +6503,7 @@ FloatSize LocalFrameView::documentToClientOffset() const
         clientOrigin = -toFloatSize(visibleContentRect().location());
 
     // Layout and visual viewports are affected by page zoom, so we need to factor that out.
-    return clientOrigin.scaled(1 / (m_frame->pageZoomFactor() * m_frame->frameScaleFactor()));
+    return clientOrigin.scaled(1 / (m_frame->effectiveZoomFactor() * m_frame->frameScaleFactor()));
 }
 
 FloatRect LocalFrameView::documentToClientRect(FloatRect rect) const
@@ -6540,14 +6539,14 @@ FloatPoint LocalFrameView::clientToDocumentPoint(FloatPoint point) const
 FloatRect LocalFrameView::clientToLayoutViewportRect(FloatRect rect) const
 {
     ASSERT(m_frame->settings().visualViewportEnabled());
-    rect.scale(m_frame->pageZoomFactor());
+    rect.scale(m_frame->effectiveZoomFactor());
     return rect;
 }
 
 FloatPoint LocalFrameView::clientToLayoutViewportPoint(FloatPoint p) const
 {
     ASSERT(m_frame->settings().visualViewportEnabled());
-    return p.scaled(m_frame->pageZoomFactor());
+    return p.scaled(m_frame->effectiveZoomFactor());
 }
 
 void LocalFrameView::setTracksRepaints(bool trackRepaints)
@@ -6987,13 +6986,13 @@ RenderView* LocalFrameView::renderView() const
 int LocalFrameView::mapFromLayoutToCSSUnits(LayoutUnit value) const
 {
     Ref frame = m_frame;
-    return value / (frame->pageZoomFactor() * frame->frameScaleFactor());
+    return value / (frame->effectiveZoomFactor() * frame->frameScaleFactor());
 }
 
 LayoutUnit LocalFrameView::mapFromCSSToLayoutUnits(int value) const
 {
     Ref frame = m_frame;
-    return LayoutUnit(value * frame->pageZoomFactor() * frame->frameScaleFactor());
+    return LayoutUnit(value * frame->effectiveZoomFactor() * frame->frameScaleFactor());
 }
 
 void LocalFrameView::didAddWidgetToRenderTree(Widget& widget)

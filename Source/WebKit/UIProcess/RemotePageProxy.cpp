@@ -179,9 +179,7 @@ void RemotePageProxy::disconnect(ShouldSendCloseMessage shouldSendCloseMessage)
         m_isReceivingXRMessages = false;
     }
 #endif
-#if ASSERT_ENABLED
     m_disconnected = true;
-#endif
 }
 
 void RemotePageProxy::injectPageIntoNewProcess()
@@ -256,10 +254,11 @@ void RemotePageProxy::processDidTerminate(WebProcessProxy& process, ProcessTermi
     if (!page)
         return;
     page->stopAllURLSchemeTasks(&process);
+    page->resetFocusedFrameIfInProcess(process);
     if (RefPtr drawingArea = page->drawingArea())
         drawingArea->remotePageProcessDidTerminate(process.coreProcessIdentifier());
     if (RefPtr mainFrame = page->mainFrame())
-        mainFrame->remoteProcessDidTerminate(process, WebFrameProxy::ClearFrameTreeSyncData::Yes);
+        mainFrame->remoteProcessDidTerminate(process);
     page->dispatchProcessDidTerminate(process, reason);
 }
 

@@ -535,6 +535,9 @@ media/video-element-fullscreen-not-in-dom-accelerated-iphone.html [ Pass ]
 media/media-source
 http/tests/media/media-source [ Skip ]
 imported/w3c/web-platform-tests/media-source/ [ Skip ]
+# ManagedMediaSource is supported on iOS.
+imported/w3c/web-platform-tests/media-source/managed [ Pass ]
+imported/w3c/web-platform-tests/media-source/dedicated-worker/managed [ Pass ]
 fast/history/page-cache-media-source-closed-2.html [ Skip ]
 fast/history/page-cache-media-source-closed.html [ Skip ]
 fast/history/page-cache-media-source-opened.html [ Skip ]
@@ -7972,6 +7975,8 @@ webkit.org/b/311235 fast/scrolling/scroll-anchoring/heuristic-renabled-after-del
 imported/w3c/web-platform-tests/css/css-scroll-anchoring/fullscreen-crash.html [ Skip ]
 
 webkit.org/b/307861 fast/scrolling/scroll-anchoring/scroll-anchoring-with-page-scale.html [ Failure ]
+
+fast/scrolling/scroll-anchoring/scroll-anchoring-during-running-smooth-scroll.html [ Failure ]
 
 # webkit.org/b/277908 [ iOS ] imported/w3c/web-platform-tests/mediacapture-insertable-streams/VideoTrackGenerator-with-window-tracks.https.html is a flaky text failure
 imported/w3c/web-platform-tests/mediacapture-insertable-streams/VideoTrackGenerator-with-window-tracks.https.html [ Pass Failure ]

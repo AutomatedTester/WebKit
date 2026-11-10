@@ -187,7 +187,7 @@ WebFrameProxy::WebFrameProxy(WebPageProxy& page, FrameProcess& process, FrameIde
     if (previousURL)
         frameLoadState().setURL(WTF::move(*previousURL));
 
-    updateDocumentSecurityOrigin(parent ? parent : opener);
+    updateDocumentSecurityOrigin();
 
     // The initial about:blank document is as secure as its creator and in its agent cluster.
     if (RefPtr creator = parent ? parent : opener; creator && creator->m_documentSecurityPolicy)
@@ -400,12 +400,14 @@ void WebFrameProxy::didCommitLoad(const String& contentType, bool containsPlugin
     m_title = String();
     m_MIMEType = contentType;
     m_containsPluginDocument = containsPluginDocument;
+#if ENABLE(PDF_PLUGIN)
+    m_hasPDFPlugin = false;
+#endif
     m_documentSecurityPolicy = WTF::move(documentSecurityPolicy);
     m_cspOriginsThatUpgradeInsecureNavigations = WTF::move(cspOriginsThatUpgradeInsecureNavigations);
     m_lastActivationTimestamp = -MonotonicTime::infinity();
 
-    RefPtr creator = parentFrame() ? parentFrame() : opener();
-    updateDocumentSecurityOrigin(creator.get());
+    updateDocumentSecurityOrigin();
 
     // Record the origin reported by the WCP, to validate against later, only if we can
     // prove it's a load where a privileged process does not specify a precise origin.
@@ -681,7 +683,10 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
 
     // FIXME: Main resource (of main or subframe) request redirects should go straight from the network to UI process so we don't need to make the processes for each domain in a redirect chain. <rdar://116202119>
     Site mainFrameSite(page->mainFrame()->url());
-    auto mainFrameDomain = WebCore::RegistrableDomain { protect(page->mainFrame())->securityOrigin()->data() };
+    // Built from the main frame's security origin rather than its URL so that it matches the Site the
+    // WebContent process derives from Document::topOrigin() for a shared worker request, including when
+    // the main frame is sandboxed into an opaque origin.
+    auto mainFrameFirstPartySite = WebCore::Site { protect(page->mainFrame())->securityOrigin()->data() };
 
     // If we have an effectiveSite, it means we are loading about:blank which doesn't have any resources
     // to load can commit it's provisional frame immediately
@@ -693,7 +698,7 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
 
     page->inspectorController().didCreateProvisionalFrame(provisionalFrame);
 
-    auto continuation = [page = Ref { *page }, process = Ref { process }, mainFrameDomain, weakProvisionalFrame = WeakPtr { m_provisionalFrame }, pageID = page->webPageIDInProcess(process), completionHandler = WTF::move(completionHandler)] () mutable {
+    auto continuation = [page = Ref { *page }, process = Ref { process }, mainFrameFirstPartySite, weakProvisionalFrame = WeakPtr { m_provisionalFrame }, pageID = page->webPageIDInProcess(process), completionHandler = WTF::move(completionHandler)] () mutable {
         RefPtr provisionalFrame = weakProvisionalFrame.get();
         bool cancelled = !provisionalFrame || !protect(provisionalFrame->frame())->isConnected();
         if (cancelled) {
@@ -701,7 +706,7 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
             return;
         }
 
-        page->addAllowedFirstPartyForCookies(process, mainFrameDomain, LoadedWebArchive::No, [weakProvisionalFrame = WTF::move(weakProvisionalFrame), pageID, completionHandler = WTF::move(completionHandler)] mutable {
+        page->addAllowedFirstPartyForCookies(process, mainFrameFirstPartySite, LoadedWebArchive::No, [weakProvisionalFrame = WTF::move(weakProvisionalFrame), pageID, completionHandler = WTF::move(completionHandler)] mutable {
             RefPtr provisionalFrame = weakProvisionalFrame.get();
             bool cancelled = !provisionalFrame || !protect(provisionalFrame->frame())->isConnected();
             if (cancelled) {
@@ -879,22 +884,21 @@ bool WebFrameProxy::isFocused() const
     return webPage && webPage->focusedFrame() == this;
 }
 
-void WebFrameProxy::remoteProcessDidTerminate(WebProcessProxy& process, ClearFrameTreeSyncData clearFrameTreeSyncData)
+void WebFrameProxy::remoteProcessDidTerminate(WebProcessProxy& process)
 {
-    // Only clear the FrameTreeSyncData on all child processes once, when handling the main frame.
-    // No point in clearing it multiple times in a tight loop.
-    // Site isolation may have been disabled after this remote page was created.
-    RefPtr webPage = page();
-    if (clearFrameTreeSyncData == ClearFrameTreeSyncData::Yes && webPage && protect(webPage->preferences())->siteIsolationEnabled())
-        broadcastFrameTreeSyncData(FrameTreeSyncData::create());
-
     if (RefPtr provisionalFrame = m_provisionalFrame; provisionalFrame && provisionalFrame->process().coreProcessIdentifier() == process.coreProcessIdentifier())
         cancelProvisionalFrame(process);
 
-    for (Ref child : m_childFrames)
-        child->remoteProcessDidTerminate(process, ClearFrameTreeSyncData::No);
+    for (Ref child : copyToVector(m_childFrames))
+        child->remoteProcessDidTerminate(process);
     if (process.coreProcessIdentifier() != this->process().coreProcessIdentifier())
         return;
+
+    if (RefPtr page = m_page) {
+        for (Ref child : copyToVector(m_childFrames))
+            page->frameWasRemoved(child->frameID(), child.ptr(), nullptr);
+    }
+
     if (m_frameLoadState.state() == FrameLoadState::State::Finished)
         return;
 
@@ -1363,7 +1367,7 @@ ProvisionalFrameCreationParameters WebFrameProxy::provisionalFrameCreationParame
     };
 }
 
-void WebFrameProxy::updateDocumentSecurityOrigin(WebFrameProxy* creator)
+void WebFrameProxy::updateDocumentSecurityOrigin()
 {
     if (m_effectiveSandboxFlags.contains(SandboxFlag::Origin)) {
         m_documentSecurityOrigin = WebCore::SecurityOrigin::opaqueOrigin();
@@ -1371,8 +1375,12 @@ void WebFrameProxy::updateDocumentSecurityOrigin(WebFrameProxy* creator)
     }
 
     if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(url())) {
-        if (RefPtr creatorFrame = creator)
-            m_documentSecurityOrigin = creatorFrame->securityOrigin().ptr();
+        // Match Document::initSecurityContext(), which can only inherit from a parent or opener in its own process.
+        RefPtr owner = parentFrame();
+        if (!owner || &owner->process() != &process())
+            owner = opener();
+        if (owner && &owner->process() == &process())
+            m_documentSecurityOrigin = owner->securityOrigin().ptr();
         else
             m_documentSecurityOrigin = WebCore::SecurityOrigin::opaqueOrigin();
         return;

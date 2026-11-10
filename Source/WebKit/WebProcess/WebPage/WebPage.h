@@ -216,6 +216,9 @@ class HandleUserInputEventResult;
 class HistoryItem;
 class IgnoreSelectionChangeForScope;
 class ImageBuffer;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+class ImmersiveElement;
+#endif
 class IntPoint;
 class IntRect;
 class KeyboardEvent;
@@ -1874,7 +1877,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void allowImmersiveElement(CompletionHandler<void(bool)>&&);
-    void presentImmersiveElement(const WebCore::LayerHostingContextIdentifier, CompletionHandler<void(bool)>&&);
+    void presentImmersiveElement(WebCore::ImmersiveElement&, CompletionHandler<void(bool)>&&);
     void dismissImmersiveElement(CompletionHandler<void()>&&);
     void exitImmersive(CompletionHandler<void()>&&);
     bool allowsImmersiveEnvironments() const;
@@ -2349,6 +2352,10 @@ private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
 
     void constructFrameTree(WebFrame& parent, const FrameTreeCreationParameters&);
+#if ENABLE(PDF_PLUGIN)
+    bool frameHasPDFPlugin(WebCore::LocalFrame&) const;
+    void updateFrameHasPDFPlugin(WebCore::FrameIdentifier);
+#endif
 
     void stopLoadingInRootFrames(WebCore::AbortOngoingNavigation);
 
@@ -2861,6 +2868,7 @@ private:
     void addResourceTimingFromSubframe(WebCore::FrameIdentifier parentFrameID, WebCore::ResourceTiming&&);
 
     void frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier>&&);
+    void focusedFrameProcessDidTerminate(WebCore::FrameIdentifier);
 
 #if ENABLE(WRITING_TOOLS)
     void willBeginWritingToolsSession(const std::optional<WebCore::WritingTools::Session>&, Vector<WebCore::JSHandleIdentifier>&& preservedNodeIdentifiers, CompletionHandler<void(const Vector<WebCore::WritingTools::Context>&)>&&);

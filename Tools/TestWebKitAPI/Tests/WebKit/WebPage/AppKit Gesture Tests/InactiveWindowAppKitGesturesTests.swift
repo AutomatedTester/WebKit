@@ -25,12 +25,12 @@
 
 import Foundation
 import struct Foundation.URL
-@_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
+@_spi(Testing) import WebKit
 import SwiftUI
 import struct Swift.String
 private import struct TestWebKitAPILibrary.DOMRect
 import Testing
-private import TestWebKitAPILibrary
+@_spi(WebKitAdditions_Testing) private import TestWebKitAPILibrary
 private import Recap
 private import AppKit_Private.NSMenu_Private
 
@@ -83,7 +83,7 @@ extension AppKitGesturesTests.InactiveWindow {
         let targetBounds = try await screenBounds(ofElementWithID: "target")
 
         await recap.play { composer in
-            composer._wk_click(at: targetBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -108,7 +108,7 @@ extension AppKitGesturesTests.InactiveWindow {
         let targetBounds = try await screenBounds(ofElementWithID: "target")
 
         await recap.play { composer in
-            composer._wk_click(at: targetBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()

@@ -1684,6 +1684,8 @@ imported/w3c/web-platform-tests/html/canvas/offscreen/the-offscreen-canvas/size.
 # MSE in worker is only supported on platform with the GPU process active and where MSE is enabled by default
 # (this excludes iPhone (no MediaSource) and Linux/Windows (no GPUP))
 imported/w3c/web-platform-tests/media-source/dedicated-worker [ Skip ]
+# ManagedMediaSource is enabled on the Cocoa, GTK and WPE ports, including iPhone.
+imported/w3c/web-platform-tests/media-source/dedicated-worker/managed [ Pass ]
 
 # Tests a setting behind the ENABLE_FULLSCREEN_API flag, which is WK2-only
 media/video-supports-fullscreen.html [ Skip ]
@@ -1917,7 +1919,6 @@ imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-available-size-0
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-line-count-intrinsic-004.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-flexbox/balance/balance-percentage-size-001.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-flexbox/gap-collapse.html [ ImageOnlyFailure ]
 
 # grid layout tests
@@ -4311,12 +4312,6 @@ imported/w3c/web-platform-tests/css/css-overflow/overflow-clipped-transparent-bo
 imported/w3c/web-platform-tests/css/css-overflow/single-axis-overflow-clip-rtl.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/single-axis-overflow-scroll-to-clip.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/text-overflow-ellipsis-editable-div-with-caret.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-016.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-018.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-019.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-020.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-021.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-022.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-024.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-025.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-overflow/text-overflow-string-026.tentative.html [ ImageOnlyFailure ]
@@ -6659,7 +6654,6 @@ webkit.org/b/206753 imported/w3c/web-platform-tests/css/css-backgrounds/border-i
 webkit.org/b/206753 imported/w3c/web-platform-tests/css/css-backgrounds/border-image-repeat-stretch-round-001.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-border-area-corner-shape.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-border-area-text.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-text-background-table-cell.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-backgrounds/background-clip/clip-text-blend-mode.html [ ImageOnlyFailure ]
@@ -7642,11 +7636,6 @@ webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-box-008-pr
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-box-009-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-box-010-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-box-011-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-context-inherits-from-root-custom-property-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-context-inherits-from-root-em-rem-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-context-inherits-from-root-font-size-001-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-context-inherits-from-root-font-size-002-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-context-inherits-from-root-rem-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-left-right-001-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-left-right-002-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-001-print.html [ ImageOnlyFailure ]
@@ -7654,7 +7643,6 @@ webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-002
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-003-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-004-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-005-print.html [ ImageOnlyFailure ]
-webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-006-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-007-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-auto-and-non-zero-print.html [ ImageOnlyFailure ]
 webkit.org/b/328881 imported/w3c/web-platform-tests/css/css-page/page-margin-auto-negative-print.tentative.html [ ImageOnlyFailure ]
@@ -7859,7 +7847,6 @@ webkit.org/b/282024 fast/text/text-box-edge-with-margin-padding-border-simple.ht
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-position-try-012.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/transform-006.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-inline-004.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-inline-007.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-multicol-015.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-multicol-016.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-anchor-position/anchor-position-multicol-nested-001.html [ ImageOnlyFailure ]

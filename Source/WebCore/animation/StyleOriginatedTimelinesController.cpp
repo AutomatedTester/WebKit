@@ -103,7 +103,8 @@ ScrollTimeline* StyleOriginatedTimelinesController::determineTreeOrder(const Vec
     while (element) {
         Vector<Ref<ScrollTimeline>> matchedTimelines;
         for (auto& timeline : ancestorTimelines) {
-            if (element == originatingElementIncludingTimelineScope(timeline))
+            // A timeline hoisted by an ancestor's timeline-scope is still referenceable from its own declaring element's subtree.
+            if (element == originatingElementIncludingTimelineScope(timeline) || element == originatingElement(timeline))
                 matchedTimelines.append(timeline);
         }
         if (!matchedTimelines.isEmpty()) {
@@ -146,10 +147,13 @@ ScrollTimeline* StyleOriginatedTimelinesController::determineTreeOrder(const Vec
         ASSERT(lhsStyleable);
         ASSERT(rhsStyleable);
 
+        // https://drafts.csswg.org/scroll-animations-1/#timeline-scoping
+        // An element may only define one timeline per name: In case of a name conflict, names
+        // declared later in the naming property (scroll-timeline-name, view-timeline-name) take
+        // precedence, and scroll progress timelines take precedence over view progress timelines.
         if (lhsStyleable == rhsStyleable) {
             ASSERT(is<ViewTimeline>(lhs) != is<ViewTimeline>(rhs));
-            if (!is<ViewTimeline>(lhs))
-                return false;
+            return !is<ViewTimeline>(lhs);
         }
 
         return compareStyleablePositionsInDocumentTreeOrder(*lhsStyleable, *rhsStyleable);
@@ -422,9 +426,12 @@ void StyleOriginatedTimelinesController::attachAnimation(CSSAnimation& animation
 
     auto it = m_nameToTimelineMap.find(timelineName->name);
     auto hasNamedTimeline = it != m_nameToTimelineMap.end() && it->value.containsIf([&](auto& timeline) {
-        auto* timelineScope = timeline->timelineScopeDeclaredElement();
-        if (timelineScope && timelineScope != relevantTimelineScopeElement)
-            return false;
+        RefPtr timelineScope = timeline->timelineScopeDeclaredElement();
+        if (timelineScope && timelineScope != relevantTimelineScopeElement) {
+            RefPtr timelineElement = originatingElement(timeline);
+            if (!timelineElement || !target->element.isComposedTreeInclusiveDescendantOf(*timelineElement))
+                return false;
+        }
         return !timeline->isInactiveStyleOriginatedTimeline();
     });
 
