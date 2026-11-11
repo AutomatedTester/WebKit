@@ -36,6 +36,7 @@
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "LocalFrameViewInlines.h"
+#include "NativeImage.h"
 #include "PathOperation.h"
 #include "RenderElementInlines.h"
 #include "RenderLayer.h"
@@ -53,7 +54,7 @@
 
 namespace WebCore {
 
-static inline bool LEGACY_NODELETE isRenderingMaskImage(const RenderObject& object)
+NODELETE static inline bool isRenderingMaskImage(const RenderObject& object)
 {
     return object.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGClipOrMask);
 }
@@ -202,7 +203,7 @@ void SVGRenderingContext::prepareToRenderSVGContent(RenderElement& renderer, Pai
     m_renderingFlags |= RenderingPrepared;
 }
 
-static AffineTransform& LEGACY_NODELETE currentContentTransformation()
+NODELETE static AffineTransform& currentContentTransformation()
 {
     static NeverDestroyed<AffineTransform> s_currentContentTransformation;
     return s_currentContentTransformation;
@@ -218,7 +219,7 @@ AffineTransform SVGRenderingContext::calculateTransformationToOutermostCoordinat
 {
     AffineTransform absoluteTransform = currentContentTransformation();
 
-    float deviceScaleFactor = protect(renderer.document())->deviceScaleFactor();
+    float deviceScaleFactor = renderer.document().deviceScaleFactor();
     // Walk up the render tree, accumulating SVG transforms.
     const RenderObject* ancestor = &renderer;
     while (ancestor) {
@@ -261,9 +262,9 @@ void SVGRenderingContext::renderSubtreeToContext(GraphicsContext& context, Rende
     contentTransformation = savedContentTransformation;
 }
 
-void SVGRenderingContext::clipToImageBuffer(GraphicsContext& context, const FloatRect& targetRect, const FloatSize& scale, RefPtr<ImageBuffer>& imageBuffer, bool safeToClear)
+void SVGRenderingContext::clipToNativeImage(GraphicsContext& context, const FloatRect& targetRect, const FloatSize& scale, RefPtr<NativeImage>& image, bool safeToClear)
 {
-    if (!imageBuffer)
+    if (!image)
         return;
 
     AffineTransform absoluteTransform;
@@ -274,13 +275,13 @@ void SVGRenderingContext::clipToImageBuffer(GraphicsContext& context, const Floa
     // The mask image has been created in the absolute coordinate space, as the image should not be scaled.
     // So the actual masking process has to be done in the absolute coordinate space as well.
     context.concatCTM(valueOrDefault(absoluteTransform.inverse()));
-    context.clipToImageBuffer(*imageBuffer, absoluteTargetRect);
+    context.clipToNativeImage(*image, absoluteTargetRect);
     context.concatCTM(absoluteTransform);
 
     // When nesting resources, with objectBoundingBox as content unit types, there's no use in caching the
-    // resulting image buffer as the parent resource already caches the result.
+    // resulting image as the parent resource already caches the result.
     if (safeToClear && !currentContentTransformation().isIdentity())
-        imageBuffer = nullptr;
+        image = nullptr;
 }
 
 bool SVGRenderingContext::bufferForeground(RefPtr<ImageBuffer>& imageBuffer)

@@ -25,6 +25,7 @@
 
 #import "config.h"
 
+#import "Helpers/PlatformUtilities.h"
 #import "Helpers/cocoa/DragAndDropSimulator.h"
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
@@ -69,6 +70,13 @@
 @end
 
 #if PLATFORM(MAC)
+
+static bool waitForChosenFile(TestWKWebView *webView)
+{
+    return TestWebKitAPI::Util::waitFor([&] {
+        return [[webView stringByEvaluatingJavaScript:@"document.querySelector('input').files.length"] isEqualToString:@"1"];
+    });
+}
 
 TEST(WebKit, UploadDirectory)
 {
@@ -115,7 +123,7 @@ TEST(WebKit, UploadDirectory)
         [webView sendClickAtPoint:chooseFileButtonLocation];
         while (![delegate sentDirectory])
             TestWebKitAPI::Util::spinRunLoop();
-        Util::runFor(50_ms);
+        EXPECT_TRUE(waitForChosenFile(webView.get()));
         [webView evaluateJavaScript:@"document.getElementById('form').submit()" completionHandler:nil];
         [webView _test_waitForDidFinishNavigation];
     }
@@ -168,7 +176,7 @@ TEST(WebKit, AllowUploadFromTempDirectory)
         [webView sendClickAtPoint:chooseFileButtonLocation];
         while (![delegate sentDirectory])
             TestWebKitAPI::Util::spinRunLoop();
-        Util::runFor(50_ms);
+        EXPECT_TRUE(waitForChosenFile(webView.get()));
         [webView evaluateJavaScript:@"document.getElementById('form').submit()" completionHandler:nil];
         [webView _test_waitForDidFinishNavigation];
     }
@@ -183,7 +191,7 @@ TEST(WebKit, AllowTempUploadDirectory)
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSError *error = nil;
-    NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"/UploadDirectory"] isDirectory:YES];
+    NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"/AllowTempUploadDirectory"] isDirectory:YES];
     [fileManager removeItemAtPath:directory.path error:nil];
     EXPECT_TRUE([fileManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&error]);
     EXPECT_FALSE(error);

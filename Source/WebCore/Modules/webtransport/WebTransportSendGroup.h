@@ -40,12 +40,12 @@ using WebTransportSendGroupIdentifier = ObjectIdentifier<WebTransportSendGroupId
 
 class WebTransportSendGroup : public RefCounted<WebTransportSendGroup> {
 public:
-    static Ref<WebTransportSendGroup> create(WebTransport&);
+    NODELETE static Ref<WebTransportSendGroup> create(WebTransport&);
     ~WebTransportSendGroup();
 
     void getStats(ScriptExecutionContext&, Ref<DeferredPromise>&&);
 
-    RefPtr<WebTransport> transport();
+    NODELETE RefPtr<WebTransport> transport();
 
     WebTransportSendGroupIdentifier identifier() const { return m_identifier; }
 

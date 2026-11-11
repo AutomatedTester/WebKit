@@ -65,6 +65,7 @@
 #import <WebCore/BackForwardController.h>
 #import <WebCore/BoundaryPointInlines.h>
 #import <WebCore/ColorMac.h>
+#import <WebCore/ContainerNodeInlines.h>
 #import <WebCore/DataDetection.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DocumentPage.h>
@@ -104,6 +105,7 @@
 #import <WebCore/RemoteFrameView.h>
 #import <WebCore/RemoteUserInputEventData.h>
 #import <WebCore/RenderElement.h>
+#import <WebCore/RenderImage.h>
 #import <WebCore/RenderObject.h>
 #import <WebCore/RenderView.h>
 #import <WebCore/ScrollView.h>
@@ -127,7 +129,7 @@
 #import "MediaPlaybackTargetSerialized.h"
 #endif
 
-#import "PDFKitSoftLink.h"
+#import <pal/cocoa/PDFKitSoftLink.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -296,7 +298,7 @@ static String commandNameForSelectorName(const String& selectorName)
     return selectorName.left(selectorNameLength - 1);
 }
 
-static LocalFrame* LEGACY_NODELETE frameForEvent(KeyboardEvent* event)
+NODELETE static LocalFrame* frameForEvent(KeyboardEvent* event)
 {
     ASSERT(event->target());
     ASSERT(downcast<Node>(event->target())->document().frame());
@@ -764,31 +766,39 @@ void WebPage::handleSelectionServiceClick(WebCore::FrameIdentifier frameID, Fram
     send(Messages::WebPageProxy::ShowContextMenuFromFrame(webFrame->info(), ContextMenuContextData(point, WTF::move(selectionString), phoneNumbers, selection.selection().isContentEditable()), UserData()));
 }
 
-void WebPage::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, Image& image, HTMLImageElement& element)
+bool WebPage::handleImageServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLImageElement& element)
 {
     RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
     if (!webFrame)
-        return;
+        return false;
 
-    auto elementAbsoluteBox = protect(element.renderBox())->absoluteContentQuad().enclosingBoundingBox();
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(element.renderer());
+    if (!renderImage)
+        return false;
+    RefPtr cachedImage = renderImage->cachedImage();
+    if (!cachedImage || cachedImage->errorOccurred())
+        return false;
+
+    auto elementAbsoluteBox = renderImage->absoluteContentQuad().enclosingBoundingBox();
     auto elementBoxInMainFrameView = protect(protect(webFrame->coreFrame())->virtualView())->contentsToMainFrameView(elementAbsoluteBox);
 
     send(Messages::WebPageProxy::ShowContextMenuFromFrame(webFrame->info(), ContextMenuContextData {
         point,
-        image,
+        renderImage->createShareableBitmapForImageServices(),
         element.isContentEditable(),
         elementBoxInMainFrameView,
         HTMLAttachmentElement::getAttachmentIdentifier(element),
         contextForElement(element),
-        image.mimeType()
+        cachedImage->mimeType(),
     }, { }));
+    return true;
 }
 
-void WebPage::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
+bool WebPage::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntPoint& point, HTMLAttachmentElement& element)
 {
     RefPtr webFrame = WebProcess::singleton().webFrame(frameID);
     if (!webFrame)
-        return;
+        return false;
 
     auto elementAbsoluteBox = protect(element.renderBox())->absoluteContentQuad().enclosingBoundingBox();
     auto elementBoxInMainFrameView = protect(protect(webFrame->coreFrame())->virtualView())->contentsToMainFrameView(elementAbsoluteBox);
@@ -800,6 +810,7 @@ void WebPage::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntP
         element.uniqueIdentifier(),
         "application/pdf"_s
     }, { }));
+    return true;
 }
 
 #endif
@@ -964,28 +975,36 @@ std::optional<WebCore::SimpleRange> WebPage::lookupTextAtLocation(FrameIdentifie
     }));
 }
 
-void WebPage::immediateActionDidUpdate()
+static RefPtr<LocalFrame> immediateActionFrame(WebPage& page, FrameIdentifier frameID)
 {
-    if (auto* localMainFrame = corePage()->localMainFrame())
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionUpdated);
+    RefPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame || frame->page() != &page)
+        return nullptr;
+    return frame->coreLocalFrame();
 }
 
-void WebPage::immediateActionDidCancel()
+void WebPage::immediateActionDidUpdate(FrameIdentifier frameID)
 {
-    auto* localMainFrame = corePage()->localMainFrame();
-    if (!localMainFrame)
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionUpdated);
+}
+
+void WebPage::immediateActionDidCancel(FrameIdentifier frameID)
+{
+    RefPtr frame = immediateActionFrame(*this, frameID);
+    if (!frame)
         return;
-    ImmediateActionStage lastStage = localMainFrame->eventHandler().immediateActionStage();
+    ImmediateActionStage lastStage = frame->eventHandler().immediateActionStage();
     if (lastStage == ImmediateActionStage::ActionUpdated)
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledAfterUpdate);
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledAfterUpdate);
     else
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledWithoutUpdate);
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCancelledWithoutUpdate);
 }
 
-void WebPage::immediateActionDidComplete()
+void WebPage::immediateActionDidComplete(FrameIdentifier frameID)
 {
-    if (auto* localMainFrame = corePage()->localMainFrame())
-        localMainFrame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCompleted);
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().setImmediateActionStage(ImmediateActionStage::ActionCompleted);
 }
 
 void WebPage::dataDetectorsDidPresentUI(PageOverlay::PageOverlayID overlayID)
@@ -1010,13 +1029,11 @@ void WebPage::dataDetectorsDidChangeUI(PageOverlay::PageOverlayID overlayID)
     }
 }
 
-void WebPage::dataDetectorsDidHideUI(PageOverlay::PageOverlayID overlayID)
+void WebPage::dataDetectorsDidHideUI(FrameIdentifier frameID, PageOverlay::PageOverlayID overlayID)
 {
-    RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(corePage()->mainFrame());
-    if (!localMainFrame)
-        return;
     // Dispatching a fake mouse event will allow clients to display any UI that is normally displayed on hover.
-    localMainFrame->eventHandler().dispatchFakeMouseMoveEventSoon();
+    if (RefPtr frame = immediateActionFrame(*this, frameID))
+        frame->eventHandler().dispatchFakeMouseMoveEventSoon();
 
     for (const auto& overlay : corePage()->pageOverlayController().pageOverlays()) {
         if (overlay->pageOverlayID() == overlayID) {
@@ -1027,7 +1044,7 @@ void WebPage::dataDetectorsDidHideUI(PageOverlay::PageOverlayID overlayID)
     }
 }
 
-#if ENABLE(WIRELESS_PLAYBACK_TARGET) && !PLATFORM(IOS_FAMILY)
+#if ENABLE(WIRELESS_PLAYBACK_TARGET)
 void WebPage::playbackTargetSelected(PlaybackTargetClientContextIdentifier contextId, MediaPlaybackTargetContextSerialized&& targetContext) const
 {
     protect(corePage())->setPlaybackTarget(contextId, MediaPlaybackTargetSerialized::create(WTF::move(targetContext)));
@@ -1060,9 +1077,11 @@ void WebPage::didBeginMagnificationGesture()
 void WebPage::didEndMagnificationGesture()
 {
 #if ENABLE(MAC_GESTURE_EVENTS)
-    // Under site isolation the main frame can be remote in this process, so reset every local root.
-    for (WeakRef frame : protect(corePage())->rootFrames())
-        frame->eventHandler().didEndMagnificationGesture();
+    // Gestures over a subframe are tracked by that subframe's EventHandler, so reset every local frame,
+    // not just the main frame or local roots.
+    protect(corePage())->forEachLocalFrame([](auto& frame) {
+        frame.eventHandler().didEndMagnificationGesture();
+    });
 #endif
 #if ENABLE(PDF_PLUGIN)
     if (RefPtr pluginView = mainFramePlugIn())

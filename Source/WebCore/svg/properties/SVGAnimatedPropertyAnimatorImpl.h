@@ -105,7 +105,7 @@ private:
 
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        EnumType animated;
+        EnumType animated { };
         m_function.animate(targetElement, progress, repeatCount, animated);
         m_animated->template setAnimVal<EnumType>(animated);
     }
@@ -242,7 +242,6 @@ private:
 
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        protect(m_animated->animVal())->pathByteStreamWillChange();
         m_function.animate(targetElement, progress, repeatCount, m_animated->animVal().pathByteStream());
     }
 };
@@ -285,7 +284,7 @@ private:
 
     void animate(SVGElement& targetElement, float progress, unsigned repeatCount) final
     {
-        SVGMarkerOrientType animated;
+        SVGMarkerOrientType animated { };
         m_function.animate(targetElement, progress, repeatCount, animated);
         m_animated->setAnimVal(animated);
     }

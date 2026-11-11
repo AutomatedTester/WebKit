@@ -31,9 +31,9 @@
 
 #include "FrameInlines.h"
 #include "InlineIteratorBoxInlines.h"
+#include "InlineIteratorLineBoxInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderInline.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
@@ -90,18 +90,17 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     if (!box)
         return false;
 
-    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*box) ? : InlineIterator::firstRootInlineBoxFor(*this);
-    if (!firstInlineBox)
-        return false;
-
     CheckedPtr backdropBox = this->backdropBox();
     if (!backdropBox)
         return false;
 
+    auto firstLineBox = InlineIterator::firstLineBoxFor(*backdropBox);
+    if (!firstLineBox)
+        return false;
+
     // 1. Horizontal: Let step be the height of the first line box in boxes.
     //    Vertical: Let step be the width of the first line box in boxes.
-    auto firstInlineBoxSize = firstInlineBox->visualRectIgnoringBlockDirection().size();
-    step = m_cue->vertical() == VTTCue::DirectionSetting::Horizontal ? firstInlineBoxSize.height() : firstInlineBoxSize.width();
+    step = LayoutUnit { firstLineBox->logicalHeight() };
 
     // Note: the previous rules in initializeLayoutParameters() only account for
     // the height of the line boxes contained within the cue, and not the cue's height
@@ -110,11 +109,11 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     // the cue always being partially outside its containing block, rather than at
     // its initial position. Correct the initial position by subtracting from
     // position the difference between the the logicalHeight of the cue and its
-    // first line box.
-    auto inlineBoxHeights = LayoutUnit { };
-    for (auto inlineBox = firstInlineBox; inlineBox; inlineBox = inlineBox->nextInlineBoxLineRightward())
-        inlineBoxHeights += inlineBox->logicalHeight();
-    auto logicalHeightDelta = backdropBox->logicalHeight() - inlineBoxHeights;
+    // line boxes.
+    float lineBoxHeights = 0;
+    for (auto& lineBox : InlineIterator::lineBoxesFor(*backdropBox))
+        lineBoxHeights += lineBox.logicalHeight();
+    auto logicalHeightDelta = backdropBox->logicalHeight() - LayoutUnit { lineBoxHeights };
     if (logicalHeightDelta > 0)
         step += logicalHeightDelta;
 
@@ -224,7 +223,7 @@ CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObject() const
 CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObjectForRect(const FloatRect& rect) const
 {
     for (CheckedPtr sibling = previousSibling(); sibling; sibling = sibling->previousSibling()) {
-        CheckedPtr previousCue = downcast<RenderVTTCue>(sibling);
+        CheckedPtr previousCue = dynamicDowncast<RenderVTTCue>(sibling);
         if (!previousCue || !previousCue->firstChild())
             continue;
 
@@ -238,7 +237,7 @@ CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObjectForRect(const FloatRect&
 
 bool RenderVTTCue::shouldSwitchDirection(const InlineIterator::InlineBox& firstInlineBox, LayoutUnit step) const
 {
-    auto firstInlineBoxSize = firstInlineBox.visualRectIgnoringBlockDirection().size();
+    auto firstInlineBoxSize = firstInlineBox.blockStartRelativePhysicalRect().size();
     LayoutUnit top = y();
     LayoutUnit left = x();
     LayoutUnit bottom { top + firstInlineBoxSize.height() };
@@ -448,7 +447,7 @@ void RenderVTTCue::repositionGenericCue()
     auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*box);
     if (downcast<TextTrackCueGeneric>(*m_cue).useDefaultPosition() && firstInlineBox) {
         LayoutUnit parentWidth = containingBlock()->logicalWidth();
-        LayoutUnit width { firstInlineBox->visualRectIgnoringBlockDirection().width() };
+        LayoutUnit width { firstInlineBox->blockStartRelativePhysicalRect().width() };
         LayoutUnit right = (parentWidth / 2) - (width / 2);
         setX(right);
     }
@@ -537,16 +536,18 @@ RenderBlockFlow* RenderVTTCue::backdropBox() const
     return dynamicDowncast<RenderBlockFlow>(firstChild);
 }
 
-RenderInline* RenderVTTCue::cueBox() const
+RenderBoxModelObject* RenderVTTCue::cueBox() const
 {
     auto* backdropBox = this->backdropBox();
     if (!backdropBox)
         return nullptr;
 
     auto* firstChild = backdropBox->firstChild();
-    ASSERT(firstChild);
-    ASSERT(firstChild->isInlineBox());
-    return dynamicDowncast<RenderInline>(firstChild);
+    if (!firstChild || !firstChild->isInlineBox()) {
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+    return downcast<RenderBoxModelObject>(firstChild);
 }
 
 } // namespace WebCore

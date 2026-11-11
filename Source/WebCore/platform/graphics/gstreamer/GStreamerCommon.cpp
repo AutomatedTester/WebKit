@@ -132,6 +132,7 @@ static bool s_isGstDebugDotFilesSupportEnabled;
 #if ENABLE(VIDEO)
 bool getVideoSizeAndFormatFromCaps(const GstCaps* caps, WebCore::IntSize& size, GstVideoFormat& format, int& pixelAspectRatioNumerator, int& pixelAspectRatioDenominator, int& stride, double& frameRate, PlatformVideoColorSpace& colorSpace)
 {
+    frameRate = 0;
     if (!doCapsHaveType(caps, GST_VIDEO_CAPS_TYPE_PREFIX)) {
         GST_WARNING("Failed to get the video size and format, these are not a video caps");
         return false;
@@ -576,7 +577,7 @@ void registerWebKitGStreamerElements()
         // We don't want autoaudiosink to autoplug our sink.
         gst_element_register(0, "webkitaudiosink", GST_RANK_NONE, WEBKIT_TYPE_AUDIO_SINK);
 
-        // Prevent decodebin(3) from auto-plugging hlsdemux if it was disabled. UAs should be able
+        // Prevent decodebin2 from auto-plugging hlsdemux if it was disabled. UAs should be able
         // to fallback to MSE when this happens.
         auto hlsSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_HLS_SUPPORT"));
         if (!hlsSupport || hlsSupport == "0"_s) {
@@ -584,11 +585,19 @@ void registerWebKitGStreamerElements()
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
         }
 
-        // Prevent decodebin(3) from auto-plugging dashdemux if it was disabled. UAs should be able
+        // Prevent decodebin2 from auto-plugging dashdemux if it was disabled. UAs should be able
         // to fallback to MSE when this happens.
         auto dashSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_DASH_SUPPORT"));
         if (!dashSupport || dashSupport == "0"_s) {
             if (GRefPtr factory = adoptGRef(gst_element_factory_find("dashdemux")))
+                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
+        }
+
+        // Prevent decodebin2 from auto-plugging mssdemux if it was disabled. UAs should be able
+        // to fallback to MSE when this happens.
+        auto mssSupport = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ENABLE_MSS_SUPPORT"));
+        if (!mssSupport || mssSupport == "0"_s) {
+            if (GRefPtr factory = adoptGRef(gst_element_factory_find("mssdemux")))
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
         }
 
@@ -1067,8 +1076,7 @@ template<typename T> Vector<std::span<T>> GstMappedAudioBuffer::samples(size_t o
 
     if (GST_AUDIO_INFO_LAYOUT(&m_buffer.info) == GST_AUDIO_LAYOUT_INTERLEAVED) {
         auto planeSizeInBytes = (m_buffer.n_samples - offset) * GST_AUDIO_INFO_BPS(&m_buffer.info);
-        Vector<std::span<T>> result;
-        result.reserveInitialCapacity(planeCount);
+        Vector<std::span<T>> result(ReserveCapacityTag { }, planeCount);
         for (uint32_t i = 0; i < planeCount; i++) {
             auto plane = MallocSpan<T>::malloc(planeSizeInBytes);
             result.append(plane.leakSpan());
@@ -1263,6 +1271,67 @@ GstElement* /* (transfer floating) */ createPlatformAudioSink(const String& role
 
     return audioSink;
 }
+
+#if ENABLE(MEDIA_STREAM)
+std::pair<String, GRefPtr<GstDevice>> gstResolveAudioOutputDevice(const String& deviceId)
+{
+    auto resolvedId = deviceId;
+    if (resolvedId == "default"_s) {
+        const auto& devices = GStreamerAudioCaptureDeviceManager::singleton().speakerDevices();
+        if (!devices.isEmpty()) [[likely]] {
+            const auto idx = devices.findIf([](const CaptureDevice& device) {
+                return device.isDefault();
+            });
+            resolvedId = idx == notFound ? devices.first().persistentId() : devices[idx].persistentId();
+        }
+    }
+    GRefPtr<GstDevice> device;
+    if (auto captureDevice = GStreamerAudioCaptureDeviceManager::singleton().gstreamerDeviceWithUID(resolvedId))
+        device = captureDevice->device();
+    return { resolvedId, device };
+}
+
+bool gstApplyAudioSinkDevice(GstElement* audioSink, const GRefPtr<GstDevice>& device, const String& deviceId)
+{
+    bool changed = false;
+
+    // Handle mixer-based audio sink: switch the mixer pipeline.
+    if (WEBKIT_IS_AUDIO_SINK(audioSink))
+        return webkitAudioSinkSetDevice(audioSink, deviceId, device);
+
+    if (GST_IS_BIN(audioSink)) {
+        for (auto* element : GstIteratorAdaptor<GstElement>(gst_bin_iterate_sinks(GST_BIN_CAST(audioSink)))) {
+            if (gstApplyAudioSinkDevice(element, device, deviceId))
+                changed = true;
+        }
+        return changed;
+    }
+
+    if (gstElementFactoryEquals(audioSink, "fakeaudiosink"_s) || gstElementFactoryEquals(audioSink, "fakesink"_s)) {
+#if ENABLE(DEVELOPER_MODE)
+        // Testing bots have fakeaudiosink upranked to run layout tests, so in that case consider the change done.
+        GST_DEBUG_OBJECT(audioSink, "Found fake sink, considering the change done for testing.");
+        return true;
+#else
+        GST_WARNING_OBJECT(audioSink, "Skipped unexpected fake sink, your audio configuration may have issues.");
+        return changed;
+#endif
+    }
+
+    GRefPtr<GstDevice> resolvedDevice = device;
+    if (!resolvedDevice) {
+        resolvedDevice = gstResolveAudioOutputDevice("default"_s).second;
+        if (!resolvedDevice) {
+            GST_WARNING_OBJECT(audioSink, "No default audio output device found, your audio configuration may have issues.");
+            return changed;
+        }
+    }
+
+    changed = !!gst_device_reconfigure_element(resolvedDevice.get(), audioSink);
+    GST_DEBUG_OBJECT(audioSink, "%s element '%s' with device %s<%p>.", changed ? "Reconfigured" : "Skipped", GST_ELEMENT_NAME(audioSink), GST_OBJECT_NAME(resolvedDevice.get()), resolvedDevice.get());
+    return changed;
+}
+#endif
 
 bool webkitGstSetElementStateSynchronously(GstElement* pipeline, GstState targetState, NOESCAPE const Function<bool(GstMessage*)>& messageHandler)
 {
@@ -1944,6 +2013,27 @@ bool gstElementMatchesFactoryAndHasProperty(GstElement* element, ASCIILiteral fa
         return false;
 
     return gstObjectHasProperty(element, propertyName);
+}
+
+GRefPtr<GstElement> gstElementFindInnermostSink(GstElement* element)
+{
+    GRefPtr<GstElement> sink = element;
+    while (GST_IS_BIN(sink.get())) {
+        GUniquePtr<GstIterator> iterator(gst_bin_iterate_sinks(GST_BIN_CAST(sink.get())));
+        GValue value = G_VALUE_INIT;
+        auto result = gst_iterator_next(iterator.get(), &value);
+        while (result == GST_ITERATOR_RESYNC) {
+            gst_iterator_resync(iterator.get());
+            result = gst_iterator_next(iterator.get(), &value);
+        }
+        if (result != GST_ITERATOR_OK) {
+            g_value_unset(&value);
+            return sink;
+        }
+        sink = GST_ELEMENT_CAST(g_value_get_object(&value));
+        g_value_unset(&value);
+    }
+    return sink;
 }
 
 GRefPtr<GstBuffer> wrapSpanData(const std::span<const uint8_t>& span)

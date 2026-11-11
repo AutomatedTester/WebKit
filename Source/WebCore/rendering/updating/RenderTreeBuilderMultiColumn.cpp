@@ -27,7 +27,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
@@ -58,7 +57,7 @@ static RenderMultiColumnSet* findSetRendering(const RenderMultiColumnFlow& fragm
     return nullptr;
 }
 
-static RenderObject* spannerPlacehoderCandidate(const RenderObject& renderer, const RenderMultiColumnFlow& stayWithin)
+NODELETE static RenderObject* spannerPlacehoderCandidate(const RenderObject& renderer, const RenderMultiColumnFlow& stayWithin)
 {
     // Spanner candidate is a next sibling/ancestor's next child within the flow thread and
     // it is in the same inflow/out-of-flow layout context.
@@ -113,7 +112,7 @@ static bool isValidColumnSpanner(const RenderMultiColumnFlow& fragmentedFlow, co
         return false;
 
     // This looks like a spanner, but if we're inside something unbreakable, it's not to be treated as one.
-    for (auto* ancestor = descendantBox->containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
+    for (RenderBoxModelObject* ancestor = descendantBox->containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
         if (is<RenderView>(*ancestor))
             return false;
         if (ancestor->isLegend())
@@ -138,7 +137,8 @@ static bool isValidColumnSpanner(const RenderMultiColumnFlow& fragmentedFlow, co
             }
         }
         ASSERT(ancestor->style().columnSpan() != ColumnSpan::All || !isValidColumnSpanner(fragmentedFlow, *ancestor));
-        if (ancestor->isUnsplittableForPagination())
+        // Inline boxes split across columns.
+        if (CheckedPtr box = dynamicDowncast<RenderBox>(*ancestor); box && box->isUnsplittableForPagination())
             return false;
     }
     ASSERT_NOT_REACHED();

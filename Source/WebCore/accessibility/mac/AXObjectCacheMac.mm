@@ -37,12 +37,16 @@
 #import "AXTreeStoreInlines.h"
 #import "AXUtilities.h"
 #import "AccessibilityObject.h"
+#import "Chrome.h"
+#import "ChromeClient.h"
 #import "CocoaAccessibilityConstants.h"
 #import "DeprecatedGlobalSettings.h"
+#import "DocumentPage.h"
 #import "DocumentView.h"
 #import "FrameTree.h"
 #import "LocalFrameInlines.h"
 #import "LocalFrameView.h"
+#import "Page.h"
 #import "RenderObject.h"
 #import "RenderView.h"
 #import "WebAccessibilityObjectWrapperMac.h"
@@ -51,6 +55,7 @@
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/Scope.h>
 #import <wtf/StdLibExtras.h>
+#import <wtf/cocoa/SpanCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
@@ -437,17 +442,26 @@ void AXObjectCache::postPlatformPossibleFormValidationErrorNotification(Accessib
     RetainPtr unannouncedText = createNSArray(formData.unannouncedText, [] (const String& text) {
         return text.createNSString();
     });
-    NSDictionary *userInfo = @{
+    RetainPtr userInfo = adoptNS([[NSMutableDictionary alloc] initWithDictionary:@{
         NSAccessibilityFormValidationUnannouncedTextKey: unannouncedText.get(),
         NSAccessibilityFormValidationErrorFieldCountKey: @(formData.errorFieldCount),
         NSAccessibilityFormValidationTargetIsSubmitterKey: @(formData.targetIsSubmitter),
-    };
+    }]);
+
+    // Send the fields themselves, since an assistive technology searching the form misses fields associated by form="id"
+    // from outside it, and can't search a form that is hidden from accessibility at all.
+    if (RefPtr container = formData.container) {
+        RetainPtr fields = createNSArray(formFieldObjects(*container), [](const Ref<AccessibilityObject>& field) -> id {
+            return field->wrapper();
+        });
+        [userInfo setObject:fields.get() forKey:NSAccessibilityFormValidationFieldsKey];
+    }
 
     RetainPtr wrapper = object.wrapper();
-    NSAccessibilityPostNotificationWithUserInfo(wrapper, NSAccessibilityPossibleFormValidationErrorNotification, userInfo);
+    NSAccessibilityPostNotificationWithUserInfo(wrapper, NSAccessibilityPossibleFormValidationErrorNotification, userInfo.get());
 
     if (gShouldRepostNotificationsForTests) [[unlikely]]
-        [wrapper accessibilityPostedNotification:NSAccessibilityPossibleFormValidationErrorNotification userInfo:userInfo];
+        [wrapper accessibilityPostedNotification:NSAccessibilityPossibleFormValidationErrorNotification userInfo:userInfo.get()];
 }
 
 void AXObjectCache::onDocumentRenderTreeCreation(const Document& document)
@@ -511,22 +525,22 @@ AXTextStateChangeIntent AXObjectCache::inferDirectionFromIntent(AccessibilityObj
     auto intent = originalIntent;
     if (m_lastSelection.isCaret() && selection.isCaret()) {
         // Cursor movement
-        if (selection.visibleStart() == m_lastSelection.visibleStart().next(CannotCrossEditingBoundary)) {
+        if (selection.visibleStart() == m_lastSelection.visibleStart().next(EditingBoundaryCrossingRule::CannotCross)) {
             intent.type = AXTextStateChangeType::SelectionMove;
             intent.selection.direction = AXTextSelectionDirection::Next;
             intent.selection.granularity = AXTextSelectionGranularity::Character;
-        } else if (selection.visibleStart() == m_lastSelection.visibleStart().previous(CannotCrossEditingBoundary)) {
+        } else if (selection.visibleStart() == m_lastSelection.visibleStart().previous(EditingBoundaryCrossingRule::CannotCross)) {
             intent.type = AXTextStateChangeType::SelectionMove;
             intent.selection.direction = AXTextSelectionDirection::Previous;
             intent.selection.granularity = AXTextSelectionGranularity::Character;
         }
     } else if (selection.visibleBase() == m_lastSelection.visibleBase()) {
         // Selection
-        if (selection.visibleExtent() == m_lastSelection.visibleExtent().next(CannotCrossEditingBoundary)) {
+        if (selection.visibleExtent() == m_lastSelection.visibleExtent().next(EditingBoundaryCrossingRule::CannotCross)) {
             intent.type = AXTextStateChangeType::SelectionExtend;
             intent.selection.direction = AXTextSelectionDirection::Next;
             intent.selection.granularity = AXTextSelectionGranularity::Character;
-        } else if (selection.visibleExtent() == m_lastSelection.visibleExtent().previous(CannotCrossEditingBoundary)) {
+        } else if (selection.visibleExtent() == m_lastSelection.visibleExtent().previous(EditingBoundaryCrossingRule::CannotCross)) {
             intent.type = AXTextStateChangeType::SelectionExtend;
             intent.selection.direction = AXTextSelectionDirection::Previous;
             intent.selection.granularity = AXTextSelectionGranularity::Character;
@@ -539,28 +553,12 @@ AXTextStateChangeIntent AXObjectCache::inferDirectionFromIntent(AccessibilityObj
     return intent;
 }
 
-void AXObjectCache::postTextSelectionChangePlatformNotification(AccessibilityObject* object, const AXTextStateChangeIntent& originalIntent, const VisibleSelection& selection)
+// Builds the userInfo for AXSelectedTextChanged. A cross-site frame's selection changes are also posted by the
+// main frame's process, which uses this to build exactly the same userInfo from what the frame's process sent.
+static RetainPtr<NSMutableDictionary> selectedTextChangeUserInfo(const AXTextStateChangeIntent& intent, bool isSynchronizing, AXTextMarkerRangeRef textMarkerRange, id textChangeElement)
 {
-    RefPtr axObject = object;
-    if (!axObject)
-        axObject = rootWebArea();
-
-    if (!axObject)
-        return;
-
-    processQueuedIsolatedNodeUpdates();
-
-    // If the selection landed on a stitched-away text run, report the change on the stitch-group
-    // representative (the element actually exposed in the tree) rather than the removed member,
-    // so the SelectedTextChanged notification that VoiceOver uses to move focus during caret
-    // navigation targets an element present in its parent's children. Mirrors the
-    // AXUIElementForTextMarker redirect.
-    axObject = downcast<AccessibilityObject>(axObject->stitchRepresentativeOrSelf());
-
-    auto intent = inferDirectionFromIntent(*axObject, originalIntent, selection);
-
     auto userInfo = adoptNS([[NSMutableDictionary alloc] initWithCapacity:5]);
-    if (m_isSynchronizingSelection)
+    if (isSynchronizing)
         [userInfo setObject:@YES forKey:NSAccessibilityTextStateSyncKey];
     if (intent.type != AXTextStateChangeType::Unknown) {
         [userInfo setObject:protect(platformChangeTypeForWebCoreChangeType(intent.type)) forKey:NSAccessibilityTextStateChangeTypeKey];
@@ -589,15 +587,44 @@ void AXObjectCache::postTextSelectionChangePlatformNotification(AccessibilityObj
             break;
         }
     }
-    if (!selection.isNone()) {
-        if (RetainPtr textMarkerRange = textMarkerRangeFromVisiblePositions(this, selection.visibleStart(), selection.visibleEnd()))
-            [userInfo setObject:(id)textMarkerRange.get() forKey:NSAccessibilitySelectedTextMarkerRangeAttribute];
-    }
+    if (textMarkerRange)
+        [userInfo setObject:(__bridge id)textMarkerRange forKey:NSAccessibilitySelectedTextMarkerRangeAttribute];
+    if (textChangeElement)
+        [userInfo setObject:textChangeElement forKey:NSAccessibilityTextChangeElement];
+    return userInfo;
+}
 
-    if (RetainPtr wrapper = axObject->wrapper()) {
-        [userInfo setObject:wrapper forKey:NSAccessibilityTextChangeElement];
+static void relaySelectedTextChangeToMainFrameIfNeeded(Document*, const AXTextStateChangeIntent&, bool isSynchronizing, AXTextMarkerRangeRef, id textChangeElement);
+
+void AXObjectCache::postTextSelectionChangePlatformNotification(AccessibilityObject* object, const AXTextStateChangeIntent& originalIntent, const VisibleSelection& selection)
+{
+    RefPtr axObject = object;
+    if (!axObject)
+        axObject = rootWebArea();
+
+    if (!axObject)
+        return;
+
+    processQueuedIsolatedNodeUpdates();
+
+    // If the selection landed on a stitched-away text run, report the change on the stitch-group
+    // representative (the element actually exposed in the tree) rather than the removed member,
+    // so the SelectedTextChanged notification that VoiceOver uses to move focus during caret
+    // navigation targets an element present in its parent's children. Mirrors the
+    // AXUIElementForTextMarker redirect.
+    axObject = downcast<AccessibilityObject>(axObject->stitchRepresentativeOrSelf());
+
+    auto intent = inferDirectionFromIntent(*axObject, originalIntent, selection);
+
+    RetainPtr<AXTextMarkerRangeRef> textMarkerRange;
+    if (!selection.isNone())
+        textMarkerRange = textMarkerRangeFromVisiblePositions(this, selection.visibleStart(), selection.visibleEnd());
+
+    RetainPtr wrapper = axObject->wrapper();
+    if (wrapper)
         createIsolatedObjectIfNeeded(*axObject);
-    }
+
+    auto userInfo = selectedTextChangeUserInfo(intent, m_isSynchronizingSelection, textMarkerRange.get(), wrapper.get());
 
     if (RefPtr root = rootWebArea()) {
         AXPostNotificationWithUserInfo(protect(root->wrapper()), NSAccessibilitySelectedTextChangedNotification, userInfo.get());
@@ -624,6 +651,9 @@ void AXObjectCache::postTextSelectionChangePlatformNotification(AccessibilityObj
             AXPostNotificationWithUserInfo(protect(ancestorRoot->wrapper()), NSAccessibilitySelectedTextChangedNotification, userInfo.get());
     }
 #endif // ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+
+    // With site isolation, the main frame's web area may be in another process.
+    relaySelectedTextChangeToMainFrameIfNeeded(protect(this->document()).get(), intent, m_isSynchronizingSelection, textMarkerRange.get(), wrapper.get());
 }
 
 static void addTextMarkerForVisiblePosition(NSMutableDictionary *change, AXObjectCache& cache, const VisiblePosition& position)
@@ -798,7 +828,7 @@ void AXObjectCache::platformPerformDeferredCacheUpdate()
     m_deferredUnsortedObjects.clear();
 }
 
-static bool LEGACY_NODELETE isTestAXClientType(AXClientType client)
+NODELETE static bool isTestAXClientType(AXClientType client)
 {
     return client == kAXClientTypeWebKitTesting || client == kAXClientTypeXCTest;
 }
@@ -1064,6 +1094,114 @@ static TextMarkerData getBytesFromAXTextMarker(AXTextMarkerRef textMarker)
 
     memcpySpan(asMutableByteSpan(textMarkerData), AXTextMarkerGetByteSpan(textMarker));
     return textMarkerData;
+}
+
+static std::optional<AXRemoteFrameTextMarker> remoteFrameTextMarker(AXTextMarkerRef textMarker)
+{
+    if (!textMarker || AXTextMarkerGetLength(textMarker) != sizeof(TextMarkerData))
+        return std::nullopt;
+
+    auto data = getBytesFromAXTextMarker(textMarker);
+    return AXRemoteFrameTextMarker {
+        data.treeID,
+        data.objectID,
+        data.offset,
+        static_cast<uint8_t>(data.anchorType),
+        data.characterStart,
+        data.characterOffset,
+        data.isRedacted,
+        data.affinity,
+        data.origin,
+    };
+}
+
+static RetainPtr<AXTextMarkerRef> textMarkerFromRemoteFrame(const AXRemoteFrameTextMarker& marker)
+{
+    if (marker.anchorType > Position::PositionIsAfterChildren)
+        return nullptr;
+
+    // TextMarkerData zeroes its padding, so this is byte-for-byte the marker the frame's process created.
+    TextMarkerData data;
+    data.treeID = marker.treeID;
+    data.objectID = marker.objectID;
+    data.offset = marker.offset;
+    data.anchorType = static_cast<Position::AnchorType>(marker.anchorType);
+    data.characterStart = marker.characterStart;
+    data.characterOffset = marker.characterOffset;
+    data.isRedacted = marker.isRedacted;
+    data.affinity = marker.affinity;
+    data.origin = marker.origin;
+    return adoptCF(AXTextMarkerCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8*>(&data), sizeof(data)));
+}
+
+static void relaySelectedTextChangeToMainFrameIfNeeded(Document* document, const AXTextStateChangeIntent& intent, bool isSynchronizing, AXTextMarkerRangeRef textMarkerRange, id textChangeElement)
+{
+    RefPtr frame = document ? document->frame() : nullptr;
+    RefPtr page = document ? document->page() : nullptr;
+    if (!frame || !page)
+        return;
+
+    // A root frame other than the main frame is a cross-site frame hosted in this process. If the
+    // root frame is the main frame, its web area is local, and was already posted on.
+    Ref rootFrame = frame->rootFrame();
+    if (rootFrame->isMainFrame())
+        return;
+
+    AXRemoteFrameSelectedTextChange change;
+    change.type = intent.type;
+    switch (intent.type) {
+    case AXTextStateChangeType::SelectionMove:
+    case AXTextStateChangeType::SelectionExtend:
+    case AXTextStateChangeType::SelectionBoundary:
+        change.direction = intent.selection.direction;
+        change.granularity = intent.selection.granularity;
+        change.focusChange = intent.selection.focusChange;
+        break;
+    case AXTextStateChangeType::Unknown:
+    case AXTextStateChangeType::Edit:
+        break;
+    }
+    change.isSynchronizing = isSynchronizing;
+    if (textMarkerRange) {
+        change.selectionStart = remoteFrameTextMarker(AXTextMarkerRangeStart(textMarkerRange).get());
+        change.selectionEnd = remoteFrameTextMarker(AXTextMarkerRangeEnd(textMarkerRange).get());
+    }
+    if (RetainPtr token = textChangeElement ? [NSAccessibilityRemoteUIElement remoteTokenForLocalUIElement:textChangeElement] : nil)
+        change.textChangeElement = AccessibilityRemoteToken { makeVector(token.get()) };
+
+    page->chrome().client().relayAccessibilitySelectedTextChangeToMainFrame(rootFrame->frameID(), WTF::move(change));
+}
+
+void AXObjectCache::postSelectedTextChangeFromRemoteFrame(const AXRemoteFrameSelectedTextChange& change)
+{
+    RefPtr root = rootWebArea();
+    if (!root)
+        return;
+
+    AXTextStateChangeIntent intent { change.type };
+    switch (change.type) {
+    case AXTextStateChangeType::SelectionMove:
+    case AXTextStateChangeType::SelectionExtend:
+    case AXTextStateChangeType::SelectionBoundary:
+        intent.selection = { change.direction, change.granularity, change.focusChange };
+        break;
+    case AXTextStateChangeType::Unknown:
+    case AXTextStateChangeType::Edit:
+        break;
+    }
+
+    // The markers and element belong to the frame's process. This process never interprets them; a client
+    // passes the markers back to the element, which resolves them.
+    RetainPtr<AXTextMarkerRangeRef> textMarkerRange;
+    if (change.selectionStart && change.selectionEnd)
+        textMarkerRange = textMarkerRangeFromMarkers(textMarkerFromRemoteFrame(*change.selectionStart).get(), textMarkerFromRemoteFrame(*change.selectionEnd).get());
+
+    RetainPtr<NSAccessibilityRemoteUIElement> textChangeElement;
+    if (change.textChangeElement)
+        textChangeElement = adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:WTF::toNSData(change.textChangeElement->bytes.span()).get()]);
+
+    auto userInfo = selectedTextChangeUserInfo(intent, change.isSynchronizing, textMarkerRange.get(), textChangeElement.get());
+    AXPostNotificationWithUserInfo(protect(root->wrapper()), NSAccessibilitySelectedTextChangedNotification, userInfo.get());
 }
 
 AccessibilityObject* accessibilityObjectForTextMarker(AXObjectCache* cache, AXTextMarkerRef textMarker)

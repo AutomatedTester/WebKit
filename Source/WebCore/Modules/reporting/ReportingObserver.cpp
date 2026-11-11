@@ -26,17 +26,25 @@
 #include "config.h"
 #include "ReportingObserver.h"
 
+#include "COEPInheritenceViolationReportBody.h"
+#include "CORPViolationReportBody.h"
+#include "CSPViolationReportBody.h"
 #include "ContextDestructionObserverInlines.h"
+#include "DeprecationReportBody.h"
 #include "DocumentInlines.h"
 #include "EventLoop.h"
 #include "InspectorInstrumentation.h"
+#include "IntegrityPolicyViolationReportBody.h"
 #include "LocalDOMWindow.h"
 #include "Report.h"
 #include "ReportBody.h"
+#include "ReportDictionary.h"
 #include "ReportingObserverCallback.h"
 #include "ReportingScope.h"
 #include "ScriptExecutionContext.h"
+#include "TestReportBody.h"
 #include "WorkerGlobalScope.h"
+#include <wtf/SortedArrayMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -46,14 +54,15 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(ReportingObserver);
 
 static bool isVisibleToReportingObservers(const String& type)
 {
-    static NeverDestroyed<Vector<String>> visibleTypes(std::initializer_list<String> {
-        String { "csp-violation"_s },
-        String { "coep"_s },
-        String { "deprecation"_s },
-        String { "test"_s },
-        String { "integrity-violation"_s },
-    });
-    return visibleTypes->contains(type);
+    static constexpr SortedArraySet visibleTypes { WTF::toArray<ComparableASCIILiteral>({
+        "coep"_s,
+        "csp-violation"_s,
+        "deprecation"_s,
+        "dip"_s,
+        "integrity-violation"_s,
+        "test"_s,
+    }) };
+    return visibleTypes.contains(type);
 }
 
 Ref<ReportingObserver> ReportingObserver::create(ScriptExecutionContext& scriptExecutionContext, Ref<ReportingObserverCallback>&& callback, Options&& options)
@@ -111,10 +120,84 @@ void ReportingObserver::observe()
     reportingScope->appendQueuedReportsForRelevantType(*this);
 }
 
-auto ReportingObserver::takeRecords() -> Vector<Ref<Report>>
+static std::optional<ReportDictionary::Body> dictionaryForReportBody(const ReportBody* body)
 {
-    // https://www.w3.org/TR/reporting-1/#dom-reportingobserver-takerecords
-    return WTF::move(m_queuedReports);
+    if (!body)
+        return std::nullopt;
+
+    if (auto* coepBody = dynamicDowncast<COEPInheritenceViolationReportBody>(*body)) {
+        return Report::COEPInheritenceViolationReportBody {
+            coepBody->type(),
+            coepBody->blockedURL(),
+            coepBody->disposition(),
+        };
+    }
+
+    if (auto* corpBody = dynamicDowncast<CORPViolationReportBody>(*body)) {
+        return Report::CORPViolationReportBody {
+            corpBody->type(),
+            corpBody->blockedURL(),
+            corpBody->destination(),
+            corpBody->disposition(),
+        };
+    }
+
+    if (auto* cspBody = dynamicDowncast<CSPViolationReportBody>(*body)) {
+        return Report::CSPViolationReportBody {
+            cspBody->documentURL(),
+            cspBody->referrer(),
+            cspBody->blockedURL(),
+            cspBody->effectiveDirective(),
+            cspBody->originalPolicy(),
+            cspBody->sourceFile(),
+            cspBody->sample(),
+            cspBody->disposition(),
+            cspBody->statusCode(),
+            cspBody->lineNumber(),
+            cspBody->columnNumber(),
+        };
+    }
+
+    if (auto* deprecationBody = dynamicDowncast<DeprecationReportBody>(*body)) {
+        return Report::DeprecationReportBody {
+            deprecationBody->id(),
+            deprecationBody->anticipatedRemoval(),
+            deprecationBody->message(),
+            deprecationBody->sourceFile(),
+            deprecationBody->lineNumber(),
+            deprecationBody->columnNumber(),
+        };
+    }
+
+    if (auto* integrityBody = dynamicDowncast<IntegrityPolicyViolationReportBody>(*body)) {
+        return Report::IntegrityViolationReportBody {
+            integrityBody->documentURL(),
+            integrityBody->blockedURL(),
+            integrityBody->destination(),
+            integrityBody->reportOnly(),
+        };
+    }
+
+    if (auto* testBody = dynamicDowncast<TestReportBody>(*body)) {
+        return Report::TestReportBody {
+            testBody->message(),
+        };
+    }
+
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+
+Vector<ReportDictionary> ReportingObserver::takeRecords()
+{
+    // https://w3c.github.io/reporting/#dom-reportingobserver-takerecords
+    return std::exchange(m_queuedReports, { }).map([](auto& report) {
+        return ReportDictionary {
+            report->type(),
+            report->url(),
+            dictionaryForReportBody(report->body()),
+        };
+    });
 }
 
 void ReportingObserver::appendQueuedReportIfCorrectType(const Ref<Report>& report)
@@ -146,6 +229,8 @@ void ReportingObserver::appendQueuedReportIfCorrectType(const Ref<Report>& repor
 
         // Step 4.4: Invoke reporting observers with notify list with a copy of global’s registered reporting observer list.
         auto reports = observer.takeRecords();
+        if (reports.isEmpty())
+            return;
 
         InspectorInstrumentation::willFireObserverCallback(*context, "ReportingObserver"_s);
 

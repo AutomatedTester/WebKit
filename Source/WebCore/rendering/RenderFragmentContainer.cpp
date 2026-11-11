@@ -41,7 +41,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
@@ -145,9 +144,9 @@ LayoutPoint RenderFragmentContainer::fragmentedFlowPortionLocation() const
     LayoutRect portionRect = fragmentedFlowPortionRect();
 
     if (fragmentedFlow()->writingMode().isBlockFlipped()) {
-        LayoutRect flippedFragmentedFlowPortionRect(portionRect);
-        fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionRect);
-        portionLocation = flippedFragmentedFlowPortionRect.location();
+        LayoutRect physicalFragmentedFlowPortionRect(portionRect);
+        fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionRect);
+        portionLocation = physicalFragmentedFlowPortionRect.location();
     } else
         portionLocation = portionRect.location();
 
@@ -229,22 +228,22 @@ void RenderFragmentContainer::repaintFragmentedFlowContentRectangle(const Layout
     LayoutRect clippedRect(repaintRect);
 
     if (fragmentedFlowPortionClipRect) {
-        LayoutRect flippedFragmentedFlowPortionClipRect(*fragmentedFlowPortionClipRect);
-        fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionClipRect);
-        clippedRect.intersect(flippedFragmentedFlowPortionClipRect);
+        LayoutRect physicalFragmentedFlowPortionClipRect(*fragmentedFlowPortionClipRect);
+        fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionClipRect);
+        clippedRect.intersect(physicalFragmentedFlowPortionClipRect);
     }
 
     if (clippedRect.isEmpty())
         return;
 
-    LayoutRect flippedFragmentedFlowPortionRect(fragmentedFlowPortionRect);
-    fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionRect); // Put the fragment rects into physical coordinates.
+    LayoutRect physicalFragmentedFlowPortionRect(fragmentedFlowPortionRect);
+    fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionRect); // Put the fragment rects into physical coordinates.
 
     // Put the fragment rect into the fragment's physical coordinate space.
-    clippedRect.setLocation(fragmentLocation + (clippedRect.location() - flippedFragmentedFlowPortionRect.location()));
+    clippedRect.setLocation(fragmentLocation + (clippedRect.location() - physicalFragmentedFlowPortionRect.location()));
 
     // Now switch to the fragment's writing mode coordinate space and let it repaint itself.
-    flipForWritingMode(clippedRect);
+    physicalToBlockStartRelative(clippedRect);
     
     // Issue the repaint.
     repaintRectangle(clippedRect);
@@ -255,19 +254,19 @@ LayoutRect RenderFragmentContainer::fragmentedFlowContentRectangle(const LayoutR
     auto clippedRect = rect;
 
     if (fragmentedFlowPortionClipRect) {
-        LayoutRect flippedFragmentedFlowPortionClipRect(*fragmentedFlowPortionClipRect);
-        fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionClipRect);
-        clippedRect.edgeInclusiveIntersect(flippedFragmentedFlowPortionClipRect); // edgeInclusiveIntersect to avoid rects with zero height or width becoming zero-sized.
+        LayoutRect physicalFragmentedFlowPortionClipRect(*fragmentedFlowPortionClipRect);
+        fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionClipRect);
+        clippedRect.edgeInclusiveIntersect(physicalFragmentedFlowPortionClipRect); // edgeInclusiveIntersect to avoid rects with zero height or width becoming zero-sized.
     }
 
-    LayoutRect flippedFragmentedFlowPortionRect(fragmentedFlowPortionRect);
-    fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionRect);
+    LayoutRect physicalFragmentedFlowPortionRect(fragmentedFlowPortionRect);
+    fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionRect);
 
     // Put the fragment rect into the fragment's physical coordinate space.
-    clippedRect.setLocation(fragmentLocation + (clippedRect.location() - flippedFragmentedFlowPortionRect.location()));
+    clippedRect.setLocation(fragmentLocation + (clippedRect.location() - physicalFragmentedFlowPortionRect.location()));
 
     // Now switch to the fragment's writing mode coordinate space and let it repaint itself.
-    flipForWritingMode(clippedRect);
+    physicalToBlockStartRelative(clippedRect);
     
     return clippedRect;
 }
@@ -279,11 +278,11 @@ Vector<LayoutRect> RenderFragmentContainer::fragmentRectsForFlowContentRect(cons
     
     auto fragmentRect = contentRect;
     
-    auto flippedFragmentedFlowPortionRect = portionRect;
-    fragmentedFlow()->flipForWritingMode(flippedFragmentedFlowPortionRect);
-    fragmentRect.setLocation(fragmentLocation + (fragmentRect.location() - flippedFragmentedFlowPortionRect.location()));
+    auto physicalFragmentedFlowPortionRect = portionRect;
+    fragmentedFlow()->blockStartRelativeToPhysical(physicalFragmentedFlowPortionRect);
+    fragmentRect.setLocation(fragmentLocation + (fragmentRect.location() - physicalFragmentedFlowPortionRect.location()));
 
-    flipForWritingMode(fragmentRect);
+    physicalToBlockStartRelative(fragmentRect);
 
     return { fragmentRect };
 }
@@ -383,30 +382,20 @@ std::pair<LayoutUnit, LayoutUnit> RenderFragmentContainer::computeIntrinsicLogic
     return RenderBlockFlow::computeIntrinsicLogicalWidths();
 }
 
-void RenderFragmentContainer::computeIntrinsicLogicalWidthContributions()
+std::pair<LayoutUnit, LayoutUnit> RenderFragmentContainer::computeIntrinsicLogicalWidthContributions()
 {
     ASSERT(hasInvalidContentLogicalWidths());
 
-    if (!isValid()) {
-        RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
-        return;
-    }
+    if (!isValid())
+        return RenderBlockFlow::computeIntrinsicLogicalWidthContributions();
 
     // FIXME: Currently, the code handles only the <length> case for min-width/max-width.
     // It should also support other values, like percentage, calc or viewport relative.
-    m_minContentLogicalWidthContribution = 0_lu;
-    m_maxContentLogicalWidthContribution = 0_lu;
-
-    CheckedRef styleToUse = style();
-    if (auto fixedLogicalWidth = styleToUse->logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        m_maxContentLogicalWidthContribution = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
-        m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
-    } else
-        std::tie(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution) = computeIntrinsicLogicalWidths();
-
-    constrainIntrinsicLogicalWidthsByMinMax(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
-
-    clearContentLogicalWidthsInvalidation();
+    if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        return { logicalWidth, logicalWidth };
+    }
+    return computeIntrinsicLogicalWidths();
 }
 
 LayoutRect RenderFragmentContainer::computedVisualOverflowRectForBox(const RenderBox& box) const
@@ -418,7 +407,7 @@ LayoutRect RenderFragmentContainer::computedVisualOverflowRectForBox(const Rende
         return { };
 
     borderBox = rectFlowPortionForBox(box, borderBox);
-    m_fragmentedFlow->flipForWritingModeLocalCoordinates(borderBox);
+    m_fragmentedFlow->physicalToBlockStartRelativeIgnoringSize(borderBox);
     return borderBox;
 }
 
@@ -430,7 +419,7 @@ LayoutRect RenderFragmentContainer::computedLayoutOverflowRectForBox(const Rende
         return { };
 
     clientBox = rectFlowPortionForBox(box, clientBox);
-    m_fragmentedFlow->flipForWritingModeLocalCoordinates(clientBox);
+    m_fragmentedFlow->physicalToBlockStartRelativeIgnoringSize(clientBox);
     return clientBox;
 }
 
@@ -488,9 +477,9 @@ void RenderFragmentContainer::addVisualOverflowForBox(const RenderBox& box, cons
         return;
 
     if (CheckedPtr overflow = overflowForBox(box)) {
-        LayoutRect flippedRect = rect;
-        fragmentedFlow()->flipForWritingModeLocalCoordinates(flippedRect);
-        overflow->addVisualOverflow(flippedRect);
+        LayoutRect blockStartRelativeRect = rect;
+        fragmentedFlow()->physicalToBlockStartRelativeIgnoringSize(blockStartRelativeRect);
+        overflow->addVisualOverflow(blockStartRelativeRect);
     }
 }
 
@@ -531,7 +520,7 @@ LayoutRect RenderFragmentContainer::layoutOverflowRectForBoxForPropagation(const
 LayoutRect RenderFragmentContainer::visualOverflowRectForBoxForPropagation(const RenderBox& box)
 {
     LayoutRect rect = visualOverflowRectForBox(box);
-    fragmentedFlow()->flipForWritingModeLocalCoordinates(rect);
+    fragmentedFlow()->blockStartRelativeIgnoringSizeToPhysical(rect);
 
     return rect;
 }

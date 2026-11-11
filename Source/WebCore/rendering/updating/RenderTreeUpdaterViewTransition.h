@@ -32,12 +32,11 @@
 namespace WebCore {
 
 class Element;
-class RenderQuote;
 
 class RenderTreeUpdater::ViewTransition {
     WTF_MAKE_TZONE_ALLOCATED(ViewTransition);
 public:
-    ViewTransition(RenderTreeUpdater&);
+    NODELETE ViewTransition(RenderTreeUpdater&);
 
     void updatePseudoElementTree(RenderElement*, Style::DifferenceResult minimalStyleDifference);
 

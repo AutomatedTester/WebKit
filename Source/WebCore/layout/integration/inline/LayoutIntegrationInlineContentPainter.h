@@ -35,7 +35,7 @@ namespace WebCore {
 class RenderBlock;
 class RenderBlockFlow;
 class RenderBox;
-class RenderInline;
+class RenderBoxModelObject;
 
 struct PaintInfo;
 
@@ -60,8 +60,8 @@ public:
 private:
     void paintDisplayBox(const InlineDisplay::Box&);
     void paintEllipsis(size_t lineIndex);
-    LayoutPoint LEGACY_NODELETE flippedContentOffsetIfNeeded(const RenderBox&) const;
-    const RenderBlock& LEGACY_NODELETE root() const;
+    NODELETE LayoutPoint paintOffsetForChild(const RenderBox&) const;
+    NODELETE const RenderBlock& root() const;
 
     PaintInfo& m_paintInfo;
     const LayoutPoint m_paintOffset;
@@ -69,12 +69,12 @@ private:
     const RenderBoxModelObject* m_inlineBoxWithLayer { nullptr };
     const InlineContent& m_inlineContent;
     const RenderBlockFlow& m_root;
-    SingleThreadWeakListHashSet<RenderInline> m_outlineObjects;
+    SingleThreadWeakListHashSet<RenderBoxModelObject> m_outlineObjects;
 };
 
 class LayerPaintScope {
 public:
-    LayerPaintScope(const RenderBoxModelObject* inlineBoxWithLayer);
+    NODELETE LayerPaintScope(const RenderBoxModelObject* inlineBoxWithLayer);
     bool testIsIncludesAndUpdate(const InlineDisplay::Box&);
 
 private:

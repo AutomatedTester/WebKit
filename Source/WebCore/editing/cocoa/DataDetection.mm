@@ -170,6 +170,16 @@ std::optional<DetectedItem> DataDetection::detectItemAroundHitTestResult(const H
     return detectItem(position, *contextRange);
 }
 
+IntRect DataDetection::visibleContentRectForHighlights(const LocalFrameView& rootView)
+{
+    IntRect visibleContentRect { rootView.visibleContentRect() };
+    if (rootView.frame().isMainFrame())
+        return visibleContentRect;
+
+    IntRect clippedRect { rootView.windowToContents(rootView.windowClipRect()) };
+    return clippedRect.isEmpty() ? visibleContentRect : clippedRect;
+}
+
 #endif // PLATFORM(MAC)
 
 static BOOL resultIsURL(DDResultRef result)
@@ -574,7 +584,8 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
 
     // Iterate through the scanner results to find signatures and extract all the subresults while
     // populating the array of index paths to use in the href of the anchors being created.
-    for (id resultObject in (NSArray *)scannerResults.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id resultObject in (NSArray *)scannerResults.get()) {
         RetainPtr result = (DDResultRef)resultObject;
         NSIndexPath *indexPath = [NSIndexPath indexPathWithIndex:currentTopLevelIndex];
         if (CFEqual(PAL::softLink_DataDetectorsCore_DDResultGetType(result), PAL::get_DataDetectorsCore_DDBinderSignatureBlockKey())) {

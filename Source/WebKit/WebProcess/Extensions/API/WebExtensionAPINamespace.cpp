@@ -119,7 +119,7 @@ bool WebExtensionAPINamespace::isPropertyAllowed(const ASCIILiteral& name, WebPa
     if (name == "storage"_s)
         return extensionContext->hasPermission(name) || extensionContext->hasPermission("unlimitedStorage"_s);
 
-    if (name == "dom"_s || name == "extension"_s || name == "i18n"_s || name == "permissions"_s || name == "runtime"_s || name == "tabs"_s || name == "windows"_s)
+    if (name == "dom"_s || name == "extension"_s || name == "extensionTypes"_s || name == "i18n"_s || name == "permissions"_s || name == "runtime"_s || name == "tabs"_s || name == "windows"_s)
         return true;
 
     // The rest of the property names marked dynamic in WebExtensionAPINamespace.idl match permission names.
@@ -147,6 +147,16 @@ WebExtensionAPIAlarms& WebExtensionAPINamespace::alarms()
         lazyInitialize(m_alarms, WebExtensionAPIAlarms::create(*this));
 
     return *m_alarms;
+}
+
+WebExtensionAPIExtensionTypes& WebExtensionAPINamespace::extensionTypes()
+{
+    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/extensionTypes
+
+    if (!m_extensionTypes)
+        lazyInitialize(m_extensionTypes, WebExtensionAPIExtensionTypes::create(*this));
+
+    return *m_extensionTypes;
 }
 
 #if PLATFORM(COCOA)
@@ -264,6 +274,8 @@ WebExtensionAPIPermissions& WebExtensionAPINamespace::permissions()
     return *m_permissions;
 }
 
+#endif // PLATFORM(COCOA)
+
 WebExtensionAPIRuntime& WebExtensionAPINamespace::runtime()
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime
@@ -276,6 +288,7 @@ WebExtensionAPIRuntime& WebExtensionAPINamespace::runtime()
     return *m_runtime;
 }
 
+#if PLATFORM(COCOA)
 WebExtensionAPIScripting& WebExtensionAPINamespace::scripting()
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/scripting
@@ -320,6 +333,8 @@ WebExtensionAPIBookmarks& WebExtensionAPINamespace::bookmarks()
 }
 #endif
 
+#endif // PLATFORM(COCOA)
+
 WebExtensionAPIStorage& WebExtensionAPINamespace::storage()
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/storage
@@ -330,6 +345,7 @@ WebExtensionAPIStorage& WebExtensionAPINamespace::storage()
     return *m_storage;
 }
 
+#if PLATFORM(COCOA)
 WebExtensionAPITabs& WebExtensionAPINamespace::tabs()
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/tabs
@@ -381,7 +397,7 @@ WebExtensionAPIWebRequest& WebExtensionAPINamespace::webRequest()
 
     return *m_webRequest;
 }
-#endif
+#endif // PLATFORM(COCOA)
 
 } // namespace WebKit
 

@@ -101,12 +101,12 @@ void XRDeviceProxy::initializeTrackingAndRendering(const WebCore::SecurityOrigin
     // This is called from the constructor of WebXRSession. Since sessionDidInitializeInputSources()
     // ends up calling queueTaskKeepingObjectAlive() which refs the WebXRSession object, we
     // should delay this call after the WebXRSession has finished construction.
-    callOnMainRunLoop([this, weakThis = ThreadSafeWeakPtr { *this }]() {
+    callOnMainRunLoop([weakThis = ThreadSafeWeakPtr { *this }] {
         auto protectedThis = weakThis.get();
         if (!protectedThis)
             return;
 
-        if (RefPtr client = trackingAndRenderingClient())
+        if (RefPtr client = protectedThis->trackingAndRenderingClient())
             client->sessionDidInitializeInputSources({ });
     });
 }
@@ -149,12 +149,22 @@ std::optional<PlatformXR::LayerInfo> XRDeviceProxy::createLayerProjection(uint32
 }
 
 #if ENABLE(WEBXR_LAYERS)
-std::optional<PlatformXR::LayerInfo> XRDeviceProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout)
+std::optional<PlatformXR::LayerInfo> XRDeviceProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, PlatformXR::LayerUpdateMode updateMode)
 {
     RefPtr xrSystem = m_xrSystem.get();
-    return xrSystem ? xrSystem->createCompositionLayer(type, size, layout) : std::nullopt;
+    return xrSystem ? xrSystem->createCompositionLayer(type, size, layout, updateMode) : std::nullopt;
 }
 #endif
+
+void XRDeviceProxy::deleteLayer(PlatformXR::LayerHandle handle)
+{
+#if ENABLE(WEBXR_LAYERS)
+    if (RefPtr xrSystem = m_xrSystem)
+        xrSystem->deleteLayer(handle);
+#else
+    UNUSED_PARAM(handle);
+#endif
+}
 
 void XRDeviceProxy::submitFrame(Vector<PlatformXR::DeviceLayer>&& layers)
 {

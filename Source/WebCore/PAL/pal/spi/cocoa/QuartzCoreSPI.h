@@ -124,6 +124,7 @@ typedef struct _CARenderContext CARenderContext;
 + (instancetype)groupWithCapacity:(NSUInteger)capacity;
 - (void)flush;
 - (void)flushWithTransaction;
+@property (nonatomic) BOOL updatesAsynchronously;
 @end
 
 @interface CAPresentationModifier : NSObject
@@ -131,7 +132,13 @@ typedef struct _CARenderContext CARenderContext;
 @property (strong) id value;
 @end
 
+typedef NS_OPTIONS(unsigned int, CADisableUpdateMask) {
+    kCALayerDisableUpdateSnapshot = 1U << 1,
+    kCALayerDisableUpdateCloned = 1U << 4,
+};
+
 @interface CALayer ()
+@property CADisableUpdateMask disableUpdateMask;
 - (CAContext *)context;
 - (void)setContextId:(uint32_t)contextID;
 - (CGSize)size;

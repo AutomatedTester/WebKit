@@ -371,6 +371,7 @@ struct LiveResizeSnapshotState {
     BOOL _usePlatformFindUI;
     BOOL _usesAutomaticContentInsetBackgroundFill;
     BOOL _shouldSuppressTopColorExtensionView;
+    _WKRectEdge _enabledSystemBackgroundColorExtensionEdges;
     BOOL _shouldSuppressFormValidationBubble;
 #if PLATFORM(MAC)
     OptionSet<WebKit::PreferSolidColorHardPocketReason> _preferSolidColorHardPocketReasons;
@@ -606,6 +607,10 @@ struct LiveResizeSnapshotState {
 #if ENABLE(SYSTEM_TEXT_EXTRACTION)
     std::optional<WTF::UUID> _textExtractionIdentifier;
 #endif
+
+#if PLATFORM(IOS_FAMILY)
+    WebCore::IntDegrees _cameraRotationAdjustment;
+#endif
 }
 
 - (BOOL)_isValid;
@@ -618,6 +623,10 @@ struct LiveResizeSnapshotState {
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 - (void)_allowImmersiveElement:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
 - (void)_presentImmersiveElement:(const WebCore::LayerHostingContextIdentifier)contextID frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
+- (void)_presentImmersiveEnvironment:(WKImmersiveEnvironment *)environment completion:(CompletionHandler<void(bool)>&&)completion;
+#if ENABLE(IMAGE_ELEMENT_IMMERSIVE)
+- (void)_presentImmersiveImageElement:(CGImageRef)image focalLengthIn35mm:(NSNumber *)focalLengthIn35mm frameInfo:(WKFrameInfo *)frameInfo completion:(CompletionHandler<void(bool)>&&)completion;
+#endif
 - (void)_dismissImmersiveElement:(CompletionHandler<void()>&&)completion;
 #endif
 
@@ -731,7 +740,7 @@ struct LiveResizeSnapshotState {
 #endif
 #endif
 
-#if ENABLE(MANAGED_UIREFRESHCONTROL_APPEARANCE)
+#if ENABLE(MANAGED_REFRESHCONTROL_APPEARANCE)
 - (void)_updateRefreshControlAppearance;
 #endif
 
@@ -841,12 +850,6 @@ RetainPtr<NSError> nsErrorFromExceptionDetails(const std::optional<WebCore::Exce
 @end
 #endif
 
-#if HAVE(UIKIT_PRINTING)
-@interface WKWebView (_WKWebViewPrintFormatter)
-@property (nonatomic, readonly) id <_WKWebViewPrintProvider> _printProvider;
-@end
-#endif
-
 WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContainerEdges&, WebCore::BoxSide);
 
 #if ENABLE(TWO_PHASE_CLICKS)
@@ -856,7 +859,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 - (void)_didHandleTapAsHover;
 - (void)_didCompleteSyntheticClick;
 - (void)_commitPotentialTapFailed;
-- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
 - (BOOL)_isPotentialTapInProgress;
 - (void)_disableDoubleTapGesturesDuringTapIfNecessary:(WebKit::TapIdentifier)requestID;
 - (void)_handleSmartMagnificationInformationForPotentialTap:(WebKit::TapIdentifier)requestID renderRect:(const WebCore::FloatRect&)renderRect fitEntireRect:(BOOL)fitEntireRect viewportMinimumScale:(double)viewportMinimumScale viewportMaximumScale:(double)viewportMaximumScale nodeIsRootLevel:(BOOL)nodeIsRootLevel nodeIsPluginElement:(BOOL)nodeIsPluginElement;

@@ -45,6 +45,7 @@
 #include "LocalFrameView.h"
 #include "LocalizedStrings.h"
 #include "MouseEvent.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "Path.h"
@@ -96,7 +97,7 @@ RenderEmbeddedObject::~RenderEmbeddedObject() = default;
 
 void RenderEmbeddedObject::willBeDestroyed()
 {
-    protect(view())->frameView().removeEmbeddedObjectToUpdate(*this);
+    protect(view().frameView())->removeEmbeddedObjectToUpdate(*this);
     RenderWidget::willBeDestroyed();
 }
 
@@ -113,38 +114,24 @@ bool RenderEmbeddedObject::requiresAcceleratedCompositing() const
 
 static RefPtr<SVGSVGElement> embeddedSVGElement(const RenderWidget& renderer)
 {
-    RefPtr frameView = dynamicDowncast<LocalFrameView>(renderer.widget());
+    auto* frameView = dynamicDowncast<LocalFrameView>(renderer.widget());
     if (!frameView)
         return nullptr;
-    CheckedPtr svgRoot = frameView->embeddedSVGRoot();
+    auto* svgRoot = frameView->embeddedSVGRoot();
     if (!svgRoot)
         return nullptr;
-    if (CheckedPtr modernRoot = dynamicDowncast<RenderSVGRoot>(svgRoot.get()))
+    if (auto* modernRoot = dynamicDowncast<RenderSVGRoot>(svgRoot))
         return &modernRoot->svgSVGElement();
-    if (CheckedPtr legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(svgRoot.get()))
+    if (auto* legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(svgRoot))
         return &legacyRoot->svgSVGElement();
     return nullptr;
 }
 
-bool RenderEmbeddedObject::shouldRespectZeroIntrinsicWidth() const
+NaturalDimensions RenderEmbeddedObject::zoomedNaturalDimensions() const
 {
-    if (RefPtr svgElement = embeddedSVGElement(*this))
-        return svgElement->hasIntrinsicWidth();
-    return false;
-}
-
-bool RenderEmbeddedObject::shouldRespectZeroIntrinsicHeight() const
-{
-    RefPtr svgElement = embeddedSVGElement(*this);
-    if (!svgElement || !svgElement->hasIntrinsicHeight())
-        return false;
-    // A natural height of 0 is respected unless a natural width together with an
-    // aspect ratio can derive a non-zero height, in which case the derived height
-    // wins. The ratio may come from the SVG's viewBox or the CSS aspect-ratio
-    // property; see https://github.com/w3c/csswg-drafts/issues/11236#issuecomment-2718502765.
-    if (!svgElement->hasIntrinsicWidth())
-        return true;
-    return svgElement->currentViewBoxRect().isEmpty() && !style().aspectRatio().hasRatio();
+    if (RefPtr element = embeddedSVGElement(*this))
+        return element->naturalDimensions().zoomed(style().usedZoom());
+    return RenderWidget::zoomedNaturalDimensions();
 }
 
 ScrollableArea* RenderEmbeddedObject::scrollableArea() const
@@ -399,7 +386,7 @@ void RenderEmbeddedObject::layout()
     updateLayerTransform();
 
     if (!widget())
-        protect(view())->frameView().addEmbeddedObjectToUpdate(*this);
+        protect(view().frameView())->addEmbeddedObjectToUpdate(*this);
 
     clearNeedsLayout();
 
@@ -498,11 +485,11 @@ CursorDirective RenderEmbeddedObject::getCursor(const LayoutPoint& point, Cursor
 {
     if (isPluginUnavailable() && shouldUnavailablePluginMessageBeButton(protect(page()), m_pluginUnavailabilityReason) && isInUnavailablePluginIndicator(point)) {
         cursor = handCursor();
-        return CursorDirective::SetCursor;
+        return CursorDirective::Set;
     }
     if (widget() && protect(widget())->isPluginViewBase()) {
         // A plug-in is responsible for setting the cursor when the pointer is over it.
-        return CursorDirective::DoNotSetCursor;
+        return CursorDirective::DoNotSet;
     }
     return RenderWidget::getCursor(point, cursor);
 }

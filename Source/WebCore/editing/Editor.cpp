@@ -113,9 +113,9 @@
 #include "RenderBlock.h"
 #include "RenderBlockFlow.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectStyle.h"
+#include "RenderText.h"
 #include "RenderTextControl.h"
 #include "RenderedDocumentMarker.h"
 #include "RenderedPosition.h"
@@ -330,11 +330,11 @@ void TemporarySelectionChange::setSelection(const VisibleSelection& selection, I
             options.add(FrameSelection::SetSelectionOption::OnlyAllowForwardScrolling);
     }
 
-    m_document->selection().setSelection(selection, options);
+    protect(m_document->selection())->setSelection(selection, options);
 }
 
 IgnoreSelectionChangeForScope::IgnoreSelectionChangeForScope(LocalFrame& frame)
-    : m_selectionChange(*frame.document(), std::nullopt, TemporarySelectionOption::IgnoreSelectionChanges)
+    : m_selectionChange(*protect(frame.document()), std::nullopt, TemporarySelectionOption::IgnoreSelectionChanges)
 {
 }
 
@@ -1164,7 +1164,7 @@ static void notifyTextFromControls(Element* startRoot, Element* endRoot, bool wa
         endingTextControl->didEditInnerTextValue(wasUserEdit);
 }
 
-static inline bool LEGACY_NODELETE shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
+NODELETE static inline bool shouldRemoveAutocorrectionIndicator(bool shouldConsiderApplyingAutocorrection, bool autocorrectionWasApplied, bool isAutocompletion)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS)
     bool shouldRemoveIndicator = shouldConsiderApplyingAutocorrection && !autocorrectionWasApplied;
@@ -1210,7 +1210,7 @@ static inline bool didApplyAutocorrection(Document& document, AlternativeTextCon
 #endif
 }
 
-static inline void LEGACY_NODELETE adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
+NODELETE static inline void adjustMarkerTypesToRemoveForWordsAffectedByEditing(OptionSet<DocumentMarkerType>& markerTypes)
 {
 #if HAVE(AUTOCORRECTION_ENHANCEMENTS) && PLATFORM(IOS_FAMILY)
     markerTypes.remove(DocumentMarkerType::CorrectionIndicator);
@@ -1422,6 +1422,7 @@ void Editor::clear()
     m_oldSelectionForEditorUIUpdate = { };
     m_editorUIUpdateTimer.stop();
     m_alternativeTextController->stopAlternativeTextUITimer();
+    m_matchFinder = nullptr;
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION) && !PLATFORM(IOS_FAMILY)
     m_telephoneNumberDetectionUpdateTimer.stop();
@@ -1435,12 +1436,12 @@ void Editor::clear()
 
 bool Editor::insertText(const String& text, Event* triggeringEvent, TextEventInputType inputType)
 {
-    return document().frame()->eventHandler().handleTextInputEvent(text, triggeringEvent, inputType);
+    return protect(document().frame()->eventHandler())->handleTextInputEvent(text, triggeringEvent, inputType);
 }
 
 bool Editor::insertTextForConfirmedComposition(const String& text)
 {
-    return document().frame()->eventHandler().handleTextInputEvent(text, 0, TextEventInputComposition);
+    return protect(document().frame()->eventHandler())->handleTextInputEvent(text, 0, TextEventInputComposition);
 }
 
 bool Editor::insertDictatedText(const String& text, const Vector<DictationAlternative>& dictationAlternatives, Event* triggeringEvent)
@@ -2314,7 +2315,7 @@ void Editor::selectComposition()
     // See <http://bugs.webkit.org/show_bug.cgi?id=15781>
     VisibleSelection selection;
     selection.setWithoutValidation(makeDeprecatedLegacyPosition(range->start), makeDeprecatedLegacyPosition(range->end));
-    document().selection().setSelection(selection, { });
+    protect(document().selection())->setSelection(selection, { });
 }
 
 Node* Editor::nodeBeforeWritingSuggestions() const
@@ -2448,7 +2449,7 @@ class SetCompositionScope {
 public:
     SetCompositionScope(Ref<Document>&& document)
         : m_document(WTF::move(document))
-        , m_typingGestureIndicator(*m_document->frame())
+        , m_typingGestureIndicator(*protect(m_document->frame()))
     {
         protect(m_document->editor())->setIgnoreSelectionChanges(true);
     }
@@ -2829,7 +2830,8 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
         return; // nothing to search in
 
     // Get the spell checker if it is available
-    if (!client())
+    CheckedPtr client = this->client();
+    if (!client)
         return;
 
     // We go to the end of our first range instead of the start of it, just to be sure
@@ -2842,13 +2844,13 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
     auto grammarSearchRange = spellingSearchRange;
 
     if (unifiedTextCheckerEnabled()) {
-        auto foundItem = TextCheckingHelper(*client(), spellingSearchRange).findFirstMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
+        auto foundItem = TextCheckingHelper(*client, spellingSearchRange).findFirstMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
         if (auto* word = std::get_if<TextCheckingHelper::MisspelledWord>(&foundItem))
             misspelledWord = WTF::move(*word);
         else
             ungrammaticalPhrase = std::get<TextCheckingHelper::UngrammaticalPhrase>(WTF::move(foundItem));
     } else {
-        misspelledWord = TextCheckingHelper(*client(), spellingSearchRange).findFirstMisspelledWord();
+        misspelledWord = TextCheckingHelper(*client, spellingSearchRange).findFirstMisspelledWord();
 
         if (!misspelledWord.word.isEmpty()) {
             // Stop looking at start of next misspelled word
@@ -2858,7 +2860,7 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
         }
 
         if (isGrammarCheckingEnabled())
-            ungrammaticalPhrase = TextCheckingHelper(*client(), grammarSearchRange).findFirstUngrammaticalPhrase();
+            ungrammaticalPhrase = TextCheckingHelper(*client, grammarSearchRange).findFirstUngrammaticalPhrase();
     }
 
     // If we found neither bad grammar nor a misspelled word, wrap and try again (but don't bother if we started at the beginning of the
@@ -2869,13 +2871,13 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
         spellingSearchRange.end = searchEndAfterWrap;
         
         if (unifiedTextCheckerEnabled()) {
-            auto foundItem = TextCheckingHelper(*client(), spellingSearchRange).findFirstMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
+            auto foundItem = TextCheckingHelper(*client, spellingSearchRange).findFirstMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
             if (auto* word = std::get_if<TextCheckingHelper::MisspelledWord>(&foundItem))
                 misspelledWord = WTF::move(*word);
             else
                 ungrammaticalPhrase = std::get<TextCheckingHelper::UngrammaticalPhrase>(WTF::move(foundItem));
         } else {
-            misspelledWord = TextCheckingHelper(*client(), spellingSearchRange).findFirstMisspelledWord();
+            misspelledWord = TextCheckingHelper(*client, spellingSearchRange).findFirstMisspelledWord();
 
             grammarSearchRange = spellingSearchRange;
             if (!misspelledWord.word.isEmpty()) {
@@ -2886,7 +2888,7 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
             }
 
             if (isGrammarCheckingEnabled())
-                ungrammaticalPhrase = TextCheckingHelper(*client(), grammarSearchRange).findFirstUngrammaticalPhrase();
+                ungrammaticalPhrase = TextCheckingHelper(*client, grammarSearchRange).findFirstUngrammaticalPhrase();
         }
     }
     
@@ -2903,7 +2905,7 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
         document->selection().setSelection(VisibleSelection(badGrammarRange));
         document->selection().revealSelection();
         
-        protect(client())->updateSpellingUIWithGrammarString(ungrammaticalPhrase.phrase, ungrammaticalPhrase.detail);
+        client->updateSpellingUIWithGrammarString(ungrammaticalPhrase.phrase, ungrammaticalPhrase.detail);
         addMarker(badGrammarRange, DocumentMarkerType::Grammar, DocumentMarker::GrammarData { ungrammaticalPhrase.detail.userDescription, ungrammaticalPhrase.detail.uuid });
     } else if (!misspelledWord.word.isEmpty()) {
         // We found a misspelling, but not any earlier bad grammar. Select the misspelling, update the spelling panel, and store
@@ -2913,7 +2915,7 @@ void Editor::advanceToNextMisspelling(bool startBeforeSelection)
         document->selection().setSelection(VisibleSelection(misspellingRange));
         document->selection().revealSelection();
         
-        protect(client())->updateSpellingUIWithMisspelledWord(misspelledWord.word);
+        client->updateSpellingUIWithMisspelledWord(misspelledWord.word);
         addMarker(misspellingRange, DocumentMarkerType::Spelling);
     }
 }
@@ -3000,7 +3002,7 @@ TextCheckingGuesses Editor::guessesForMisspelledOrUngrammatical()
             range = selection.toNormalizedRange();
         if (!range || !client())
             return { };
-        return TextCheckingHelper(*client(), *range).guessesForMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
+        return TextCheckingHelper(*protect(client()), *range).guessesForMisspelledWordOrUngrammaticalPhrase(isGrammarCheckingEnabled());
     }
 
     auto misspelledWord = behavior().shouldAllowSpellingSuggestionsWithoutSelection() ? misspelledWordAtCaretOrRange(protect(document().focusedElement())) : misspelledSelectionString();
@@ -3134,7 +3136,7 @@ void Editor::markMisspellingsAfterTypingToWord(const VisiblePosition& wordStart,
         // with spellcheck disabled. To fix this, we need to refactor markAllMisspellingsAndBadGrammarInRanges so that
         // it can handle a list of spelling ranges, alongside the grammar range.
         while (sentenceStart < spellCheckingStart) {
-            auto previousPosition = spellCheckingStart.previous(CannotCrossEditingBoundary);
+            auto previousPosition = spellCheckingStart.previous(EditingBoundaryCrossingRule::CannotCross);
             if (previousPosition.isNull() || previousPosition == spellCheckingStart)
                 break;
 
@@ -3149,7 +3151,7 @@ void Editor::markMisspellingsAfterTypingToWord(const VisiblePosition& wordStart,
         }
 
         while (spellCheckingEnd < sentenceEnd) {
-            auto nextPosition = spellCheckingEnd.next(CannotCrossEditingBoundary);
+            auto nextPosition = spellCheckingEnd.next(EditingBoundaryCrossingRule::CannotCross);
             if (nextPosition.isNull() || nextPosition == spellCheckingEnd)
                 break;
 
@@ -3224,7 +3226,7 @@ std::optional<SimpleRange> Editor::markMisspellingsOrBadGrammar(const VisibleSel
     if (!client())
         return std::nullopt;
     
-    TextCheckingHelper checker(*client(), *searchRange);
+    TextCheckingHelper checker(*protect(client()), *searchRange);
     if (checkSpelling)
         return checker.markAllMisspelledWords();
     if (isGrammarCheckingEnabled())
@@ -3333,7 +3335,7 @@ void Editor::markAllMisspellingsAndBadGrammarInRanges(OptionSet<TextCheckingType
 #endif
 }
 
-static bool LEGACY_NODELETE isAutomaticTextReplacementType(TextCheckingType type)
+NODELETE static bool isAutomaticTextReplacementType(TextCheckingType type)
 {
     switch (type) {
     case TextCheckingType::None:
@@ -4127,12 +4129,12 @@ std::optional<SimpleRange> Editor::findString(const String& target, FindOptions 
     return resultRange;
 }
 
-template<typename T> static auto& LEGACY_NODELETE start(T& range, FindOptions options)
+template<typename T> NODELETE static auto& start(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.end : range.start;
 }
 
-template<typename T> static auto& LEGACY_NODELETE end(T& range, FindOptions options)
+template<typename T> NODELETE static auto& end(T& range, FindOptions options)
 {
     return options.contains(FindOption::Backwards) ? range.start : range.end;
 }
@@ -4751,8 +4753,7 @@ static Vector<TextList> editableTextListsAtPositionInDescendingOrder(const Posit
             enclosingLists.append(WTF::move(ancestor));
     }
 
-    Vector<TextList> textLists;
-    textLists.reserveInitialCapacity(enclosingLists.size());
+    Vector<TextList> textLists(ReserveCapacityTag { }, enclosingLists.size());
     for (auto iterator = enclosingLists.rbegin(); iterator != enclosingLists.rend(); ++iterator) {
         Ref list = *iterator;
         RefPtr orderedList = dynamicDowncast<HTMLOListElement>(list);
@@ -5060,7 +5061,7 @@ void Editor::applyDictationAlternative(const String& alternativeString)
 void Editor::toggleOverwriteModeEnabled()
 {
     m_overwriteModeEnabled = !m_overwriteModeEnabled;
-    document().selection().setShouldShowBlockCursor(m_overwriteModeEnabled);
+    protect(document().selection())->setShouldShowBlockCursor(m_overwriteModeEnabled);
 }
 
 std::optional<SimpleRange> Editor::adjustedSelectionRange()
@@ -5090,8 +5091,12 @@ const Style::ComputedStyle* Editor::styleForSelectionStart(RefPtr<Node>& nodeToR
         return nullptr;
 
     RefPtr typingStyle { document->selection().typingStyle() };
-    if (!typingStyle || !typingStyle->style())
+    if (!typingStyle || !typingStyle->style()) {
+        // Callers read non-inherited properties like the background color. For text these are its parent's.
+        if (CheckedPtr text = dynamicDowncast<RenderText>(position.deprecatedNode()->renderer()))
+            return &text->parent()->style();
         return &position.deprecatedNode()->renderer()->style();
+    }
 
     auto styleElement = HTMLSpanElement::create(document);
 
@@ -5157,8 +5162,7 @@ RefPtr<Font> Editor::fontForSelection(bool& hasMultipleFonts)
         if (renderer->isBR()) {
             if (!lineBreakFont) {
                 Ref primaryFont = protect(renderer->style().fontCascade())->primaryFont();
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST lineBreakFont = const_cast<Font*>(primaryFont.ptr());
+                lineBreakFont = const_cast<Font*>(primaryFont.ptr());
             }
             continue;
         }
@@ -5168,8 +5172,7 @@ RefPtr<Font> Editor::fontForSelection(bool& hasMultipleFonts)
             continue;
         Ref primaryFont = protect(renderer->style().fontCascade())->primaryFont();
         if (!font) {
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST font = const_cast<Font*>(primaryFont.ptr());
+            font = const_cast<Font*>(primaryFont.ptr());
         } else if (font != primaryFont.ptr()) {
             hasMultipleFonts = true;
             break;

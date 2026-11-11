@@ -72,6 +72,11 @@ WI.DOMNode = class DOMNode extends WI.Object
 
         this._frame = null;
 
+        this._frameIdentifier = payload.frameId || null;
+        this._contentFrameIdentifier = payload.contentFrameId || null;
+        if (this._contentFrameIdentifier)
+            this._domManager._registerFrameOwnerElement(this);
+
         if (payload.frameId)
             this._frame = WI.networkManager.frameForIdentifier(payload.frameId);
 
@@ -222,6 +227,8 @@ WI.DOMNode = class DOMNode extends WI.Object
     get destroyed() { return this._destroyed; }
     get frame() { return this._frame || this.parentNode?.frame || null; }
     get owningTarget() { return this._owningTarget || this.parentNode?.owningTarget || null; }
+    get frameIdentifier() { return this._frameIdentifier; }
+    get contentFrameIdentifier() { return this._contentFrameIdentifier; }
     get backendNodeId() { return this._rawNodeId ?? this.id; }
     get nextSibling() { return this._nextSibling; }
     get previousSibling() { return this._previousSibling; }
@@ -952,10 +959,19 @@ WI.DOMNode = class DOMNode extends WI.Object
 
         console.assert(WI.domManager.inspectedNode === this || !includeAncestors, this, includeAncestors);
 
-        let target = this.owningTarget || WI.assumingMainTarget();
+        // Listener ids are only unique per agent, so record the owning target (null for the page target) and the node.
+        let owningTarget = this.owningTarget;
+        let target = owningTarget || WI.assumingMainTarget();
         return target.DOMAgent.getEventListenersForNode.invoke({
             nodeId: this.backendNodeId,
             includeAncestors,
+        }).then((result) => {
+            for (let listener of result.listeners) {
+                listener.owningTarget = owningTarget;
+                if (listener.nodeId)
+                    listener.node = owningTarget ? WI.domManager.nodeForIdInFrameTarget(listener.nodeId, owningTarget) : WI.domManager.nodeForId(listener.nodeId);
+            }
+            return result;
         });
     }
 

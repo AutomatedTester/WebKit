@@ -210,6 +210,7 @@ set(WTF_PUBLIC_HEADERS
     NoLock.h
     NoTailCalls.h
     NoVirtualDestructorBase.h
+    NonEscapableBorrow.h
     Nonallocatable.h
     Noncopyable.h
     Nonmovable.h
@@ -307,6 +308,7 @@ set(WTF_PUBLIC_HEADERS
     SchedulePair.h
     Scope.h
     ScopedLambda.h
+    ScopedLeakSanitizerDisabler.h
     ScopedPrintStream.h
     Seconds.h
     SegmentedVector.h
@@ -413,6 +415,7 @@ set(WTF_PUBLIC_HEADERS
     VariantListOperations.h
     Vector.h
     VectorTraits.h
+    VersionedField.h
     WTFConfig.h
     WTFProcess.h
     WTFSemaphore.h
@@ -435,20 +438,6 @@ set(WTF_PUBLIC_HEADERS
     WorkerPool.h
     ZippedRange.h
     dtoa.h
-
-    dragonbox/dragonbox.h
-    dragonbox/dragonbox_to_chars.h
-    dragonbox/ieee754_format.h
-
-    dragonbox/detail/bits.h
-    dragonbox/detail/cache_holder.h
-    dragonbox/detail/decimal_fp.h
-    dragonbox/detail/div.h
-    dragonbox/detail/log.h
-    dragonbox/detail/policy.h
-    dragonbox/detail/policy_holder.h
-    dragonbox/detail/util.h
-    dragonbox/detail/wuint.h
 
     dtoa/bignum-dtoa.h
     dtoa/bignum.h
@@ -656,9 +645,8 @@ set(WTF_SOURCES
     WordLock.cpp
     WorkQueue.cpp
     WorkerPool.cpp
+    Zmij.cpp
     dtoa.cpp
-
-    dragonbox/dragonbox_to_chars.cpp
 
     dtoa/bignum-dtoa.cc
     dtoa/bignum.cc
@@ -751,6 +739,7 @@ elseif (APPLE)
         darwin/OSLogPrintStream.h
         darwin/TypeCastsOSObject.h
         darwin/WeakLinking.h
+        darwin/WebKitReasonCode.h
         darwin/XPCExtras.h
         darwin/XPCObjectPtr.h
 
@@ -864,6 +853,12 @@ if (NOT APPLE AND SWIFT_REQUIRED)
     # an empty stub.
     file(MAKE_DIRECTORY "${WTF_HEADERS_DIR}/ios")
     file(WRITE "${WTF_HEADERS_DIR}/ios/WebCoreThread.h" "")
+endif ()
+
+if (NOT MSVC)
+    set_source_files_properties(FastMalloc.cpp PROPERTIES
+        COMPILE_OPTIONS $<$<CONFIG:Debug>:-O3>
+        SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 
 WEBKIT_FRAMEWORK(WTF)

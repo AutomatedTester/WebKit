@@ -322,7 +322,7 @@ ScrollOffset RenderLayerScrollableArea::scrollToOffset(const ScrollOffset& scrol
         // cancelling it. Cancelling tears the animation down, which prematurely fires a
         // scrollend event at the current intermediate position rather than running to
         // the new destination.
-        if (options.animated == ScrollIsAnimated::Yes && scrollAnimator().retargetRunningAnimation(snappedPosition))
+        if (options.animated == ScrollIsAnimated::Yes && scrollAnimator().retargetRunningAnimation(snappedPosition, options.animationCurve))
             return snappedOffset;
         scrollAnimator().cancelAnimations();
         stopAsyncAnimatedScroll();
@@ -400,7 +400,7 @@ void RenderLayerScrollableArea::scrollTo(const ScrollPosition& position)
         }
 
         // Update regions, scrolling may change the clip of a particular region.
-        protect(renderer.document())->invalidateRenderingDependentRegions();
+        renderer.document().invalidateRenderingDependentRegions();
         DebugPageOverlays::didLayout(protect(renderer.frame()));
     }
 
@@ -486,8 +486,7 @@ int RenderLayerScrollableArea::scrollWidth() const
 {
     ASSERT(m_layer.renderBox());
     if (m_scrollDimensionsDirty) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
+        const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
     }
     // FIXME: This should use snappedIntSize() instead with absolute coordinates.
     return m_scrollWidth;
@@ -497,8 +496,7 @@ int RenderLayerScrollableArea::scrollHeight() const
 {
     ASSERT(m_layer.renderBox());
     if (m_scrollDimensionsDirty) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
+        const_cast<RenderLayerScrollableArea*>(this)->computeScrollDimensions();
     }
     // FIXME: This should use snappedIntSize() instead with absolute coordinates.
     return m_scrollHeight;
@@ -842,7 +840,7 @@ void RenderLayerScrollableArea::invalidateScrollbarRect(Scrollbar& scrollbar, co
         scrollRect.moveBy(rects.horizontalScrollbar.location());
 
     LayoutRect repaintRect = scrollRect;
-    box->flipForWritingMode(repaintRect);
+    box->physicalToBlockStartRelative(repaintRect);
     box->repaintRectangle(repaintRect);
 }
 
@@ -882,7 +880,7 @@ void RenderLayerScrollableArea::createScrollbarsController()
     m_layer.page().chrome().client().ensureScrollbarsController(protect(m_layer.page()), *this);
 }
 
-static inline RenderElement* rendererForScrollbar(RenderLayerModelObject& renderer)
+NODELETE static inline RenderElement* rendererForScrollbar(RenderLayerModelObject& renderer)
 {
     if (auto* element = renderer.element()) {
         if (auto* shadowRoot = element->containingShadowRoot()) {
@@ -1159,7 +1157,7 @@ void RenderLayerScrollableArea::computeScrollOrigin()
     CheckedPtr box = m_layer.renderBox();
 
     auto overflowRect = box->layoutOverflowRect();
-    box->flipForWritingMode(overflowRect);
+    box->blockStartRelativeToPhysical(overflowRect);
 
     int scrollableLeftOverflow = roundToInt(overflowRect.x() - box->borderLeft());
     if (shouldPlaceVerticalScrollbarOnLeft())
@@ -1358,7 +1356,7 @@ std::optional<ScrollbarUpdateScope> RenderLayerScrollableArea::updateScrollInfoA
         m_layer.updateSelfPaintingLayer();
     }
 
-    return ScrollbarUpdateScope { *this, originalScrollPosition, autoScrollbarChanges, hasHorizontalOverflow ? HasHorizontalOverflow::Yes : HasHorizontalOverflow::No, hasVerticalOverflow ? HasVerticalOverflow::Yes : HasVerticalOverflow::No };
+    return std::optional<ScrollbarUpdateScope> { std::in_place, *this, originalScrollPosition, autoScrollbarChanges, hasHorizontalOverflow ? HasHorizontalOverflow::Yes : HasHorizontalOverflow::No, hasVerticalOverflow ? HasVerticalOverflow::Yes : HasVerticalOverflow::No };
 }
 
 void RenderLayerScrollableArea::updateScrollbarSteps()
@@ -1896,8 +1894,7 @@ void RenderLayerScrollableArea::panScrollFromPoint(const IntPoint& sourcePoint)
 
 static LayoutRect computeLocalExposeRect(const LayoutRect& absoluteRect, RenderBox* box)
 {
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return LayoutRect { box->absoluteToLocalQuad(FloatQuad(FloatRect(absoluteRect))).boundingBox() };
+    return LayoutRect { box->absoluteToLocalQuad(FloatQuad(FloatRect(absoluteRect))).boundingBox() };
 }
 
 LayoutRect RenderLayerScrollableArea::scrollRectToVisible(const LayoutRect& absoluteRect, const ScrollRectToVisibleOptions& options)
@@ -1956,8 +1953,7 @@ std::optional<LayoutRect> RenderLayerScrollableArea::updateScrollPositionForScro
     IntSize scrollOffsetDifference = realScrollOffset - oldScrollOffset;
     auto localExposeRectScrolled = localExposeRect;
     localExposeRectScrolled.move(-scrollOffsetDifference);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return LayoutRect(box->localToAbsoluteQuad(FloatQuad(FloatRect(localExposeRectScrolled)), MapCoordinatesMode::UseTransforms).boundingBox());
+    return LayoutRect(box->localToAbsoluteQuad(FloatQuad(FloatRect(localExposeRectScrolled)), MapCoordinatesMode::UseTransforms).boundingBox());
 }
 
 void RenderLayerScrollableArea::scrollByRecursively(const IntSize& delta, ScrollableArea** scrolledArea)
@@ -2031,7 +2027,7 @@ void RenderLayerScrollableArea::animatedScrollDidEnd()
 
 float RenderLayerScrollableArea::deviceScaleFactor() const
 {
-    return protect(m_layer.renderer().document())->deviceScaleFactor();
+    return m_layer.renderer().document().deviceScaleFactor();
 }
 
 void RenderLayerScrollableArea::updateAnchorPositionedAfterScroll()

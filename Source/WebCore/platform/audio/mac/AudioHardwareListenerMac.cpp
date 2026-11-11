@@ -87,7 +87,7 @@ static AudioHardwareListener::BufferSizeRange currentDeviceSupportedBufferSizes(
 }
 
 
-static const AudioObjectPropertyAddress& LEGACY_NODELETE processIsRunningPropertyDescriptor()
+NODELETE static const AudioObjectPropertyAddress& processIsRunningPropertyDescriptor()
 {
     static const AudioObjectPropertyAddress processIsRunningProperty = {
         kAudioHardwarePropertyProcessIsRunning,
@@ -98,7 +98,7 @@ static const AudioObjectPropertyAddress& LEGACY_NODELETE processIsRunningPropert
     return processIsRunningProperty;
 }
 
-static const AudioObjectPropertyAddress& LEGACY_NODELETE outputDevicePropertyDescriptor()
+NODELETE static const AudioObjectPropertyAddress& outputDevicePropertyDescriptor()
 {
     static const AudioObjectPropertyAddress outputDeviceProperty = {
         kAudioHardwarePropertyDefaultOutputDevice,
@@ -122,8 +122,8 @@ AudioHardwareListenerMac::AudioHardwareListenerMac(Client& client)
 
     WeakPtr weakThis { *this };
     m_block = Block_copy(^(UInt32 count, const AudioObjectPropertyAddress properties[]) {
-        if (weakThis)
-            weakThis->propertyChanged(unsafeMakeSpan(properties, count));
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->propertyChanged(unsafeMakeSpan(properties, count));
     });
 
     AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &processIsRunningPropertyDescriptor(), mainDispatchQueueSingleton(), m_block);

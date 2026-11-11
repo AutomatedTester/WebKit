@@ -63,7 +63,17 @@ RemoteScrollingCoordinatorProxyMac::RemoteScrollingCoordinatorProxyMac(WebPagePr
 
 RemoteScrollingCoordinatorProxyMac::~RemoteScrollingCoordinatorProxyMac()
 {
+    if (!m_isInvalidated)
+        m_eventDispatcher->invalidate();
+}
+
+void RemoteScrollingCoordinatorProxyMac::invalidate()
+{
+    if (m_isInvalidated)
+        return;
+
     m_eventDispatcher->invalidate();
+    RemoteScrollingCoordinatorProxy::invalidate();
 }
 
 void RemoteScrollingCoordinatorProxyMac::cacheWheelEventScrollingAccelerationCurve(const NativeWebWheelEvent& nativeWheelEvent)
@@ -286,6 +296,11 @@ void RemoteScrollingCoordinatorProxyMac::applyScrollingTreeLayerPositionsAfterCo
     m_eventDispatcher->renderingUpdateComplete();
 }
 
+void RemoteScrollingCoordinatorProxyMac::flushMainThreadTransactionIfNeeded()
+{
+    m_eventDispatcher->flushMainThreadTransactionIfNeeded();
+}
+
 #if ENABLE(THREADED_ANIMATIONS)
 void RemoteScrollingCoordinatorProxyMac::animationsWereAddedToNode(RemoteLayerTreeNode& node)
 {
@@ -312,12 +327,14 @@ RefPtr<const RemoteAnimationTimeline> RemoteScrollingCoordinatorProxyMac::timeli
     return m_eventDispatcher->timeline(timelineID);
 }
 
-RefPtr<const RemoteAnimationStack> RemoteScrollingCoordinatorProxyMac::animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
+String RemoteScrollingCoordinatorProxyMac::animationStackJSONForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
 {
+    String json = emptyString();
     m_eventDispatcher->lockForAnimationChanges();
-    RefPtr animationStack = m_eventDispatcher->animationStackForNodeWithIDForTesting(layerID);
+    if (RefPtr animationStack = m_eventDispatcher->animationStackForNodeWithIDForTesting(layerID))
+        json = animationStack->toJSONForTesting()->toJSONString();
     m_eventDispatcher->unlockForAnimationChanges();
-    return animationStack;
+    return json;
 }
 
 HashSet<Ref<RemoteProgressBasedTimeline>> RemoteScrollingCoordinatorProxyMac::timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID scrollingNodeID) const

@@ -41,8 +41,7 @@ public:
     PositionedLayoutConstraints(const RenderBox&, const Style::ComputedStyle& selfStyleOverride, LogicalBoxAxis selfAxis);
     void computeInsets();
 
-    static bool usesStaticPosition(const Style::ComputedStyle&, LogicalBoxAxis, bool isHorizontalWritingMode);
-    static LayoutSize containingBlockOffsetForNonStaticAxes(const RenderBoxModelObject& container, const Style::ComputedStyle& outOfFlowBoxStyle);
+    NODELETE static bool usesStaticPosition(const Style::ComputedStyle&, LogicalBoxAxis, bool isHorizontalWritingMode);
 
     /*** The following are available without calling computeInsets(). ***/
 
@@ -58,11 +57,11 @@ public:
     WritingMode containingWritingMode() const { return m_containingWritingMode; }
     WritingMode selfWritingMode() const { return m_writingMode; }
 
-    bool LEGACY_NODELETE needsAnchor() const;
+    NODELETE bool needsAnchor() const;
     const RenderBoxModelObject* defaultAnchorBox() const { return m_defaultAnchorBox.get(); }
     const StyleSelfAlignmentData& alignment() const LIFETIME_BOUND { return m_alignment; }
     ItemPosition resolveAlignmentValue() const; // Convert auto/normal as necessary.
-    bool LEGACY_NODELETE alignmentAppliesStretch(ItemPosition normalAlignment) const;
+    NODELETE bool alignmentAppliesStretch(ItemPosition normalAlignment) const;
 
     bool isOrthogonal() const { return m_containingWritingMode.isOrthogonal(m_writingMode); }
     inline bool isOpposing() const;
@@ -93,14 +92,14 @@ public:
     LayoutUnit resolveAlignmentShift(const LayoutUnit unusedSpace, const LayoutUnit itemSize) const;
 
     void fixupLogicalLeftPosition(RenderBox::LogicalExtentComputedValues&) const;
-    void LEGACY_NODELETE adjustLogicalTopWithLogicalHeightIfNeeded(RenderBox::LogicalExtentComputedValues&) const;
+    NODELETE void adjustLogicalTopWithLogicalHeightIfNeeded(RenderBox::LogicalExtentComputedValues&) const;
 
     LayoutUnit computedInlineStaticDistance() const;
 
 private:
-    bool LEGACY_NODELETE containingCoordsAreFlipped() const;
-    bool isOrthogonalToContainingBlockWithFlippedParent() const;
-    bool isParentOpposingContainingBlock() const;
+    NODELETE bool containingCoordsAreFlipped() const;
+    NODELETE bool isOrthogonalToContainingBlockWithFlippedParent() const;
+    NODELETE bool isParentOpposingContainingBlock() const;
 
     void captureInsets();
     void captureGridArea();
@@ -109,7 +108,7 @@ private:
     LayoutRange adjustForPositionArea(const LayoutRange rangeToAdjust, const LayoutRange anchorArea, const BoxAxis containerAxis);
     std::pair<bool, bool> containerAllowsInfiniteOverflow() const;
 
-    bool LEGACY_NODELETE needsGridAreaAdjustmentBeforeStaticPositioning() const;
+    NODELETE bool needsGridAreaAdjustmentBeforeStaticPositioning() const;
     std::optional<LayoutUnit> remainingSpaceForStaticAlignment(LayoutUnit itemSize) const;
     bool shouldAlignStaticPositionInInlineAxis() const;
     void computeStaticPosition();

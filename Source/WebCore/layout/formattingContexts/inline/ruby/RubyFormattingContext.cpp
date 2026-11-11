@@ -39,18 +39,18 @@
 namespace WebCore {
 namespace Layout {
 
-static inline InlineLayoutUnit LEGACY_NODELETE fullWidthAdvance(const Box& box)
+NODELETE static inline InlineLayoutUnit fullWidthAdvance(const Box& box)
 {
     // A fullwidth character (including fullwidth punctuation) advances one em.
     return box.style().usedFontSize();
 }
 
-static inline InlineLayoutUnit LEGACY_NODELETE halfOfAFullWidthCharacter(const Box& annotationBox)
+NODELETE static inline InlineLayoutUnit halfOfAFullWidthCharacter(const Box& annotationBox)
 {
     return fullWidthAdvance(annotationBox) / 2.f;
 }
 
-static inline size_t LEGACY_NODELETE baseContentIndex(size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes)
+NODELETE static inline size_t baseContentIndex(size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes)
 {
     auto baseContentIndex = rubyBaseStart + 1;
     if (boxes[baseContentIndex].layoutBox().isRubyAnnotationBox())
@@ -58,7 +58,7 @@ static inline size_t LEGACY_NODELETE baseContentIndex(size_t rubyBaseStart, std:
     return baseContentIndex;
 }
 
-static RubyPosition LEGACY_NODELETE rubyPosition(const Box& rubyBaseLayoutBox)
+NODELETE static RubyPosition rubyPosition(const Box& rubyBaseLayoutBox)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     auto computedRubyPosition = rubyBaseLayoutBox.style().rubyPosition();
@@ -81,7 +81,7 @@ static inline InlineRect annotationMarginBoxVisualRect(const Box& annotationBox,
     return InlineRect { visualTopLeft, marginBoxLogicalRect.size().transposedSize() };
 }
 
-static InlineLayoutUnit baseLogicalWidthFromRubyBaseEnd(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns)
+NODELETE static InlineLayoutUnit baseLogicalWidthFromRubyBaseEnd(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     // Candidate content is supposed to hold the base content and in case of soft wrap opportunities, line may have some base content too.
@@ -111,7 +111,7 @@ static bool annotationOverlapCheck(const InlineDisplay::Box& adjacentDisplayBox,
     // We are in the middle of a line, should not see any line breaks or ellipsis boxes here.
     ASSERT(!adjacentDisplayBox.isEllipsis() && !adjacentDisplayBox.isRootInlineBox());
     // Skip empty content like <span></span>
-    if (adjacentDisplayBox.visualRectIgnoringBlockDirection().isEmpty())
+    if (adjacentDisplayBox.blockStartRelativePhysicalRect().isEmpty())
         return false;
 
     if (adjacentDisplayBox.inkOverflow().intersects(overhangingRect))
@@ -480,8 +480,8 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& r
     }
     // FIXME: Usually the first content box is visually the leftmost, but we should really look for content shifted to the left through negative margins on inline boxes.
     auto gapBetweenBaseAndContent = [&] {
-        auto contentVisualRect = boxes[baseContentStart].visualRectIgnoringBlockDirection();
-        auto baseVisualRect = boxes[rubyBaseStart].visualRectIgnoringBlockDirection();
+        auto contentVisualRect = boxes[baseContentStart].blockStartRelativePhysicalRect();
+        auto baseVisualRect = boxes[rubyBaseStart].blockStartRelativePhysicalRect();
         if (isHorizontalWritingMode)
             return std::max(0.f, contentVisualRect.x() - baseVisualRect.x());
         return std::max(0.f, contentVisualRect.y() - baseVisualRect.y());
@@ -528,8 +528,8 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationAfter(const Box& ru
     // FIXME: Currently justified content always expands producing 0 value for gapBetweenBaseEndAndContent.
     auto rubyBaseContentEnd = rubyBaseRange.end() - 1;
     auto gapBetweenBaseEndAndContent = [&] {
-        auto baseStartVisualRect = boxes[rubyBaseRange.begin()].visualRectIgnoringBlockDirection();
-        auto baseContentEndVisualRect = boxes[rubyBaseContentEnd].visualRectIgnoringBlockDirection();
+        auto baseStartVisualRect = boxes[rubyBaseRange.begin()].blockStartRelativePhysicalRect();
+        auto baseContentEndVisualRect = boxes[rubyBaseContentEnd].blockStartRelativePhysicalRect();
         if (isHorizontalWritingMode)
             return std::max(0.f, baseStartVisualRect.maxX() - baseContentEndVisualRect.maxX());
         return std::max(0.f, baseStartVisualRect.maxY() - baseContentEndVisualRect.maxY());

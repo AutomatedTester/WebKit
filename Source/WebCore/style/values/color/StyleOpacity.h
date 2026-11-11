@@ -66,8 +66,7 @@ struct Opacity {
     constexpr bool isOpaque() const { return value == 1; }
 
     constexpr bool operator==(const Opacity&) const = default;
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    IGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE_ON_FUNCTION("alpha.webkit.MemoryUnsafeCastChecker") constexpr auto operator<=>(const Opacity&) const = default;
+    constexpr auto operator<=>(const Opacity&) const = default;
 };
 DEFINE_TYPE_WRAPPER_GET(Opacity, value);
 
@@ -76,7 +75,7 @@ DEFINE_TYPE_WRAPPER_GET(Opacity, value);
 #if ENABLE(THREADED_ANIMATIONS)
 
 template<> struct Evaluation<Opacity, AcceleratedEffectOpacity> {
-    auto operator()(const Opacity&) -> AcceleratedEffectOpacity;
+    NODELETE AcceleratedEffectOpacity operator()(const Opacity&);
 };
 
 #endif

@@ -56,6 +56,7 @@
 #import <wtf/RunLoop.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/URL.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/WTFString.h>
 
@@ -100,12 +101,12 @@ NSString * const WebHistoryItemChangedNotification = @"WebHistoryItemChangedNoti
 
 using HistoryItemMap = HashMap<WeakRef<WebCore::HistoryItem>, WebHistoryItem*>;
 
-SUPPRESS_NODELETE static inline WebCoreHistoryItem* LEGACY_NODELETE core(WebHistoryItemPrivate* itemPrivate)
+NODELETE SUPPRESS_NODELETE static inline WebCoreHistoryItem* core(WebHistoryItemPrivate* itemPrivate)
 {
     return itemPrivate->_historyItem.get();
 }
 
-static HistoryItemMap& LEGACY_NODELETE historyItemWrappers()
+NODELETE static HistoryItemMap& historyItemWrappers()
 {
     static NeverDestroyed<HistoryItemMap> historyItemWrappers;
     return historyItemWrappers;
@@ -237,7 +238,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         int currPos = [result length];
         unsigned size = children.size();
         for (unsigned i = 0; i < size; ++i) {
-            RetainPtr child = kit(const_cast<WebCore::HistoryItem*>(children[i].ptr()));
+            RetainPtr child = kit(children[i].ptr());
             [result appendString:@"\n"];
             [result appendString:[child.get() description]];
         }
@@ -334,8 +335,9 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
     if (NSArray *redirectURLs = [dict _webkit_arrayForKey:redirectURLsKey])
         _private->_redirectURLs = makeUnique<Vector<String>>(makeVector<String>(redirectURLs));
 
-    for (id childDict in [[dict objectForKey:childrenKey] reverseObjectEnumerator]) {
-        auto child = adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:childDict]);
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id childDict in [[dict objectForKey:childrenKey] reverseObjectEnumerator]) {
+        RetainPtr child = adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:dynamic_objc_cast<NSDictionary>(childDict)]);
         protect(core(_private))->addChildItem(*core(child->_private));
     }
 
@@ -346,7 +348,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         core(_private)->setScale([scaleValue floatValue], [scaleIsInitialValue boolValue]);
 
     if (id viewportArguments = [dict objectForKey:@"WebViewportArguments"])
-        [self _setViewportArguments:viewportArguments];
+        [self _setViewportArguments:dynamic_objc_cast<NSDictionary>(viewportArguments)];
 
     NSNumber *scrollPointXValue = [dict objectForKey:scrollPointXKey];
     NSNumber *scrollPointYValue = [dict objectForKey:scrollPointYKey];
@@ -418,7 +420,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         NSMutableArray *childDicts = [NSMutableArray arrayWithCapacity:children.size()];
         
         for (int i = children.size() - 1; i >= 0; i--)
-            [childDicts addObject:[protect(kit(const_cast<WebCore::HistoryItem*>(children[i].ptr()))) dictionaryRepresentation]];
+            [childDicts addObject:[protect(kit(children[i].ptr())) dictionaryRepresentation]];
         [dict setObject: childDicts forKey:childrenKey];
     }
 
@@ -465,7 +467,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         return nil;
 
     return createNSArray(children, [] (auto& item) {
-        return kit(protect(const_cast<WebCore::HistoryItem*>(item.ptr())));
+        return kit(protect(item.ptr()));
     }).autorelease();
 }
 

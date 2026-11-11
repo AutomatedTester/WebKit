@@ -118,7 +118,7 @@ static void applyBasicAuthorizationHeader(WebCore::ResourceRequest& request, con
     request.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, credential.serializationForBasicAuthorizationHeader());
 }
 
-static float LEGACY_NODELETE toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
+NODELETE static float toNSURLSessionTaskPriority(WebCore::ResourceLoadPriority priority)
 {
     switch (priority) {
     case WebCore::ResourceLoadPriority::VeryLow:
@@ -202,7 +202,7 @@ void NetworkDataTaskCocoa::installPendingStreamProbe(WebCore::PendingStreamState
 }
 
 NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
-    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
+    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByWorker)
     , NetworkTaskCocoa(session)
     , m_sessionWrapper(downcast<NetworkSessionCocoa>(session).sessionWrapperForTask(parameters.webPageProxyID, parameters.request, parameters.storedCredentialsPolicy, parameters.isNavigatingToAppBoundDomain).get())
     , m_frameID(parameters.webFrameID)
@@ -212,6 +212,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     , m_navigationLosesFrameSpecificStorageAccess(parameters.navigationLosesFrameSpecificStorageAccess)
     , m_sourceOrigin(parameters.sourceOrigin)
     , m_requiredCookiesVersion(parameters.requiredCookiesVersion)
+    , m_advancedPrivacyProtections(parameters.advancedPrivacyProtections)
 {
     auto request = parameters.request;
     auto url = request.url();
@@ -264,8 +265,10 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 
     auto advancedPrivacyProtections = parameters.advancedPrivacyProtections;
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    if (advancedPrivacyProtections.contains(WebCore::AdvancedPrivacyProtections::BaselineProtections) && parameters.isMainFrameNavigation)
+    if (advancedPrivacyProtections.contains(WebCore::AdvancedPrivacyProtections::BaselineProtections) && parameters.isMainFrameNavigation) {
         configureForAdvancedPrivacyProtections(m_sessionWrapper->session.get());
+        m_sessionWrapper->isConfiguredForAdvancedPrivacyProtections = true;
+    }
 
     enableAdvancedPrivacyProtections(mutableRequest.get(), advancedPrivacyProtections);
 #endif
@@ -336,9 +339,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
         ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     case WebCore::StoredCredentialsPolicy::DoNotUse:
-        RetainPtr<NSURLSessionConfiguration> effectiveConfiguration = m_sessionWrapper->session.get().configuration;
-        effectiveConfiguration.get().URLCredentialStorage = nil;
-        [m_task _adoptEffectiveConfiguration:effectiveConfiguration.get()];
+        ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
         break;
     };
 

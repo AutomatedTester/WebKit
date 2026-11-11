@@ -31,6 +31,8 @@ namespace WebKit {
 
 // MARK: Alarms
 static constexpr auto webExtensionMinimumAlarmInterval = 30_s;
+static constexpr size_t webExtensionMaximumNumberOfAlarms = 500;
+static constexpr size_t webExtensionMaximumAlarmNameLength = 1024;
 
 // MARK: Message Passing
 /// This matches the maximum message length enforced by Chromium in its `MessageFromJSONString()` function.
@@ -48,6 +50,7 @@ static constexpr size_t webExtensionStorageAreaLocalQuotaBytes = 10 * 1024 * 102
 static constexpr size_t webExtensionStorageAreaSessionQuotaBytes = 10 * 1024 * 1024;
 static constexpr size_t webExtensionStorageAreaSyncQuotaBytes = 100 * 1024;
 static constexpr size_t webExtensionStorageAreaMaximumBytesPerCall = 995 * 1024 * 1024;
+static constexpr size_t webExtensionStorageAreaMaximumBytesPerCallForTesting = 1024 * 1024;
 
 static constexpr size_t webExtensionStorageAreaSyncQuotaBytesPerItem = 8 * 1024;
 

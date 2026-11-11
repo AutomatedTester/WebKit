@@ -1,4 +1,4 @@
-# Copyright (C) 2023-2025 Apple Inc. All rights reserved.
+# Copyright (C) 2023-2026 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -218,7 +218,7 @@ end
 
 macro argumINTDispatch()
     loadbAndAdvance(MC, argumINTTmp)
-    bbgteq argumINTTmp, (constexpr IPInt::ArgumINTBytecode::NumOpcodes), _ipint_argument_dispatch_err
+    bbaeq argumINTTmp, (constexpr IPInt::ArgumINTBytecode::NumOpcodes), _ipint_argument_dispatch_err
     lshiftp (constexpr (WTF::fastLog2(JSC::IPInt::alignArgumInt))), argumINTTmp
 if ARM64 or ARM64E or X86_64
     pcrtoaddr _argumINT_begin, argumINTDsp
@@ -924,18 +924,18 @@ end
 # For store ops, the data register (t3 for int, ft0 for float) is also set by the handler.
 macro loadStoreMakePointerSlow(cursor, wasmAddrReg, size, scratch, scratch2, decodeScratch1, decodeScratch2)
     # 1. Decode flags/alignment, check multi-memory bit
-    decodeLEBVarUInt(scratch, cursor, decodeScratch1, decodeScratch2)
+    decodeLEBVarUInt32(scratch, cursor, decodeScratch1, decodeScratch2)
 
     # 2. If multi-memory, decode memory index; otherwise 0
     btiz scratch, 0x40, .memoryIndex0
-    decodeLEBVarUInt(scratch, cursor, decodeScratch1, decodeScratch2)
+    decodeLEBVarUInt32(scratch, cursor, decodeScratch1, decodeScratch2)
     jmp .decodeOffset
 .memoryIndex0:
     move 0, scratch
 
 .decodeOffset:
     # 3. Decode offset
-    decodeLEBVarUInt(scratch2, cursor, decodeScratch1, decodeScratch2)
+    decodeLEBVarUInt64(scratch2, cursor, decodeScratch1, decodeScratch2)
 
     # 4. Narrow the address unless the memory being accessed is 64-bit. This has to happen before the
     # offset is added, and it consults the accessed memory rather than memory 0.
@@ -2851,87 +2851,73 @@ reservedOpcode(0xf8)
 reservedOpcode(0xf9)
 reservedOpcode(0xfa)
 
+macro dispatchPrefixedOpcode(opcodeLimit, dispatchBase)
+    biaeq t0, opcodeLimit, .nonexistent
+    leap _os_script_config_storage, t1
+    loadp dispatchBase[t1], t1
+    if ARM64 or ARM64E
+        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
+        jmp t0
+    elsif X86_64
+        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
+        addq t1, t0
+        jmp t0
+    end
+
+.nonexistent:
+    break
+end
+
+macro dispatchGcOpcode()
+    # Security guarantee: always less than 30 (0x00 -> 0x1e)
+    dispatchPrefixedOpcode(0x1f, JSC::LLInt::OpcodeConfig::ipint_gc_dispatch_base)
+end
+
+macro dispatchConversionOpcode()
+    # Security guarantee: always less than 23 (0x00 -> 0x16)
+    dispatchPrefixedOpcode(0x17, JSC::LLInt::OpcodeConfig::ipint_conversion_dispatch_base)
+end
+
+macro dispatchSimdOpcode()
+    # Security guarantee: always less than 276 (0x00 -> 0x113, including relaxed SIMD)
+    dispatchPrefixedOpcode(0x114, JSC::LLInt::OpcodeConfig::ipint_simd_dispatch_base)
+end
+
+macro dispatchAtomicOpcode()
+    # Security guarantee: always less than 78 (0x00 -> 0x4e)
+    dispatchPrefixedOpcode(0x4f, JSC::LLInt::OpcodeConfig::ipint_atomic_dispatch_base)
+end
+
+macro decodeAndDispatchPrefixedOpcode(slowPath, dispatchOpcode)
+    loadb 1[PC], t0
+    bbaeq t0, 0x80, slowPath
+    leap 2[PC], t4
+    dispatchOpcode()
+end
+
+macro decodeAndDispatchPrefixedOpcodeSlow(dispatchOpcode)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarUInt32(t0, t4, t1, t2)
+    dispatchOpcode()
+end
+
 # If the following four instructions are given more descriptive names,
 # the changes should be matched in IPINT_INSTRUCTIONS in Tools/lldb/debug_ipint.py
 
 ipintOp(_gc_prefix, macro()
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
-    # Security guarantee: always less than 30 (0x00 -> 0x1e)
-    biaeq t0, 0x1f, .ipint_gc_nonexistent
-    leap _os_script_config_storage, t1
-    loadp JSC::LLInt::OpcodeConfig::ipint_gc_dispatch_base[t1], t1
-    if ARM64 or ARM64E
-        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        jmp t0
-    elsif X86_64
-        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        addq t1, t0
-        jmp t0
-    end
-
-.ipint_gc_nonexistent:
-    break
+    decodeAndDispatchPrefixedOpcode(.ipint_gc_prefix_slow_path, dispatchGcOpcode)
 end)
 
 ipintOp(_conversion_prefix, macro()
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
-    # Security guarantee: always less than 23 (0x00 -> 0x16)
-    biaeq t0, 0x17, .ipint_conversion_nonexistent
-    leap _os_script_config_storage, t1
-    loadp JSC::LLInt::OpcodeConfig::ipint_conversion_dispatch_base[t1], t1
-    if ARM64 or ARM64E
-        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        jmp t0
-    elsif X86_64
-        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        addq t1, t0
-        jmp t0
-    end
-
-.ipint_conversion_nonexistent:
-    break
+    decodeAndDispatchPrefixedOpcode(.ipint_conversion_prefix_slow_path, dispatchConversionOpcode)
 end)
 
 ipintOp(_simd_prefix, macro()
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
-    # Security guarantee: always less than 276 (0x00 -> 0x113, including relaxed SIMD)
-    biaeq t0, 0x114, .ipint_simd_nonexistent
-    leap _os_script_config_storage, t1
-    loadp JSC::LLInt::OpcodeConfig::ipint_simd_dispatch_base[t1], t1
-    if ARM64 or ARM64E
-        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        jmp t0
-    elsif X86_64
-        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        addq t1, t0
-        jmp t0
-    end
-
-.ipint_simd_nonexistent:
-    break
+    decodeAndDispatchPrefixedOpcode(.ipint_simd_prefix_slow_path, dispatchSimdOpcode)
 end)
 
 ipintOp(_atomic_prefix, macro()
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
-    # Security guarantee: always less than 78 (0x00 -> 0x4e)
-    biaeq t0, 0x4f, .ipint_atomic_nonexistent
-    leap _os_script_config_storage, t1
-    loadp JSC::LLInt::OpcodeConfig::ipint_atomic_dispatch_base[t1], t1
-    if ARM64 or ARM64E
-        addlshiftp t1, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        jmp t0
-    elsif X86_64
-        lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-        addq t1, t0
-        jmp t0
-    end
-
-.ipint_atomic_nonexistent:
-    break
+    decodeAndDispatchPrefixedOpcode(.ipint_atomic_prefix_slow_path, dispatchAtomicOpcode)
 end)
 
 reservedOpcode(0xff)
@@ -3921,6 +3907,32 @@ macro simdLoadSplat64()
         emit "vmovddup (%rax), %xmm0"
     else
         break
+    end
+end
+
+# A scalar FP load clears the upper lanes of the vector register on ARM64 and X86_64.
+macro simdLoad32Zero()
+    if ARM64 or ARM64E or X86_64
+        loadf [t0], ft0
+        pushVec(ft0)
+    else
+        loadi [t0], t0
+        subp V128ISize, sp
+        storei t0, [sp]
+        storei 0, 4[sp]
+        storeq 0, 8[sp]
+    end
+end
+
+macro simdLoad64Zero()
+    if ARM64 or ARM64E or X86_64
+        loadd [t0], ft0
+        pushVec(ft0)
+    else
+        loadq [t0], t0
+        subp V128ISize, sp
+        storeq t0, [sp]
+        storeq 0, 8[sp]
     end
 end
 
@@ -5416,11 +5428,7 @@ ipintOp(_simd_v128_load32_zero_mem, macro()
     # v128.load32_zero - load 32-bit value from memory and zero-pad to 128 bits
     popMemoryAddress(t0)
     loadStoreMakePointerFast([t4], t0, 4, t1, t2, .simd_v128_load32_zero_slow_path)
-    loadi [t0], t0
-    subp V128ISize, sp
-    storei t0, [sp]
-    storei 0, 4[sp]
-    storeq 0, 8[sp]
+    simdLoad32Zero()
     leap 2[t4], PC
     nextIPIntInstruction()
 end)
@@ -5429,10 +5437,7 @@ ipintOp(_simd_v128_load64_zero_mem, macro()
     # v128.load64_zero - load 64-bit value from memory and zero-pad to 128 bits
     popMemoryAddress(t0)
     loadStoreMakePointerFast([t4], t0, 8, t1, t2, .simd_v128_load64_zero_slow_path)
-    loadq [t0], t0
-    subp V128ISize, sp
-    storeq t0, [sp]
-    storeq 0, 8[sp]
+    simdLoad64Zero()
     leap 2[t4], PC
     nextIPIntInstruction()
 end)
@@ -10733,24 +10738,24 @@ _ipint_op_memory_atomic_wait64:
 #######################################
 
 .ipint_local_get_slow_path:
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarUInt32(t0, t4, t1, t2)
     localGet()
     pushVec(v0)
     move t4, PC
     nextIPIntInstruction()
 
 .ipint_local_set_slow_path:
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarUInt32(t0, t4, t1, t2)
     popVec(v0)
     localSet()
     move t4, PC
     nextIPIntInstruction()
 
 .ipint_local_tee_slow_path:
-    leap 1[PC], t4
-    decodeLEBVarUInt(t0, t4, t1, t2)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarUInt32(t0, t4, t1, t2)
     loadv [sp], v0
     localSet()
     move t4, PC
@@ -10761,18 +10766,34 @@ _ipint_op_memory_atomic_wait64:
 ##########################################
 
 .ipint_i32_const_slow_path:
-    leap 1[PC], t4
-    decodeLEBVarSInt32(t0, t4, t1, t2)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarSInt32(t0, t4, t1, t2)
     pushInt32(t0)
     move t4, PC
     nextIPIntInstruction()
 
 .ipint_i64_const_slow_path:
-    leap 1[PC], t4
-    decodeLEBVarSInt64(t0, t4, t1, t2)
+    leap 2[PC], t4
+    decodeMultiByteLEBVarSInt64(t0, t4, t1, t2)
     pushInt64(t0)
     move t4, PC
     nextIPIntInstruction()
+
+################################################
+## Out-of-line prefixed sub-opcode slow paths ##
+################################################
+
+.ipint_gc_prefix_slow_path:
+    decodeAndDispatchPrefixedOpcodeSlow(dispatchGcOpcode)
+
+.ipint_conversion_prefix_slow_path:
+    decodeAndDispatchPrefixedOpcodeSlow(dispatchConversionOpcode)
+
+.ipint_simd_prefix_slow_path:
+    decodeAndDispatchPrefixedOpcodeSlow(dispatchSimdOpcode)
+
+.ipint_atomic_prefix_slow_path:
+    decodeAndDispatchPrefixedOpcodeSlow(dispatchAtomicOpcode)
 
 ##################################################
 ## Out-of-line slow paths for memory load/store ##
@@ -11052,20 +11073,13 @@ _ipint_op_memory_atomic_wait64:
 
 .simd_v128_load32_zero_slow_path:
     loadStoreMakePointerSlow(t4, t0, 4, t1, t2, t5, t6)
-    loadi [t0], t0
-    subp V128ISize, sp
-    storei t0, [sp]
-    storei 0, 4[sp]
-    storeq 0, 8[sp]
+    simdLoad32Zero()
     move t4, PC
     nextIPIntInstruction()
 
 .simd_v128_load64_zero_slow_path:
     loadStoreMakePointerSlow(t4, t0, 8, t1, t2, t5, t6)
-    loadq [t0], t0
-    subp V128ISize, sp
-    storeq t0, [sp]
-    storeq 0, 8[sp]
+    simdLoad64Zero()
     move t4, PC
     nextIPIntInstruction()
 
@@ -11752,8 +11766,15 @@ end
     # need a common entrypoint because of x86 PC base
     jmp .ipint_mint_arg_dispatch
 
+if ARM64E
+    global _crossInstanceRestoreFrameOriginalReturnPCRetagTrampoline
+    global _crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter
+    global _crossInstanceRestoreFrameTaggedRestoreFramePtrTrampoline
+    global _crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter
+end
+
 .ipint_tail_call_common:
-    # Check if we need to insert a restore frame for cross-instance tail calls.
+    # Check whether this tail call needs a restore frame inserted.
     # Registers on entry:
     #   r0 = entrypoint, r1 = targetInstance, wasmInstance = current instance,
     #   t3 = callerStackArgSize, IPIntCallCallee = callee, IPIntCallFunctionSlot = func info
@@ -11761,7 +11782,13 @@ end
     # On x86_64 r1==t2 (both rdx) and on ARM64 r1==t1, so neither t2 nor t1
     # may be used freely. The ARM64 copy loop uses t2 for pair loads; that is
     # safe because r1==t1 there (t2 is a distinct register).
-    bpeq r1, wasmInstance, .ipint_tail_call_no_restore_frame
+    bpneq r1, wasmInstance, .ipint_tail_call_check_existing_frame
+    # If the call goes out to JS we need a restore frame because JS may grow
+    # wasm memory, invalidating the memory base cached in a callee save register.
+    leap _g_wasmToJSCalleeBoxed, t4
+    loadp [t4], t4
+    bpneq IPIntCallCallee, t4, .ipint_tail_call_no_restore_frame
+.ipint_tail_call_check_existing_frame:
 
     loadp ReturnPC[cfr], t4
     removeCodePtrTag t4
@@ -11783,12 +11810,17 @@ end
     loadp [cfr], t5
     storep t5, [t4]                         # originalCallerFrame
 if ARM64E
+    leap _g_config, t5
+    jmp JSCConfigGateMapOffset + (constexpr Gate::crossInstanceRestoreFrameOriginalReturnPCRetag) * PtrSize[t5], NativeToJITGatePtrTag
+    # For useJIT=0
+    _crossInstanceRestoreFrameOriginalReturnPCRetagTrampoline:
     loadp ReturnPC[cfr], lr
     addp CallerFrameAndPCSize, cfr, t5
     untagReturnAddress t5
     addp CallerFrameAndPCSize, t4, t5
     tagReturnAddress t5
     storep lr, ReturnPC[t4]                 # originalReturnPC (resigned for restore_cfr)
+    _crossInstanceRestoreFrameOriginalReturnPCRetagGateAfter:
 else
     loadp ReturnPC[cfr], t5
     storep t5, ReturnPC[t4]                 # originalReturnPC
@@ -11830,15 +11862,18 @@ end
     storep t4, [cfr]                        # CallerFrame = restore_cfr
 
 if ARM64E
-    leap _g_config, t4
-    loadp JSCConfigGateMapOffset + (constexpr Gate::wasmRestoreFrame) * PtrSize[t4], t4
-    removeCodePtrTag t4
+    pcrtoaddr _wasm_restore_frame_return, lr
+    leap _g_config, t5
+    jmp JSCConfigGateMapOffset + (constexpr Gate::crossInstanceRestoreFrameReturnAddressToRestoreFrameGate) * PtrSize[t5], NativeToJITGatePtrTag
+    _crossInstanceRestoreFrameTaggedRestoreFramePtrTrampoline:
     addp CallerFrameAndPCSize, cfr, t5
-    tagCodePtr t4, t5
+    tagReturnAddress t5
+    storep lr, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
+    _crossInstanceRestoreFrameTaggedRestoreFramePtrGateAfter:
 else
     pcrtoaddr _wasm_restore_frame_return, t4
-end
     storep t4, ReturnPC[cfr]                # ReturnPC = wasmRestoreFrame gate
+end
 
 .ipint_tail_call_no_restore_frame:
     # Free up r0 to be used as argument register

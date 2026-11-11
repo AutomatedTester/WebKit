@@ -1,3 +1,5 @@
+const modelResourcesURL = new URL("../../model-element/resources/", document.currentScript.src);
+
 const createPortal = (test, { width, height, portalTransform, portalAction } = {}) => {
     const portal = document.createElement("div");
     portal.className = "portal";
@@ -20,7 +22,7 @@ const appendModel = (portal, asset, stageMode) => {
         model.stageMode = stageMode;
     portal.appendChild(model);
     const source = document.createElement("source");
-    source.src = `../model-element/resources/${asset}`;
+    source.src = new URL(asset, modelResourcesURL).href;
     model.appendChild(source);
     return model;
 };
@@ -57,17 +59,6 @@ const resolvedTransformForPortal = async (test, asset, portalTransform, portalOp
     return await waitForPortalTransform(portal, portalTransformIsResolved, `portal-transform: ${portalTransform ?? "auto"}`);
 };
 
-async function waitFor(predicate, description, timeout = 5000) {
-    const startTime = Date.now();
-
-    while (!predicate()) {
-        if (Date.now() - startTime > timeout)
-            throw new Error(`Timeout waiting for ${description}`);
-
-        await sleepForSeconds(0.05);
-    }
-}
-
 async function waitForPortalTransform(portal, predicate, description, timeout = 5000) {
     const startTime = Date.now();
 
@@ -96,6 +87,23 @@ async function waitForEntityTransform(model, predicate, description, timeout = 5
 
         await sleepForSeconds(0.1);
     }
+}
+
+async function snapshotOnceModelsRender(afterReady)
+{
+    window.testRunner?.waitUntilDone();
+    window.internals?.disableModelLoadDelaysForTesting();
+
+    await Promise.all([...document.querySelectorAll("model")].map(model => model.ready));
+    await UIHelper.ensureStablePresentationUpdate();
+
+    if (afterReady) {
+        afterReady();
+        await UIHelper.ensureStablePresentationUpdate();
+    }
+
+    await UIHelper.renderingUpdate();
+    window.testRunner?.notifyDone();
 }
 
 // The 3D matrix assertions reject a 2D argument outright, and DOMMatrix stays 2D until an operation touches z.
@@ -145,7 +153,7 @@ const parseSceneGraph = text => {
         if (entityMatch) {
             while (openEntities.length && openEntities.at(-1).depth >= depth)
                 openEntities.pop();
-            const entity = { name: entityMatch[1] ?? "", element: null, parent: openEntities.at(-1) ?? null, depth };
+            const entity = { name: entityMatch[1] ?? "", element: null, rotation: [0, 0, 0, 1], parent: openEntities.at(-1) ?? null, depth };
             entities.push(entity);
             openEntities.push(entity);
             continue;
@@ -154,6 +162,10 @@ const parseSceneGraph = text => {
         const elementMatch = /^\s*\(element (.+)\)$/.exec(line);
         if (elementMatch && openEntities.length)
             openEntities.at(-1).element = elementMatch[1];
+
+        const rotationMatch = /^\s*\(rotation (.+)\)$/.exec(line);
+        if (rotationMatch && openEntities.length)
+            openEntities.at(-1).rotation = rotationMatch[1].split(" ").map(Number);
     }
     return entities;
 };

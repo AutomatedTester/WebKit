@@ -31,7 +31,6 @@
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
 #include <JavaScriptCore/DeletePropertySlot.h>
 #include <JavaScriptCore/Heap.h>
-#include <JavaScriptCore/IndexingHeaderInlines.h>
 #include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/JSCJSValueCell.h>
 #include <JavaScriptCore/JSCast.h>
@@ -173,7 +172,7 @@ public:
 
     enum class SortMode { Default, Ascending };
     template<SortMode mode = SortMode::Default, typename Functor>
-    void forEachOwnIndexedProperty(JSGlobalObject*, NOESCAPE const Functor&);
+    void forEachOwnIndexedProperty(NOESCAPE const Functor&);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -220,7 +219,7 @@ public:
     static bool putInlineForJSObject(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    static bool LEGACY_NODELETE mightBeSpecialProperty(VM&, JSType, UniquedStringImpl*);
+    NODELETE static bool mightBeSpecialProperty(VM&, JSType, UniquedStringImpl*);
     JS_EXPORT_PRIVATE NEVER_INLINE static bool definePropertyOnReceiver(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     // putByIndex assumes that the receiver is this JSCell object.
     JS_EXPORT_PRIVATE static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
@@ -328,7 +327,7 @@ public:
         }
     }
         
-    void enterDictionaryIndexingMode(VM&);
+    ArrayStorage* enterDictionaryIndexingMode(VM&);
 
     // putDirect is effectively an unchecked vesion of 'defineOwnProperty':
     //  - the prototype chain is not consulted
@@ -372,7 +371,7 @@ public:
     static constexpr unsigned maximumPrototypeChainDepth = 40000;
     JS_EXPORT_PRIVATE void getPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    JS_EXPORT_PRIVATE static void LEGACY_NODELETE getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    NODELETE JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE void getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     JS_EXPORT_PRIVATE void getOwnNonIndexPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     void getNonReifiedStaticPropertyNames(VM&, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -523,15 +522,15 @@ public:
     JS_EXPORT_PRIVATE void freeze(VM&);
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
-    JS_EXPORT_PRIVATE static bool LEGACY_NODELETE isExtensible(JSObject*, JSGlobalObject*);
-    bool isSealed(VM& vm) { return structure()->isSealed(vm); }
-    bool isFrozen(VM& vm) { return structure()->isFrozen(vm); }
+    NODELETE JS_EXPORT_PRIVATE static bool isExtensible(JSObject*, JSGlobalObject*);
+    bool isSealed(VM& vm) { return hasAnyArrayStorage(indexingType()) ? isSealedWithArrayStorage(vm) : structure()->isSealed(vm); }
+    bool isFrozen(VM& vm) { return hasAnyArrayStorage(indexingType()) ? isFrozenWithArrayStorage(vm) : structure()->isFrozen(vm); }
 
-    JS_EXPORT_PRIVATE bool LEGACY_NODELETE anyObjectInChainMayInterceptIndexedAccesses() const;
-    bool LEGACY_NODELETE needsSlowPutIndexing() const;
+    NODELETE JS_EXPORT_PRIVATE bool anyObjectInChainMayInterceptIndexedAccesses() const;
+    NODELETE bool needsSlowPutIndexing() const;
 
 private:
-    TransitionKind LEGACY_NODELETE suggestedArrayStorageTransition() const;
+    NODELETE TransitionKind suggestedArrayStorageTransition() const;
 public:
     // You should only call isStructureExtensible() when:
     // - Performing this check in a way that isn't described in the specification 
@@ -759,7 +758,7 @@ protected:
     bool putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow, ArrayStorage*);
 
     bool increaseVectorLength(VM&, unsigned newLength);
-    void LEGACY_NODELETE deallocateSparseIndexMap();
+    NODELETE void deallocateSparseIndexMap();
     bool defineOwnIndexedProperty(JSGlobalObject*, unsigned, const PropertyDescriptor&, bool throwException);
     SparseArrayValueMap* allocateSparseIndexMap(VM&);
         
@@ -776,7 +775,7 @@ protected:
     void reallocateAndShrinkButterfly(VM&, unsigned length);
     
     template<IndexingType indexingShape>
-    unsigned LEGACY_NODELETE countElements(Butterfly*);
+    NODELETE unsigned countElements(Butterfly*);
         
     // This is relevant to undecided, int32, double, and contiguous.
     unsigned countElements();
@@ -821,6 +820,9 @@ private:
         
     bool ensureLengthSlow(VM&, unsigned length);
         
+    JS_EXPORT_PRIVATE NEVER_INLINE bool isSealedWithArrayStorage(VM&);
+    JS_EXPORT_PRIVATE NEVER_INLINE bool isFrozenWithArrayStorage(VM&);
+
     ContiguousJSValues tryMakeWritableInt32Slow(VM&);
     ContiguousDoubles tryMakeWritableDoubleSlow(VM&);
     ContiguousJSValues tryMakeWritableContiguousSlow(VM&);
@@ -1262,7 +1264,7 @@ inline constexpr intptr_t offsetInButterfly(PropertyOffset offset)
 inline size_t JSObject::butterflyPreCapacity()
 {
     if (hasIndexingHeader()) [[unlikely]]
-        return butterfly()->indexingHeader()->preCapacity(structure());
+        return butterfly()->preCapacity(structure());
     return 0;
 }
 
@@ -1275,8 +1277,8 @@ inline size_t JSObject::butterflyTotalSize()
     bool hasIndexingHeader = this->hasIndexingHeader();
 
     if (hasIndexingHeader) [[unlikely]] {
-        preCapacity = butterfly->indexingHeader()->preCapacity(structure);
-        indexingPayloadSizeInBytes = butterfly->indexingHeader()->indexingPayloadSizeInBytes(structure);
+        preCapacity = butterfly->preCapacity(structure);
+        indexingPayloadSizeInBytes = butterfly->indexingPayloadSizeInBytes(structure);
     } else {
         preCapacity = 0;
         indexingPayloadSizeInBytes = 0;

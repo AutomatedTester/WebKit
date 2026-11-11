@@ -43,7 +43,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 #if ENABLE(JIT)
-static bool LEGACY_NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+NODELETE static bool ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     static constexpr unsigned maxRetries = 2;
     unsigned tryCount = 0;
@@ -193,7 +193,7 @@ struct CellAddressCheckFunctor : MarkedBlock::CountFunctor {
     {
     }
 
-    IterationStatus LEGACY_NODELETE operator()(HeapCell* cell, HeapCell::Kind) const
+    NODELETE IterationStatus operator()(HeapCell* cell, HeapCell::Kind) const
     {
         if (cell == candidate) {
             found = true;
@@ -225,7 +225,7 @@ bool VMInspector::isValidCodeBlock(VM* vm, CodeBlock* candidate)
         {
         }
 
-        void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
+        NODELETE void operator()(CodeBlock* codeBlock) const
         {
             if (codeBlock == candidate)
                 found = true;
@@ -255,7 +255,7 @@ CodeBlock* VMInspector::codeBlockForFrame(VM* vm, CallFrame* topCallFrame, unsig
         {
         }
 
-        IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
+        NODELETE IterationStatus operator()(StackVisitor& visitor) const
         {
             auto currentFrame = nextFrame++;
             if (currentFrame == targetFrame) {
@@ -558,8 +558,6 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
                 ? butterfly->base(preCapacity, propertyCapacity)
                 : butterfly->base(structure);
 
-            unsigned publicLength = butterfly->publicLength();
-            unsigned vectorLength = butterfly->vectorLength();
             size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
 
             size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
@@ -567,11 +565,13 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 
             INDENT out.println("base ", RawPointer(base));
             INDENT out.println("hasIndexingHeader ", (hasIndexingHeader ? "YES" : "NO"), " hasAnyArrayStorage ", (hasAnyArrayStorage ? "YES" : "NO"));
-            if (hasIndexingHeader) {
-                INDENT out.print("publicLength ", publicLength, " vectorLength ", vectorLength);
+            if (hasIndexedProperties(indexingType)) {
+                INDENT out.print("publicLength ", butterfly->publicLength(), " vectorLength ", butterfly->vectorLength());
                 if (hasAnyArrayStorage)
                     out.print(" indexBias ", butterfly->arrayStorage()->m_indexBias);
                 out.print("\n");
+            } else if (hasIndexingHeader) {
+                INDENT out.println("arrayBuffer ", RawPointer(butterfly->indexingHeader()->arrayBuffer()));
             }
             INDENT out.println("preCapacity ", preCapacity, " propertyCapacity ", propertyCapacity);
 

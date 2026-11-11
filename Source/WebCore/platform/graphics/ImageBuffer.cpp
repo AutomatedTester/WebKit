@@ -28,7 +28,6 @@
 #include "config.h"
 #include "ImageBuffer.h"
 
-#include "BitmapImage.h"
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
@@ -41,15 +40,10 @@
 #include "MIMETypeRegistry.h"
 #include "NullImageBufferBackend.h"
 #include "ProcessCapabilities.h"
-#include "TransparencyLayerContextSwitcher.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
-
-#if USE(CG)
-#include "ImageBufferCGPDFDocumentBackend.h"
-#endif
 
 #if USE(SKIA)
 #include "GLContext.h"
@@ -79,6 +73,11 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SerializedImageBuffer);
 static const float MaxClampedLength = 4096;
 static const float MaxClampedArea = MaxClampedLength * MaxClampedLength;
 
+// A side longer than a GPU texture can be only tiles or falls back to an unaccelerated
+// buffer, and no destination shows that many pixels of one. A long, thin strip, such as a
+// generated image tiled along a very wide box, stays under the area limit without this.
+static const float MaxClampedDimension = 16384;
+
 RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat, GraphicsClient* graphicsClient)
 {
     RefPtr<ImageBuffer> imageBuffer;
@@ -93,8 +92,10 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
 #if HAVE(IOSURFACE)
         if (ProcessCapabilities::canUseAcceleratedBuffers()) {
             ImageBufferCreationContext creationContext;
-            if (graphicsClient)
+            if (graphicsClient) {
                 creationContext.displayID = graphicsClient->displayID();
+                creationContext.useIOSurfaceWebKitBehavior = graphicsClient->useIOSurfaceWebKitBehavior();
+            }
             if (auto imageBuffer = ImageBuffer::create<ImageBufferIOSurfaceBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, creationContext))
                 return imageBuffer;
         }
@@ -107,15 +108,12 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
     case RenderingMode::Unaccelerated:
         return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
 
-    case RenderingMode::PDFDocument:
-#if USE(CG)
-        return ImageBuffer::create<ImageBufferCGPDFDocumentBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
-#else
-        return nullptr;
-#endif
-
     case RenderingMode::DisplayList:
         return ImageBuffer::create<ImageBufferDisplayListBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
+
+    case RenderingMode::PDFDocument:
+        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     ASSERT_NOT_REACHED();
@@ -150,7 +148,8 @@ bool ImageBuffer::sizeNeedsClamping(const FloatSize& size)
     if (size.isEmpty())
         return false;
 
-    return floorf(size.height()) * floorf(size.width()) > MaxClampedArea;
+    return floorf(size.height()) * floorf(size.width()) > MaxClampedArea
+        || floorf(std::max(size.width(), size.height())) > MaxClampedDimension;
 }
 
 RefPtr<ImageBuffer> SerializedImageBuffer::sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer> buffer, GraphicsClient* graphicsClient)
@@ -217,8 +216,12 @@ bool ImageBuffer::sizeNeedsClamping(const FloatSize& size, FloatSize& scale)
     if (!sizeNeedsClamping(scaledSize))
         return false;
 
-    // The area of scaled size is bigger than the upper limit, adjust the scale to fit.
-    scale.scale(sqrtf(MaxClampedArea / (scaledSize.width() * scaledSize.height())));
+    // The scaled size's area or longest side is over its limit: scale uniformly to fit both,
+    // except that a side is never shrunk below a pixel, which would lose a thin strip entirely.
+    float areaScale = sqrtf(MaxClampedArea / (scaledSize.width() * scaledSize.height()));
+    float dimensionScale = MaxClampedDimension / std::max(scaledSize.width(), scaledSize.height());
+    float uniformScale = std::min({ areaScale, dimensionScale, 1.f });
+    scale.scale(std::max(uniformScale, std::min(1 / scaledSize.width(), 1.f)), std::max(uniformScale, std::min(1 / scaledSize.height(), 1.f)));
     ASSERT(!sizeNeedsClamping(size, scale));
     return true;
 }
@@ -267,26 +270,9 @@ static RefPtr<ImageBuffer> copyImageBuffer(Ref<ImageBuffer> source, PreserveReso
     return copyBuffer;
 }
 
-static RefPtr<NativeImage> copyImageBufferToNativeImage(Ref<ImageBuffer> source, BackingStoreCopy copyBehavior, PreserveResolution preserveResolution)
-{
-    if (source->resolutionScale() == 1 || preserveResolution == PreserveResolution::Yes) {
-        if (source->hasOneRef())
-            return ImageBuffer::sinkIntoNativeImage(WTF::move(source));
-        if (copyBehavior == CopyBackingStore)
-            return source->copyNativeImage();
-        return source->createNativeImageReference();
-    }
-    auto copyBuffer = copyImageBuffer(WTF::move(source), preserveResolution);
-    if (!copyBuffer)
-        return nullptr;
-    return ImageBuffer::sinkIntoNativeImage(WTF::move(copyBuffer));
-}
-
-
 RefPtr<ImageBuffer> ImageBuffer::clone() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
+    return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
 }
 
 GraphicsContext& ImageBuffer::context() const
@@ -321,7 +307,6 @@ void ImageBuffer::submitDrawingCommands()
 
 void ImageBuffer::prepareForDisplay()
 {
-    flushDrawingContextAsync();
     if (auto* backend = m_backend.get())
         backend->prepareForDisplay();
 }
@@ -332,7 +317,6 @@ void ImageBuffer::setBackend(std::unique_ptr<ImageBufferBackend>&& backend)
         return;
 
     m_backend = WTF::move(backend);
-    ++m_backendGeneration;
 }
 
 IntSize ImageBuffer::backendSize() const
@@ -387,46 +371,6 @@ RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread()
     return this;
 }
 
-RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter)
-{
-    ASSERT(!filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext));
-
-    auto* backend = m_backend.get();
-    if (!backend)
-        return nullptr;
-
-    FilterResults results;
-    auto result = filter.apply(this, { { }, logicalSize() }, results);
-    if (!result)
-        return nullptr;
-
-    RefPtr imageBuffer = result->imageBuffer();
-    if (!imageBuffer)
-        return nullptr;
-
-    return copyImageBufferToNativeImage(*imageBuffer, CopyBackingStore, PreserveResolution::No);
-}
-
-RefPtr<NativeImage> ImageBuffer::filteredNativeImage(Filter& filter, Function<void(GraphicsContext&)> drawCallback)
-{
-    std::unique_ptr<GraphicsContextSwitcher> targetSwitcher;
-
-    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
-        targetSwitcher = makeUnique<TransparencyLayerContextSwitcher>(context(), FloatRect { { }, logicalSize() }, &filter);
-        targetSwitcher->beginDrawSourceImage(context());
-    }
-
-    drawCallback(context());
-
-    if (filter.filterRenderingModes().contains(FilterRenderingMode::GraphicsContext)) {
-        ASSERT(targetSwitcher);
-        targetSwitcher->endDrawSourceImage(context(), colorSpace());
-        return copyImageBufferToNativeImage(*this, CopyBackingStore, PreserveResolution::No);
-    }
-
-    return filteredNativeImage(filter);
-}
-
 #if HAVE(IOSURFACE)
 IOSurface* ImageBuffer::surface()
 {
@@ -466,6 +410,12 @@ RefPtr<GraphicsLayerContentsDisplayDelegate> ImageBuffer::layerContentsDisplayDe
     if (auto* backend = m_backend.get())
         return backend->layerContentsDisplayDelegate();
     return nullptr;
+}
+
+void ImageBuffer::releaseLayerContentsDisplayDelegate()
+{
+    if (auto* backend = m_backend.get())
+        backend->releaseLayerContentsDisplayDelegate();
 }
 
 RefPtr<NativeImage> ImageBuffer::sinkIntoNativeImage(RefPtr<ImageBuffer> source)
@@ -535,20 +485,6 @@ void ImageBuffer::putPixelBuffer(const PixelBufferSourceView& pixelBuffer, const
     backend->putPixelBuffer(pixelBuffer, sourceRectScaled, destinationPointScaled, destinationFormat);
 }
 
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument()
-{
-    if (auto* backend = m_backend.get())
-        return backend->sinkIntoPDFDocument();
-    return nullptr;
-}
-
-RefPtr<SharedBuffer> ImageBuffer::sinkIntoPDFDocument(RefPtr<ImageBuffer> source)
-{
-    if (!source)
-        return nullptr;
-    return source->sinkIntoPDFDocument();
-}
-
 bool ImageBuffer::isInUse() const
 {
     if (auto* backend = m_backend.get())
@@ -611,11 +547,6 @@ std::unique_ptr<ThreadSafeImageBufferFlusher> ImageBuffer::createFlusher()
     if (auto* backend = m_backend.get())
         return backend->createFlusher();
     return nullptr;
-}
-
-unsigned ImageBuffer::backendGeneration() const
-{
-    return m_backendGeneration;
 }
 
 std::optional<ImageBufferTransferHandle> SerializedImageBuffer::sinkIntoTransferHandle(std::unique_ptr<SerializedImageBuffer> buffer)

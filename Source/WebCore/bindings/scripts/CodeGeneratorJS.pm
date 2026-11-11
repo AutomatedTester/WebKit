@@ -59,7 +59,8 @@ my %auxImplIncludes = ();
 # Used while emitting the split-out getter definitions so their header
 # dependencies travel with the moved code rather than polluting the main file.
 my $auxImplActive = 0;
-my @depsContent = ();
+# Names of the IDL files, without .idl, whose definitions the generated code depends on.
+my %dependencies = ();
 my $hasNonTrivialFinishCreation = 0;
 my $hasNonDefaultFinishCreation = 0;
 
@@ -620,6 +621,7 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsCallbackFunction($type) || $codeGenerator->IsCallbackInterface($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertCallbacks.h", $includesRef, $conditional);
         return;
@@ -631,12 +633,14 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsExternalDictionaryType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertDictionary.h", $includesRef, $conditional);
         return;
     }
 
     if ($codeGenerator->IsExternalEnumType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertEnumeration.h", $includesRef, $conditional);
         return;
@@ -655,6 +659,7 @@ sub AddToIncludesForIDLType
     }
 
     if ($codeGenerator->IsInterfaceType($type)) {
+        $dependencies{$type->name} = 1;
         AddToIncludes("JS" . $type->name . ".h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertInterface.h", $includesRef, $conditional);
         return;
@@ -3433,7 +3438,7 @@ sub GenerateHeader
     }
     
     if ($interface->extendedAttributes->{CustomPreventExtensions}) {
-        push(@headerContent, "    static bool LEGACY_NODELETE preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*);\n");
+        push(@headerContent, "    NODELETE static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*);\n");
     }
 
     if (InstanceNeedsEstimatedSize($interface)) {
@@ -3632,7 +3637,8 @@ sub GenerateHeader
         if ($hasParent && !$interface->extendedAttributes->{JSLegacyParent}) {
             push(@headerContent, "    $interfaceName& wrapped() const\n");
             push(@headerContent, "    {\n");
-            push(@headerContent, "        return static_cast<$interfaceName&>(Base::wrapped());\n");
+            push(@headerContent, "        // JS${interfaceName} wrappers always wrap ${interfaceName} objects.\n");
+            push(@headerContent, "        SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<$interfaceName&>(Base::wrapped());\n");
             push(@headerContent, "    }\n\n");
         }
     }
@@ -3691,7 +3697,7 @@ sub GenerateHeader
         push(@headerContent, "public:\n");
         push(@headerContent, "    JS${interfaceName}Owner() = default;\n");
         push(@headerContent, "    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) ${overrideDecl};\n");
-        push(@headerContent, "    void finalize(JSC::Handle<JSC::Unknown>, void* context) ${overrideDecl};\n");
+        push(@headerContent, "    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) ${overrideDecl};\n");
         push(@headerContent, "\n");
         push(@headerContent, "private:\n");
         # When -fpch-debuginfo is enabled, clang sometimes fails to emit the
@@ -3787,22 +3793,19 @@ sub GenerateHeader
 
     # - Generate dependencies.
     if ($writeDependencies) {
-        my @ancestors;
         $codeGenerator->ForAllParents($interface, sub {
             my $currentInterface = shift;
-            push(@ancestors, $currentInterface->type->name);
+            $dependencies{$currentInterface->type->name} = 1;
         }, 0);
         for my $dictionary (@$dictionaries) {
             my $parentType = $dictionary->parentType;
             while (defined($parentType)) {
-                push(@ancestors, $parentType->name) if $codeGenerator->IsExternalDictionaryType($parentType);
+                $dependencies{$parentType->name} = 1 if $codeGenerator->IsExternalDictionaryType($parentType);
                 my $parentDictionary = $codeGenerator->GetDictionaryByType($parentType);
                 assert("Unable to find definition for dictionary named '" . $parentType->name . "'!") unless defined($parentDictionary);
                 $parentType = $parentDictionary->parentType;
             }
         }
-        push(@depsContent, "$className.h : ", join(" ", map { "$_.idl" } @ancestors), "\n");
-        push(@depsContent, map { "$_.idl :\n" } @ancestors);
     }
 }
 
@@ -5795,11 +5798,12 @@ sub GenerateImplementation
     }
 
     if (ShouldGenerateWrapperOwnerCode($hasParent, $interface) && !$interface->extendedAttributes->{JSCustomFinalize}) {
-        push(@implContent, "void JS${interfaceName}Owner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)\n");
+        push(@implContent, "JSC::WeakHandleOwner::FinalizeResult JS${interfaceName}Owner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)\n");
         push(@implContent, "{\n");
         push(@implContent, "    SUPPRESS_MEMORY_UNSAFE_CAST auto* js${interfaceName} = static_cast<JS${interfaceName}*>(handle.slot()->asCell());\n");
         push(@implContent, "    auto& world = *static_cast<DOMWrapperWorld*>(context);\n");
         push(@implContent, "    SUPPRESS_UNCOUNTED_ARG uncacheWrapper(world, &js${interfaceName}->wrapped(), js${interfaceName});\n");
+        push(@implContent, "    return FinalizeResult::KeepImpl;\n");
         push(@implContent, "}\n\n");
     }
 
@@ -7222,16 +7226,13 @@ sub GenerateDictionaryHeader
     
     # - Generate dependencies.
     if ($writeDependencies) {
-        my @ancestors;
         my $parentType = $dictionary->parentType;
         while (defined($parentType)) {
-            push(@ancestors, $parentType->name) if $codeGenerator->IsExternalDictionaryType($parentType);
+            $dependencies{$parentType->name} = 1 if $codeGenerator->IsExternalDictionaryType($parentType);
             my $parentDictionary = $codeGenerator->GetDictionaryByType($parentType);
             assert("Unable to find definition for dictionary named '" . $parentType->name . "'!") unless $parentDictionary;
             $parentType = $parentDictionary->parentType;
         }
-        push(@depsContent, "$className.h : ", join(" ", map { "$_.idl" } @ancestors), "\n");
-        push(@depsContent, map { "$_.idl :\n" } @ancestors);
     }
 }
 
@@ -7613,7 +7614,7 @@ sub GenerateCallbackImplementationContent
 
     # Constructor
     push(@$contentRef, "${className}::${className}(JSObject* callback, JSDOMGlobalObject* globalObject)\n");
-    push(@$contentRef, "    : ${name}(globalObject->scriptExecutionContext())\n");
+    push(@$contentRef, "    : ${name}(protect(globalObject->scriptExecutionContext()))\n");
     push(@$contentRef, "    , m_data(new JSCallbackData(callback, globalObject, ${ownerObject}))\n");
     push(@$contentRef, "{\n");
     push(@$contentRef, "}\n\n");
@@ -7719,13 +7720,15 @@ sub GenerateCallbackImplementationContent
 
 sub GenerateWriteBarriersForArguments
 {
-    my ($outputArray, $operation, $indent, $isDryRun) = @_;
+    my ($outputArray, $operation, $interface, $indent, $isDryRun) = @_;
 
+    # JSEventTarget's castedThis is a JSEventTargetWrapper.
+    my $owner = $interface->type->name eq "EventTarget" ? "&castedThis->wrapper()" : "castedThis";
     my $argumentIndex = 0;
     my $hasOutput = 0;
     foreach my $argument (@{$operation->arguments}) {
         if ($argument->type->name eq "EventListener") {
-            push(@$outputArray, $indent . "vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument${argumentIndex}.value());\n") if !$isDryRun;
+            push(@$outputArray, $indent . "vm.writeBarrier(${owner}, argument${argumentIndex}.value());\n") if !$isDryRun;
             $hasOutput = 1;
         }
         $argumentIndex++;
@@ -7751,11 +7754,11 @@ sub GenerateImplementationFunctionCall
     }
 
     my $dryRun = 1;
-    my $hasWriteBarriersForArguments = GenerateWriteBarriersForArguments($outputArray, $operation, $indent, $dryRun);
+    my $hasWriteBarriersForArguments = GenerateWriteBarriersForArguments($outputArray, $operation, $interface, $indent, $dryRun);
     my $returnArgumentName = GetOperationReturnedArgumentName($operation);
     if ($returnArgumentName) {
         push(@$outputArray, $indent . "invokeFunctorPropagatingExceptionIfNecessary(*lexicalGlobalObject, throwScope, [&] { return $functionString; });\n");
-        GenerateWriteBarriersForArguments($outputArray, $operation, $indent);
+        GenerateWriteBarriersForArguments($outputArray, $operation, $interface, $indent);
         push(@$outputArray, $indent . "return JSValue::encode($returnArgumentName.value());\n");
     } else {
         if ($callTracer && $codeGenerator->IsInterfaceType($operation->type)) {
@@ -7769,7 +7772,7 @@ sub GenerateImplementationFunctionCall
         if ($hasWriteBarriersForArguments) {
             push(@$outputArray, $indent . "auto result = JSValue::encode(" . NativeToJSValueUsingPointers($operation, $interface, $functionString, $globalObjectReference) . ");\n");
             push(@$outputArray, $indent . "RETURN_IF_EXCEPTION(throwScope, encodedJSValue());\n") if $hasThrowScope;
-            GenerateWriteBarriersForArguments($outputArray, $operation, $indent);
+            GenerateWriteBarriersForArguments($outputArray, $operation, $interface, $indent);
             push(@$outputArray, $indent . "return result;\n");
         } else {
             push(@$outputArray, $indent . "RELEASE_AND_RETURN(throwScope, JSValue::encode(" . NativeToJSValueUsingPointers($operation, $interface, $functionString, $globalObjectReference) . "));\n");
@@ -8869,13 +8872,12 @@ sub WriteData
     %headerIncludes = ();
     %headerTrailingIncludes = ();
 
-    if (@depsContent) {
-        # Update a .dep file if the contents are changed.
-        $contents = join "", @depsContent;
-        $codeGenerator->UpdateFile($depsFileName, $contents);
-
-        @depsContent = ();
+    if ($writeDependencies) {
+        delete $dependencies{$name};
+        my @dependencies = map { "$_.idl" } sort keys %dependencies;
+        $codeGenerator->UpdateFile($depsFileName, "JS$name.h : @dependencies\n" . join("", map { "$_ :\n" } @dependencies));
     }
+    %dependencies = ();
 }
 
 sub GeneratePrototypeDeclaration

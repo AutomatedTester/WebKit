@@ -25,6 +25,8 @@ import os
 import re
 import time
 
+from unittest.mock import Mock
+
 from webkitpy.port import darwin as darwin_module
 from webkitpy.port import port_testcase
 from webkitpy.tool.mocktool import MockOptions
@@ -38,6 +40,20 @@ from webkitcorepy import OutputCapture
 
 
 class DarwinTest(port_testcase.PortTestCase):
+
+    def assert_leaks_and_guard_malloc_environment(self, port):
+        env = port.setup_environ_for_server(port.driver_name())
+        for name in ['MallocStackLogging', 'MallocScribble', 'SYSTEM_HEAP_USE_DEFAULT_ZONE']:
+            for variable in [name, '__XPC_' + name]:
+                if port.get_option('leaks'):
+                    self.assertEqual(env[variable], '1')
+                else:
+                    self.assertNotIn(variable, env)
+        for variable in ['DYLD_INSERT_LIBRARIES', '__XPC_DYLD_INSERT_LIBRARIES']:
+            if port.get_option('guard_malloc'):
+                self.assertEqual(env[variable], '/usr/lib/libgmalloc.dylib')
+            else:
+                self.assertNotIn(variable, env)
 
     def test_sharding_groups(self):
         port = self.make_port()
@@ -53,6 +69,21 @@ class DarwinTest(port_testcase.PortTestCase):
     def test_default_timeout_ms(self):
         super(DarwinTest, self).test_default_timeout_ms()
         self.assertEqual(self.make_port(options=MockOptions(guard_malloc=True)).default_timeout_ms(), 350000)
+
+    def test_warm_up_runner(self):
+        port = self.make_port()
+        port.create_driver = Mock()
+        port._warm_up_runner(1)
+        port.create_driver.assert_called_once_with(1)
+        run_test = port.create_driver.return_value.run_test
+        self.assertEqual(run_test.call_args.args[0].test_name, 'file:///warmup-does-not-exist')
+        self.assertEqual(run_test.call_args.kwargs, {'stop_when_done': True})
+
+    def test_warm_up_runner_with_no_timeout(self):
+        port = self.make_port(options=MockOptions(configuration='Release', no_timeout=True))
+        port.create_driver = Mock()
+        port._warm_up_runner(1)
+        port.create_driver.assert_not_called()
 
     def test_api_test_allowlist_platform_gating(self):
         port = self.make_port()
@@ -78,6 +109,33 @@ class DarwinTest(port_testcase.PortTestCase):
         else:
             self.assertFalse(port.is_test_allowlisted('TestIPC.MacOnly'))
             self.assertTrue(port.is_test_allowlisted('TestIPC.IOSOnly'))
+
+    def test_api_test_allowlist_entries(self):
+        port = self.make_port()
+        current_platform = port.api_test_current_configuration().get('platform')
+        if current_platform not in ('mac', 'ios'):
+            return
+
+        allowlist_path = os.path.join(os.path.dirname(darwin_module.__file__), '..', 'api_tests', 'allowlist.txt')
+        port._filesystem.write_text_file(allowlist_path, '\n'.join([
+            'TestIPC.SharedSuite',
+            '[ {} ] TestIPC.SharedSuite.GatedCase'.format(current_platform),
+            '[ {} ] TestIPC.Gated'.format(current_platform),
+            'TestIPC.Gated',
+            '',
+        ]))
+
+        entry = port.is_test_allowlisted('TestIPC.SharedSuite.Case')
+        self.assertEqual((entry.test_pattern, entry.configurations, entry.line_number), ('TestIPC.SharedSuite', frozenset(), 1))
+
+        entry = port.is_test_allowlisted('TestIPC.SharedSuite.GatedCase')
+        self.assertEqual((entry.test_pattern, entry.configurations, entry.line_number), ('TestIPC.SharedSuite.GatedCase', frozenset([current_platform]), 2))
+
+        entry = port.is_test_allowlisted('TestIPC.Gated')
+        self.assertEqual((entry.configurations, entry.line_number), (frozenset([current_platform]), 3))
+
+        self.assertIsNone(port.is_test_allowlisted('TestIPC.Unlisted'))
+        self.assertEqual(port.filter_api_tests_by_allowlist(['TestIPC.Gated', 'TestIPC.Unlisted']), (['TestIPC.Gated'], ['TestIPC.Unlisted']))
 
     def assert_name(self, port_name, os_version_string, expected):
         host = MockSystemHost(os_name=self.os_name, os_version=VersionNameMap.map().from_name(os_version_string)[1])

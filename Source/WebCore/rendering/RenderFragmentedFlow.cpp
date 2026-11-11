@@ -37,7 +37,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderFragmentContainer.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
 #include "RenderLayoutState.h"
@@ -250,8 +249,7 @@ bool RenderFragmentedFlow::absoluteQuadsForBox(Vector<FloatQuad>& quads, bool* w
     forEachFragmentInRange(m_fragmentList, *startFragment, *endFragment, [&](auto& fragment) {
         auto rectsInFragment = fragment.fragmentRectsForFlowContentRect(boxRectInFlowCoordinates);
         for (auto rect : rectsInFragment) {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST auto absoluteQuad = fragment.localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, wasFixed);
+            auto absoluteQuad = fragment.localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, wasFixed);
             quads.append(absoluteQuad);
         }
     });
@@ -285,10 +283,10 @@ public:
     {
     }
 
-    const LayoutUnit& LEGACY_NODELETE lowValue() const { return m_offset; }
-    const LayoutUnit& LEGACY_NODELETE highValue() const { return m_offset; }
+    NODELETE const LayoutUnit& lowValue() const { return m_offset; }
+    NODELETE const LayoutUnit& highValue() const { return m_offset; }
 
-    void LEGACY_NODELETE collectIfNeeded(const PODInterval<LayoutUnit, SingleThreadWeakPtr<RenderFragmentContainer>>& interval)
+    NODELETE void collectIfNeeded(const PODInterval<LayoutUnit, SingleThreadWeakPtr<RenderFragmentContainer>>& interval)
     {
         if (m_result)
             return;
@@ -296,7 +294,7 @@ public:
             m_result = interval.data();
     }
 
-    RenderFragmentContainer* LEGACY_NODELETE result() const { return m_result.get(); }
+    NODELETE RenderFragmentContainer* result() const { return m_result.get(); }
 
 private:
     LayoutUnit m_offset;
@@ -311,8 +309,7 @@ RenderFragmentContainer* RenderFragmentedFlow::fragmentAtBlockOffset(const Rende
         return nullptr;
 
     if (m_fragmentList.computeSize() == 1 && extendLastFragment) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
+        return const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
     }
 
     auto clamp = [clampBox](RenderFragmentContainer* fragment)  {
@@ -320,8 +317,7 @@ RenderFragmentContainer* RenderFragmentedFlow::fragmentAtBlockOffset(const Rende
     };
 
     if (offset <= 0) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return clamp(const_cast<RenderFragmentContainer*>(&m_fragmentList.first()));
+        return clamp(const_cast<RenderFragmentContainer*>(&m_fragmentList.first()));
     }
 
     FragmentSearchAdapter adapter(offset);
@@ -332,8 +328,7 @@ RenderFragmentContainer* RenderFragmentedFlow::fragmentAtBlockOffset(const Rende
     // If no fragment was found, the offset is in the flow thread overflow.
     // The last fragment will contain the offset if extendLastFragment is set or if the last fragment is a set.
     if (extendLastFragment || m_fragmentList.last().isRenderFragmentContainerSet()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return clamp(const_cast<RenderFragmentContainer*>(&m_fragmentList.last()));
+        return clamp(const_cast<RenderFragmentContainer*>(&m_fragmentList.last()));
     }
 
     return nullptr;
@@ -392,7 +387,7 @@ RenderFragmentContainer* RenderFragmentedFlow::mapFromFlowToFragment(TransformSt
     RenderFragmentContainer* RenderFragmentContainer = currentFragment();
     if (!RenderFragmentContainer) {
         LayoutRect boxRect = transformState.mappedQuad().enclosingBoundingBox();
-        flipForWritingMode(boxRect);
+        physicalToBlockStartRelative(boxRect);
 
         LayoutPoint center = boxRect.center();
         RenderFragmentContainer = fragmentAtBlockOffset(this, isHorizontalWritingMode() ? center.y() : center.x(), true);
@@ -400,10 +395,10 @@ RenderFragmentContainer* RenderFragmentedFlow::mapFromFlowToFragment(TransformSt
             return nullptr;
     }
 
-    LayoutRect flippedFragmentRect(RenderFragmentContainer->fragmentedFlowPortionRect());
-    flipForWritingMode(flippedFragmentRect);
+    LayoutRect physicalFragmentRect(RenderFragmentContainer->fragmentedFlowPortionRect());
+    blockStartRelativeToPhysical(physicalFragmentRect);
 
-    transformState.move(RenderFragmentContainer->contentBoxRect().location() - flippedFragmentRect.location());
+    transformState.move(RenderFragmentContainer->contentBoxRect().location() - physicalFragmentRect.location());
 
     return RenderFragmentContainer;
 }
@@ -515,16 +510,14 @@ RenderFragmentContainer* RenderFragmentedFlow::firstFragment() const
 {
     if (!hasFragments())
         return nullptr;
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
+    return const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
 }
 
 RenderFragmentContainer* RenderFragmentedFlow::lastFragment() const
 {
     if (!hasFragments())
         return nullptr;
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderFragmentContainer*>(&m_fragmentList.last());
+    return const_cast<RenderFragmentContainer*>(&m_fragmentList.last());
 }
 
 void RenderFragmentedFlow::clearRenderBoxFragmentInfoAndCustomStyle(const RenderBox& box,
@@ -597,8 +590,7 @@ bool RenderFragmentedFlow::getFragmentRangeForBox(const RenderBox& box, RenderFr
         return false;
 
     if (m_fragmentList.computeSize() == 1) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST startFragment = endFragment = const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
+        startFragment = endFragment = const_cast<RenderFragmentContainer*>(&m_fragmentList.first());
         return true;
     }
 
@@ -804,7 +796,7 @@ LayoutUnit RenderFragmentedFlow::offsetFromLogicalTopOfFirstFragment(const Rende
     LayoutRect blockRect(0_lu, 0_lu, currentBox->borderBoxWidth(), currentBox->borderBoxHeight());
     auto nextBoxContainer = [](const RenderElement& renderer) -> const RenderElement* {
         auto* container = renderer.container();
-        // Skip non-box ancestors like RenderInline that don't contribute offsets.
+        // Skip non-box ancestors like inline boxes that don't contribute offsets.
         while (container && !is<RenderBox>(*container))
             container = container->container();
         return container;
@@ -814,6 +806,8 @@ LayoutUnit RenderFragmentedFlow::offsetFromLogicalTopOfFirstFragment(const Rende
         if (!containerBox)
             return 0;
         auto currentBoxLocation = currentBox->location();
+        if (CheckedPtr inlineBox = dynamicDowncast<RenderBoxModelObject>(currentBox->container()); inlineBox && inlineBox->isInlineBox() && currentBox->isOutOfFlowPositioned())
+            currentBoxLocation += toLayoutSize(inlineBox->blockStartRelativeFirstFragmentBorderBoxRect().location());
 
         if (containerBox->writingMode().blockDirection() != currentBox->writingMode().blockDirection()) {
             // We have to put the block rect in container coordinates
@@ -824,7 +818,7 @@ LayoutUnit RenderFragmentedFlow::offsetFromLogicalTopOfFirstFragment(const Rende
                 else
                     blockRect.setX(currentBox->borderBoxWidth() - blockRect.maxX());
             }
-            currentBox->flipForWritingMode(blockRect);
+            currentBox->blockStartRelativeToPhysical(blockRect);
         }
         blockRect.moveBy(currentBoxLocation);
         currentBox = containerBox;
@@ -871,9 +865,14 @@ LayoutRect RenderFragmentedFlow::mapFromLocalToFragmentedFlow(const RenderBox* b
         if (!containerBlock)
             return LayoutRect();
         LayoutPoint currentBoxLocation = box->location();
+        if (CheckedPtr inlineBox = dynamicDowncast<RenderBoxModelObject>(box->container()); inlineBox && inlineBox->isInlineBox() && box->isOutOfFlowPositioned()) {
+            // The box is positioned relative to the inline box, which is positioned in its own containing block.
+            currentBoxLocation += toLayoutSize(inlineBox->blockStartRelativeFirstFragmentBorderBoxRect().location());
+            containerBlock = inlineBox->containingBlock();
+        }
 
         if (containerBlock->writingMode().blockDirection() != box->writingMode().blockDirection())
-            box->flipForWritingMode(boxRect);
+            box->blockStartRelativeToPhysical(boxRect);
 
         boxRect.moveBy(currentBoxLocation);
         box = containerBlock;
@@ -893,18 +892,23 @@ LayoutRect RenderFragmentedFlow::mapFromFragmentedFlowToLocal(const RenderBox* b
     ASSERT(containerBlock);
     if (!containerBlock)
         return LayoutRect();
+    LayoutPoint currentBoxLocation = box->location();
+    if (CheckedPtr inlineBox = dynamicDowncast<RenderBoxModelObject>(box->container()); inlineBox && inlineBox->isInlineBox() && box->isOutOfFlowPositioned()) {
+        // The box is positioned relative to the inline box, which is positioned in its own containing block.
+        currentBoxLocation += toLayoutSize(inlineBox->blockStartRelativeFirstFragmentBorderBoxRect().location());
+        containerBlock = inlineBox->containingBlock();
+    }
     localRect = mapFromFragmentedFlowToLocal(containerBlock, localRect);
 
-    LayoutPoint currentBoxLocation = box->location();
     localRect.moveBy(-currentBoxLocation);
 
     if (containerBlock->writingMode().blockDirection() != box->writingMode().blockDirection())
-        box->flipForWritingMode(localRect);
+        box->physicalToBlockStartRelative(localRect);
 
     return localRect;
 }
 
-void RenderFragmentedFlow::flipForWritingModeLocalCoordinates(LayoutRect& rect) const
+void RenderFragmentedFlow::physicalToBlockStartRelativeIgnoringSize(LayoutRect& rect) const
 {
     if (!writingMode().isBlockFlipped())
         return;

@@ -77,6 +77,12 @@ struct SizeFeatureSchema : public FeatureSchema {
         if (!renderer)
             return EvaluationResult::Unknown;
 
+        // RenderLayerScrollableArea resolves the scroll corner and resizer pseudo-element styles from
+        // RenderLayer::styleChanged(), which for a new renderer runs from initializeStyle() before it
+        // is in the render tree. Such a box has no layout to query.
+        if (!renderer->parent())
+            return EvaluationResult::Unknown;
+
         if (!renderer->hasEligibleContainmentForSizeQuery())
             return EvaluationResult::Unknown;
 
@@ -98,7 +104,7 @@ struct WidthFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        auto width = Style::unapplyingZoom<LayoutUnit>(renderer.contentBoxWidth(), renderer);
+        auto width = Style::unapplyingZoom<LayoutUnit>(Style::ContainerQueryEvaluator::queryContainerSize(renderer).width(), renderer);
         return evaluateLengthFeature(feature, width, conversionData);
     }
 };
@@ -113,7 +119,7 @@ struct HeightFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        auto height = Style::unapplyingZoom<LayoutUnit>(renderer.contentBoxHeight(), renderer);
+        auto height = Style::unapplyingZoom<LayoutUnit>(Style::ContainerQueryEvaluator::queryContainerSize(renderer).height(), renderer);
         return evaluateLengthFeature(feature, height, conversionData);
     }
 };
@@ -128,7 +134,7 @@ struct InlineSizeFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        auto logicalWidth = Style::unapplyingZoom<LayoutUnit>(renderer.contentBoxLogicalWidth(), renderer);
+        auto logicalWidth = Style::unapplyingZoom<LayoutUnit>(Style::ContainerQueryEvaluator::queryContainerLogicalSize(renderer).width(), renderer);
         return evaluateLengthFeature(feature, logicalWidth, conversionData);
     }
 };
@@ -143,7 +149,7 @@ struct BlockSizeFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        auto logicalHeight = Style::unapplyingZoom<LayoutUnit>(renderer.contentBoxLogicalHeight(), renderer);
+        auto logicalHeight = Style::unapplyingZoom<LayoutUnit>(Style::ContainerQueryEvaluator::queryContainerLogicalSize(renderer).height(), renderer);
         return evaluateLengthFeature(feature, logicalHeight, conversionData);
     }
 };
@@ -158,7 +164,7 @@ struct AspectRatioFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        return evaluateRatioFeature(feature, renderer.contentBoxSize(), conversionData);
+        return evaluateRatioFeature(feature, Style::ContainerQueryEvaluator::queryContainerSize(renderer), conversionData);
     }
 };
 
@@ -172,7 +178,8 @@ struct OrientationFeatureSchema : public SizeFeatureSchema {
 
     EvaluationResult evaluate(const MQ::Feature& feature, const RenderBox& renderer, const CSSToLengthConversionData& conversionData) const override
     {
-        bool isPortrait = renderer.contentBoxHeight() >= renderer.contentBoxWidth();
+        auto size = Style::ContainerQueryEvaluator::queryContainerSize(renderer);
+        bool isPortrait = size.height() >= size.width();
         return evaluateIdentifierFeature(feature, isPortrait ? CSSValueID::Portrait : CSSValueID::Landscape, conversionData);
     }
 };
@@ -250,7 +257,7 @@ static std::optional<StyleRangeValue> evaluateStyleRangeValue(const Vector<CSSPa
 
 // "If each <style-range-value> from the range have the same type" — a unitless zero is treated as a
 // zero <length> when compared against a <length>.
-static bool styleRangeValuesShareCategory(std::initializer_list<const std::optional<StyleRangeValue>*> operands)
+NODELETE static bool styleRangeValuesShareCategory(std::initializer_list<const std::optional<StyleRangeValue>*> operands)
 {
     std::optional<StyleRangeCategory> category;
     bool hasUnitlessZero = false;
@@ -280,7 +287,7 @@ struct StyleFeatureSchema : public FeatureSchema {
     // The compared value needs the same registrations as the queried property, or a shadowed
     // registration compares a token stream against a typed value.
     // https://drafts.csswg.org/css-mixins/#resolve-function-styles
-    static const Style::LocalPropertyRegistry* localPropertyRegistry(const FeatureEvaluationContext& context)
+    NODELETE static const Style::LocalPropertyRegistry* localPropertyRegistry(const FeatureEvaluationContext& context)
     {
         // Both evaluators that reach a style() feature, container queries and if(), have a builder state.
         CheckedRef builderState = *context.conversionData.styleBuilderState();
@@ -303,7 +310,7 @@ struct StyleFeatureSchema : public FeatureSchema {
             return toEvaluationResult(customPropertyValue && !customPropertyValue->isGuaranteedInvalid());
 
         auto resolvedFeatureValue = [&] -> RefPtr<const Style::CustomProperty> {
-            auto* featureValue = std::get_if<Ref<CSSCustomPropertyValue>>(&*feature.rightComparison->value);
+            auto* featureValue = std::get_if<Ref<CSSCustomPropertyValue>>(&feature.rightComparison.value);
             ASSERT(featureValue);
 
             // Resolve the queried custom property value for var() references, css-wide keywords and registered properties.
@@ -329,7 +336,7 @@ struct StyleFeatureSchema : public FeatureSchema {
         if (resolvedFeatureValue->isGuaranteedInvalid())
             return toEvaluationResult(!customPropertyValue || customPropertyValue->isGuaranteedInvalid());
 
-        ASSERT(feature.rightComparison->op == ComparisonOperator::Equal);
+        ASSERT(feature.rightComparison.op == ComparisonOperator::Equal);
         return toEvaluationResult(customPropertyValue && customPropertyValue->valueEquals(*resolvedFeatureValue));
     }
 
@@ -367,14 +374,14 @@ struct StyleFeatureSchema : public FeatureSchema {
             return ensureBuilder().resolveCustomPropertyForContainerQueries(value);
         };
 
-        auto resolveOperand = [&](const std::optional<Value>& operandValue, const AtomString& centerName) -> std::optional<StyleRangeValue> {
+        auto resolveOperand = [&](const Value* operandValue, const AtomString& centerName) -> std::optional<StyleRangeValue> {
             RefPtr<const Style::CustomProperty> customProperty;
             if (!centerName.isNull())
                 customProperty = style.customPropertyValue(centerName);
             else {
                 if (!operandValue)
                     return { };
-                auto* value = std::get_if<Ref<CSSCustomPropertyValue>>(&*operandValue);
+                auto* value = std::get_if<Ref<CSSCustomPropertyValue>>(operandValue);
                 if (!value)
                     return { };
                 customProperty = resolveValue(value->get());
@@ -384,20 +391,20 @@ struct StyleFeatureSchema : public FeatureSchema {
             return evaluateStyleRangeValue(customProperty->tokens(), context, style);
         };
 
-        auto center = resolveOperand(feature.subject, feature.name);
+        auto center = resolveOperand(feature.subject.get(), feature.name);
         if (!center)
             return EvaluationResult::False;
 
         std::optional<StyleRangeValue> leftValue;
         if (feature.leftComparison) {
-            leftValue = resolveOperand(feature.leftComparison->value, nullAtom());
+            leftValue = resolveOperand(&feature.leftComparison.value, nullAtom());
             if (!leftValue)
                 return EvaluationResult::False;
         }
 
         std::optional<StyleRangeValue> rightValue;
         if (feature.rightComparison) {
-            rightValue = resolveOperand(feature.rightComparison->value, nullAtom());
+            rightValue = resolveOperand(&feature.rightComparison.value, nullAtom());
             if (!rightValue)
                 return EvaluationResult::False;
         }
@@ -405,9 +412,9 @@ struct StyleFeatureSchema : public FeatureSchema {
         if (!styleRangeValuesShareCategory({ &center, &leftValue, &rightValue }))
             return EvaluationResult::False;
 
-        if (feature.leftComparison && !compare(feature.leftComparison->op, leftValue->value, center->value))
+        if (feature.leftComparison && !compare(feature.leftComparison.op, leftValue->value, center->value))
             return EvaluationResult::False;
-        if (feature.rightComparison && !compare(feature.rightComparison->op, center->value, rightValue->value))
+        if (feature.rightComparison && !compare(feature.rightComparison.op, center->value, rightValue->value))
             return EvaluationResult::False;
 
         return EvaluationResult::True;
@@ -442,7 +449,7 @@ struct ScrollableFeatureSchema : public ScrollStateFeatureSchema {
         RectEdges<bool> scrollable;
         if (CheckedPtr renderer = context.renderer.get()) {
             if (CheckedPtr containerElement = renderer->element())
-                scrollable = context.document->styleScope().scrollStateSnapshotFor(*containerElement).scrollableEdges;
+                scrollable = protect(context.document->styleScope())->scrollStateSnapshotFor(*containerElement).scrollableEdges;
         }
 
         // Edges the container can currently be scrolled further toward.
@@ -459,7 +466,7 @@ struct ScrollableFeatureSchema : public ScrollStateFeatureSchema {
         if (!feature.rightComparison)
             return toEvaluationResult(scrollableAnywhere);
 
-        auto requested = WTF::switchOn(*feature.rightComparison->value,
+        auto requested = WTF::switchOn(feature.rightComparison.value,
             [](const CSS::Keyword& keyword) { return keyword.value; },
             [](const auto&) { return CSSValueID::Invalid; });
 

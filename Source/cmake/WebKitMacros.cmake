@@ -107,6 +107,8 @@ endmacro()
 
 macro(WEBKIT_COMPUTE_SOURCES _framework)
     set(_derivedSourcesPath ${${_framework}_DERIVED_SOURCES_DIR})
+    # This is a macro, so don't pick up the list files of an earlier call.
+    unset(_sourceListFileTruePaths)
 
     foreach (_sourcesListFile IN LISTS ${_framework}_UNIFIED_SOURCE_LIST_FILES)
       if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_sourcesListFile}")
@@ -141,6 +143,10 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
 
     set(gusb_args --derived-sources-path ${_derivedSourcesPath} --source-tree-path ${CMAKE_CURRENT_SOURCE_DIR})
     list(APPEND gusb_args --ignore-header-groups)
+    # Distinguishes the bundles of targets that share a derived sources directory.
+    if (DEFINED ${_framework}_UNIFIED_SOURCE_BUNDLE_PREFIX)
+        list(APPEND gusb_args --bundle-filename-prefix ${${_framework}_UNIFIED_SOURCE_BUNDLE_PREFIX})
+    endif ()
     # Windows needs a larger bundle size because that helps keep WebCore.lib's size below the 4GB maximum in debug builds.
     if (MSVC AND ${_framework} STREQUAL "WebCore" AND ${_framework}_LIBRARY_TYPE STREQUAL "STATIC")
         list(APPEND gusb_args --max-bundle-size 16)
@@ -154,11 +160,14 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
 
     if (ENABLE_UNIFIED_BUILDS)
         # One pass generates the bundles (stdout = files to compile) and writes the
-        # bundled member list to a side file via --print-bundled-sources.
+        # bundled member list to a side file via --print-bundled-sources, plus the
+        # standalone ARC sources via --print-arc-sources.
         set(_bundledSourcesFile "${CMAKE_CURRENT_BINARY_DIR}/${_framework}BundledSources.txt")
+        set(_arcSourcesFile "${CMAKE_CURRENT_BINARY_DIR}/${_framework}ARCSources.txt")
         execute_process(COMMAND ${Python_EXECUTABLE} ${WTF_SCRIPTS_DIR}/generate-unified-source-bundles.py
             ${gusb_args}
             --print-bundled-sources "${_bundledSourcesFile}"
+            --print-arc-sources "${_arcSourcesFile}"
             ${_sourceListFileTruePaths}
             RESULT_VARIABLE _resultTmp
             OUTPUT_VARIABLE _outputTmp)
@@ -175,7 +184,12 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
         endforeach ()
         unset(_sourceFileTmp)
 
+        file(STRINGS "${_arcSourcesFile}" _arcSources)
         foreach (_file IN LISTS _outputTmp)
+            set(_isARCSource OFF)
+            if (_file MATCHES "-ARC\\.mm$" OR _file IN_LIST _arcSources)
+                set(_isARCSource ON)
+            endif ()
             # Disambiguate top-level generated sources in DerivedSources vs top-level regular sources.
             get_filename_component(_fileDir "${_file}" DIRECTORY)
             if (NOT _fileDir AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_file}")
@@ -183,16 +197,19 @@ macro(WEBKIT_COMPUTE_SOURCES _framework)
             endif ()
             if (_file MATCHES "\\.c$")
                 list(APPEND ${_framework}_C_SOURCES ${_file})
-            elseif (_file MATCHES "-ARC\\.mm$")
+            elseif (_isARCSource)
                 # generate-unified-source-bundles.rb emits *-ARC.mm and *-nonARC.mm bundles based
-                # on @nonARC annotations in Sources*.txt. The ARC bundles compile in a separate
-                # OBJECT library so the OBJCXX precompiled header agrees on -fobjc-arc.
+                # on @nonARC annotations in Sources*.txt. The ARC bundles, and @no-unify sources
+                # not annotated @nonARC, compile in a separate OBJECT library so the OBJCXX
+                # precompiled header agrees on -fobjc-arc.
                 list(APPEND ${_framework}_ARC_SOURCES ${_file})
             else ()
                 list(APPEND ${_framework}_SOURCES ${_file})
             endif ()
         endforeach ()
 
+        unset(_isARCSource)
+        unset(_arcSources)
         unset(_resultTmp)
         unset(_outputTmp)
     else ()
@@ -818,6 +835,10 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
         set(_extra_flags "")
     endif ()
     get_target_property(_entitlements_path ${_target} CODE_SIGN_ENTITLEMENTS)
+    if (NOT _entitlements_path AND NOT _is_framework AND DEVELOPER_MODE)
+        set(_entitlements_path "${CMAKE_BINARY_DIR}/get-task-allow.entitlements")
+        WEBKIT_WRITE_DEFAULT_DEVELOPMENT_ENTITLEMENTS(${_entitlements_path})
+    endif ()
     set(_entitlements "")
     if (_entitlements_path)
         set(_entitlements --entitlements ${_entitlements_path})
@@ -855,11 +876,12 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
             VERBATIM
             COMMENT "Code signing ${_target}")
         # A POST_BUILD command only re-runs when the target relinks, so make a
-        # change to the entitlements force a relink; otherwise editing the
-        # entitlements would leave the binary signed with the stale set.
-        if (_entitlements_path)
+        # change to any signing input, like the entitlements or the
+        # ${_target}_CODE_SIGN_INPUTS, force a relink; otherwise the binary
+        # would stay signed with the stale inputs.
+        if (_arg_DEPENDS)
             set_property(TARGET ${_target} APPEND PROPERTY
-                LINK_DEPENDS ${_entitlements_path})
+                LINK_DEPENDS ${_arg_DEPENDS})
         endif ()
         # Preserve a named ${_target}_CodeSign target so ordering edges elsewhere
         # (e.g. WebKit.framework signing after its XPC services) keep resolving.
@@ -1040,7 +1062,7 @@ function(WEBKIT_COPY_FILES target_name)
         if (opt_COMMAND)
             set(command ${opt_COMMAND})
         elseif (APPLE AND NOT opt_NO_SYMLINK)
-            set(command ${CMAKE_COMMAND} -E create_symlink)
+            set(command ln -sfn)
         else ()
             set(command ${CMAKE_COMMAND} -E copy_if_different)
         endif ()
@@ -1077,14 +1099,75 @@ function(WEBKIT_SYMLINK_FILES target_name)
             file(MAKE_DIRECTORY ${opt_DESTINATION}/${file_dir})
             set(dst_file ${opt_DESTINATION}/${file})
         endif ()
+        if (CMAKE_HOST_UNIX)
+            set(command ln -sfn)
+        else ()
+            set(command ${CMAKE_COMMAND} -E create_symlink)
+        endif ()
         add_custom_command(OUTPUT ${dst_file}
-            COMMAND ${CMAKE_COMMAND} -E create_symlink ${src_file} ${dst_file}
+            COMMAND ${command} ${src_file} ${dst_file}
             MAIN_DEPENDENCY ${src_file}
             VERBATIM
         )
         list(APPEND dst_files ${dst_file})
     endforeach ()
     add_custom_target(${target_name} ALL DEPENDS ${dst_files})
+endfunction()
+
+# Copies the contents of SOURCE into DESTINATION, merging with what's already
+# there. A depfile listing every file and directory in SOURCE re-runs the copy
+# when anything in the tree is edited, added or removed, without globbing at
+# configure time. EXCLUDE patterns skip matching SOURCE-relative paths;
+# DELETE_DESTINATION removes DESTINATION first.
+function(WEBKIT_COPY_DIRECTORY target_name)
+    set(options DELETE_DESTINATION)
+    set(oneValueArgs SOURCE DESTINATION)
+    set(multiValueArgs EXCLUDE)
+    cmake_parse_arguments(opt "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if (opt_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "WEBKIT_COPY_DIRECTORY(${target_name}): unknown arguments: ${opt_UNPARSED_ARGUMENTS}")
+    endif ()
+
+    set(script "${CMAKE_SOURCE_DIR}/Source/cmake/copy-tree-with-depfile.py")
+    set(stamp "${CMAKE_CURRENT_BINARY_DIR}/${target_name}.stamp")
+    set(args --source "${opt_SOURCE}" --dest "${opt_DESTINATION}" --stamp "${stamp}" --depfile "${stamp}.d")
+    foreach (pattern IN LISTS opt_EXCLUDE)
+        list(APPEND args --exclude "${pattern}")
+    endforeach ()
+    if (opt_DELETE_DESTINATION)
+        list(APPEND args --delete-destination)
+    endif ()
+
+    add_custom_command(OUTPUT "${stamp}"
+        COMMAND ${Python_EXECUTABLE} "${script}" ${args}
+        DEPFILE "${stamp}.d"
+        DEPENDS "${script}"
+        COMMENT "Copying ${opt_SOURCE}"
+        VERBATIM
+    )
+    add_custom_target(${target_name} ALL DEPENDS "${stamp}")
+    set_property(TARGET ${target_name} APPEND PROPERTY ADDITIONAL_CLEAN_FILES "${opt_DESTINATION}")
+endfunction()
+
+# Sets out_var to a COMMAND that writes DEPFILE, listing every file and
+# directory under DIRECTORIES as dependencies of OUTPUT. Append it to an
+# add_custom_command whose tool reads those directories itself, and pass the
+# same DEPFILE there. The tool's command line must not depend on what's in the
+# directories, since only the depfile sees them change.
+function(webkit_get_directory_depfile_command out_var)
+    set(oneValueArgs OUTPUT DEPFILE)
+    set(multiValueArgs DIRECTORIES)
+    cmake_parse_arguments(opt "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+    if (opt_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "webkit_get_directory_depfile_command: unknown arguments: ${opt_UNPARSED_ARGUMENTS}")
+    endif ()
+
+    set(command ${Python_EXECUTABLE} "${CMAKE_SOURCE_DIR}/Source/cmake/copy-tree-with-depfile.py")
+    foreach (directory IN LISTS opt_DIRECTORIES)
+        list(APPEND command --source "${directory}")
+    endforeach ()
+    list(APPEND command --depfile "${opt_DEPFILE}" --depfile-target "${opt_OUTPUT}")
+    set(${out_var} ${command} PARENT_SCOPE)
 endfunction()
 
 # Helper macros for debugging CMake problems.
@@ -1223,10 +1306,15 @@ function(_webkit_platform_args_clang_prefix _outvar _depfile _mt_target _wtf_inc
         -include cmakeconfig.h
         -include wtf/Platform.h
     )
-    # Custom commands don't inherit add_compile_options; mirror the SDK stubs
-    # OptionsCocoa.cmake feeds C-family compiles, which Platform.h needs too.
+    # Custom commands don't inherit add_compile_options, so mirror the SDK stubs
+    # and headers OptionsCocoa.cmake feeds C-family compiles, which Platform.h
+    # needs too.
     if (WEBKIT_GENERATED_STUBS_INCLUDE_DIR)
         list(APPEND _cmd -isystem "${WEBKIT_GENERATED_STUBS_INCLUDE_DIR}")
+    endif ()
+    if (WEBKIT_DERIVED_SDK_HEADERS_DIR)
+        list(APPEND _cmd -isystem "${WEBKIT_DERIVED_SDK_HEADERS_DIR}/usr/include"
+            -iframework "${WEBKIT_DERIVED_SDK_HEADERS_DIR}/System/Library/Frameworks")
     endif ()
     set(${_outvar} ${_cmd} PARENT_SCOPE)
 endfunction()
@@ -1246,6 +1334,7 @@ function(webkit_generate_platform_feature_defines_file)
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
             "-F" "${CMAKE_BINARY_DIR}"
+            ${WEBKIT_SDK_SYSTEM_SEARCH_FLAGS}
             "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
     endif ()
     if (CMAKE_OSX_ARCHITECTURES)
@@ -1306,9 +1395,7 @@ function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)
         -DWTF_EXPORT_PRIVATE=${_dllimport_decl}
         -D__WEBGPU__
     )
-    # iOS WebKit_Internal headers gate textual #imports behind this macro that
-    # trip strict cross-module-import-visibility checks (bug 312083).
-    if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
+    if (APPLE)
         list(APPEND _flags -DWK_SUPPORTS_SWIFT_OBJCXX_INTEROP=1)
     endif ()
     # -fexperimental-bounds-safety-attributes belongs to this hash-normalizing
@@ -1346,6 +1433,7 @@ function(_webkit_generate_platform_swift_args _target _resp_path)
         "${_depfile}" "${_resp_path}" "${WTF_FRAMEWORK_HEADERS_DIR}")
     if (CMAKE_OSX_SYSROOT)
         list(APPEND _clang_cmd "-isysroot" "${CMAKE_OSX_SYSROOT}"
+            ${WEBKIT_SDK_SYSTEM_SEARCH_FLAGS}
             "-iframework" "${CMAKE_OSX_SYSROOT}/System/Library/PrivateFrameworks")
     endif ()
     if (CMAKE_Swift_COMPILER_TARGET)
@@ -1707,7 +1795,9 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
                 "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-emit-clang-header-path ${_header_tmp_path}>")
             if (CAN_USE_EMIT_CLANG_HEADER_MIN_ACCESS)
                 list(APPEND _swift_emit_header_flags
-                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -emit-clang-header-min-access -Xfrontend ${${_target}_SWIFT_EMIT_CLANG_HEADER_MIN_ACCESS}>")
+                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -emit-clang-header-min-access -Xfrontend ${${_target}_SWIFT_EMIT_CLANG_HEADER_MIN_ACCESS}>"
+                    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xfrontend -clang-header-expose-decls=has-expose-attr-or-stdlib>"
+                )
             endif ()
             if (POLICY CMP0157)
                 # New Swift support: ${_target} is the only Swift compile, so emit here.
@@ -1721,10 +1811,12 @@ macro(WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER _target _module_n
                 # here, applied to the helper by _webkit_setup_swift_header_deps.
                 set(${_target}_SWIFT_EMIT_HEADER_FLAGS "${_swift_emit_header_flags}")
             endif ()
+            # swiftc leaves the module's mtime alone when only C++ headers that it imports change, though the
+            # header's thunks can; rebuild_trigger.py touches the trigger then.
             add_custom_command(
                 OUTPUT ${_header_stamp_path}
                 BYPRODUCTS ${_header_path}
-                DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${_module_name}.swiftmodule
+                DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${_module_name}.swiftmodule "${_trigger_path}"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_header_tmp_path} ${_header_path}
                 COMMAND ${CMAKE_COMMAND} -E touch ${_header_stamp_path}
                 COMMENT "Generating ${_target} Swift-C++ header"

@@ -38,6 +38,7 @@
 #include "WebDriverBidiProcessor.h"
 #include "WebDriverBidiProtocolObjects.h"
 #include "WebPageProxy.h"
+#include <wtf/Borrow.h>
 #include <wtf/HashSet.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
@@ -89,7 +90,20 @@ void BidiSessionAgent::subscribe(Ref<JSON::Array>&& events, RefPtr<JSON::Array>&
         atomEventNames.add(AtomString { eventName });
     }
 
-    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(contexts && userContexts && (contexts->length() > 0) && (userContexts->length() > 0), InvalidParameter, "Contexts and user contexts cannot be used together."_s);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(contexts && userContexts, InvalidParameter, "Contexts and user contexts cannot be used together."_s);
+
+    if (userContexts) {
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!userContexts->length(), InvalidParameter, "At least one user context must be provided."_s);
+
+        RefPtr session = m_session;
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
+
+        for (const auto& userContextValue : *userContexts) {
+            String userContext;
+            ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!userContextValue->asString(userContext), InvalidParameter, "User context must be a valid string."_s);
+            ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session->isValidUserContext(userContext), NoSuchUserContext);
+        }
+    }
 
     // FIXME: Support by-userContext subscriptions
     // https://webkit.org/b/309502
@@ -204,7 +218,7 @@ IGNORE_GCC_WARNINGS_END
         subscriptionIDs.append(subscriptionID);
     }
 
-    for (const auto& id : subscriptionIDs) {
+    for (const auto& id : borrow(subscriptionIDs)) {
         const auto& subscription = m_eventSubscriptions.get(id);
 
         for (const auto& event : subscription.events) {

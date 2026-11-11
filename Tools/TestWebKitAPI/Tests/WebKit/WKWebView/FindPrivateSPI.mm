@@ -174,8 +174,7 @@ TEST_P(FindPrivateSPI, StepAcrossCrossOriginFrames)
     PrivateFindSPITester find { page.webView() };
 
     Vector<Vector<unsigned>> expectedFrames { { }, { 0 }, { 1 }, { 2 }, { } };
-    // FIXME(326396): With site isolation, the match index doesn't follow frame tree order, even though the selection does.
-    Vector<int> expectedIndices = GetParam() == SiteIsolation::On ? Vector<int> { 0, 2, 3, 1, 0 } : Vector<int> { 0, 1, 2, 3, 0 };
+    Vector<int> expectedIndices { 0, 1, 2, 3, 0 };
     for (size_t i = 0; i < expectedFrames.size(); ++i) {
         auto result = find.findString(@"hello", stepOptions);
         EXPECT_EQ(result.matchCount, 4u);
@@ -201,12 +200,47 @@ TEST_P(FindPrivateSPI, HiddenChildFrame)
     FindTestPage page { FindTestFixtures::hiddenChildFrame(), GetParam() };
     PrivateFindSPITester find { page.webView() };
 
-    auto count = find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive);
-    // FIXME(326317): With site isolation, matches inside a display: none cross-origin frame are counted.
-    if (GetParam() == SiteIsolation::On)
-        EXPECT_EQ(count, 2u);
-    else
-        EXPECT_EQ(count, 1u);
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 1u);
+}
+
+TEST_P(FindPrivateSPI, ChildFrameInZeroHeightClipper)
+{
+    FindTestPage page { FindTestFixtures::childFrameInZeroHeightClipper(), GetParam() };
+    PrivateFindSPITester find { page.webView() };
+
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 1u);
+}
+
+TEST_P(FindPrivateSPI, AbsolutelyPositionedChildFrameInZeroHeightClipper)
+{
+    FindTestPage page { FindTestFixtures::absolutelyPositionedChildFrameInZeroHeightClipper(), GetParam() };
+    PrivateFindSPITester find { page.webView() };
+
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 2u);
+}
+
+TEST_P(FindPrivateSPI, GrandchildOfChildFrameInZeroHeightClipper)
+{
+    FindTestPage page { FindTestFixtures::grandchildOfChildFrameInZeroHeightClipper(), GetParam() };
+    PrivateFindSPITester find { page.webView() };
+
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 1u);
+}
+
+TEST_P(FindPrivateSPI, ZeroSizeChildFrame)
+{
+    FindTestPage page { FindTestFixtures::zeroSizeChildFrame(), GetParam() };
+    PrivateFindSPITester find { page.webView() };
+
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 2u);
+}
+
+TEST_P(FindPrivateSPI, GrandchildOfHiddenChildFrame)
+{
+    FindTestPage page { FindTestFixtures::grandchildOfHiddenChildFrame(), GetParam() };
+    PrivateFindSPITester find { page.webView() };
+
+    EXPECT_EQ(find.countStringMatches(@"hello", _WKFindOptionsCaseInsensitive), 1u);
 }
 
 TEST_P(FindPrivateSPI, NestedFrames)
@@ -218,8 +252,7 @@ TEST_P(FindPrivateSPI, NestedFrames)
     find.findString(@"hello", stepOptions);
     find.findString(@"hello", stepOptions);
     auto result = find.findString(@"hello", stepOptions);
-    // FIXME(326396): With site isolation, the match index doesn't follow frame tree order, even though the selection does.
-    EXPECT_EQ(result.matchIndex, GetParam() == SiteIsolation::On ? 1 : 2);
+    EXPECT_EQ(result.matchIndex, 2);
     auto grandchildFrame = FindStateSnapshot::capture(page.webView()).frame({ 0, 0 });
     ASSERT_TRUE(grandchildFrame);
     EXPECT_WK_STREQ("hello", grandchildFrame->selectedText);

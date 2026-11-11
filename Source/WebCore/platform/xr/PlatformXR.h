@@ -147,6 +147,9 @@ enum class SessionFeature : uint8_t {
 #if ENABLE(WEBXR_HIT_TEST)
     HitTest,
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    PlaneDetection,
+#endif
     WebGPU,
 #if ENABLE(WEBXR_LAYERS)
     Layers,
@@ -194,6 +197,10 @@ inline std::optional<SessionFeature> parseSessionFeatureDescriptor(StringView st
     if (equalLettersIgnoringASCIICase(feature, "hit-test"_s))
         return SessionFeature::HitTest;
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    if (equalLettersIgnoringASCIICase(feature, "plane-detection"_s))
+        return SessionFeature::PlaneDetection;
+#endif
     if (equalLettersIgnoringASCIICase(feature, "webgpu"_s))
         return SessionFeature::WebGPU;
 #if ENABLE(WEBXR_LAYERS)
@@ -223,6 +230,10 @@ inline String sessionFeatureDescriptor(SessionFeature sessionFeature)
 #if ENABLE(WEBXR_HIT_TEST)
     case SessionFeature::HitTest:
         return "hit-test"_s;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    case SessionFeature::PlaneDetection:
+        return "plane-detection"_s;
 #endif
     case SessionFeature::WebGPU:
         return "webgpu"_s;
@@ -328,6 +339,20 @@ struct TransientInputHitTestOptions {
 };
 #endif // ENABLE(WEBXR_HIT_TEST)
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+enum class PlaneOrientation : uint8_t {
+    Horizontal,
+    Vertical,
+};
+
+enum class PlaneSemanticLabel : uint8_t {
+    Floor,
+    Wall,
+    Ceiling,
+    Table,
+};
+#endif
+
 struct FrameData {
     struct FloatQuaternion {
         float x { 0.0f };
@@ -375,6 +400,8 @@ struct FrameData {
 #if PLATFORM(COCOA)
         MachSendRight completionSyncEvent;
 #endif
+
+        WebCore::IntSize physicalSizeForEye(size_t eye) const { return { physicalSize[eye][0], physicalSize[eye][1] }; }
     };
 
 #if OS(ANDROID)
@@ -458,6 +485,16 @@ struct FrameData {
     };
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    struct Plane {
+        uint64_t id { 0 };
+        Pose pose; // In device's tracking space.
+        Vector<WebCore::FloatPoint> polygon;
+        std::optional<PlaneOrientation> orientation;
+        std::optional<PlaneSemanticLabel> semanticLabel;
+    };
+#endif
+
     bool isTrackingValid { false };
     bool isPositionValid { false };
     bool isPositionEmulated { false };
@@ -472,10 +509,19 @@ struct FrameData {
     HashMap<HitTestSource, Vector<HitTestResult>> hitTestResults;
     HashMap<TransientInputHitTestSource, Vector<TransientInputHitTestResult>> transientInputHitTestResults;
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    // nullopt means unchanged since the previous frame (or incomplete data), which is distinct from an empty list meaning no planes.
+    std::optional<Vector<Plane>> detectedPlanes;
+#endif
     Vector<InputSource> inputSources;
     XREnvironmentBlendMode environmentBlendMode { XREnvironmentBlendMode::Opaque };
 
     FrameData copy() const;
+};
+
+enum class LayerUpdateMode : uint8_t {
+    Dynamic,
+    Static,
 };
 
 #if ENABLE(WEBXR_LAYERS)
@@ -508,6 +554,7 @@ struct DeviceLayer {
 #if ENABLE(WEBXR_LAYERS)
     bool blendTextureSourceAlpha { false };
     bool forceMonoPresentation { false };
+    bool contentUpdated { true };
     struct QuadLayerData {
         WebCore::FloatSize worldSize;
         FrameData::Pose poseInLocalSpace;
@@ -575,7 +622,7 @@ public:
     virtual void initializeReferenceSpace(ReferenceSpaceType) = 0;
     virtual std::optional<LayerInfo> createLayerProjection(uint32_t width, uint32_t height, bool alpha) = 0;
 #if ENABLE(WEBXR_LAYERS)
-    virtual std::optional<LayerInfo> createCompositionLayer(CompositionLayerType, WebCore::IntSize, LayerLayout) = 0;
+    virtual std::optional<LayerInfo> createCompositionLayer(CompositionLayerType, WebCore::IntSize, LayerLayout, LayerUpdateMode) = 0;
 #endif
     virtual void deleteLayer(LayerHandle) = 0;
 

@@ -33,9 +33,9 @@
 #import "WKSLinearMediaTypes.h"
 #import <WebCore/ExceptionOr.h>
 #import <WebCore/Image.h>
-#import <WebCore/ImageAdapter.h>
 #import <WebCore/ImmersiveVideoMetadata.h>
 #import <WebCore/MediaSelectionOption.h>
+#import <WebCore/NativeImageCocoa.h>
 #import <WebCore/NowPlayingInfo.h>
 #import <WebCore/PlaybackSessionModel.h>
 #import <WebCore/TimeRanges.h>
@@ -277,7 +277,7 @@ static Ref<WebCore::NowPlayingMetadataObserver> nowPlayingMetadataObserver(Playb
 }
 
 PlaybackSessionInterfaceLMK::PlaybackSessionInterfaceLMK(WebCore::PlaybackSessionModel& model)
-    : PlaybackSessionInterfaceIOS { model }
+    : PlaybackSessionInterfaceCocoa { model }
     , m_player { adoptNS([allocWKSLinearMediaPlayerInstance() init]) }
     , m_playerDelegate { adoptNS([[WKLinearMediaPlayerDelegate alloc] initWithModel:model]) }
     , m_nowPlayingMetadataObserver { nowPlayingMetadataObserver(*this) }
@@ -297,7 +297,7 @@ WKSLinearMediaPlayer *PlaybackSessionInterfaceLMK::linearMediaPlayer() const
 
 void PlaybackSessionInterfaceLMK::setPlayerIdentifier(std::optional<WebCore::MediaPlayerIdentifier> identifier)
 {
-    PlaybackSessionInterfaceIOS::setPlayerIdentifier(identifier);
+    PlaybackSessionInterfaceCocoa::setPlayerIdentifier(identifier);
 
     if (RefPtr videoPresentationInterface = m_videoPresentationInterface.get())
         videoPresentationInterface->didSetPlayerIdentifier();
@@ -449,7 +449,7 @@ static RetainPtr<NSData> artworkData(const WebCore::NowPlayingMetadata& metadata
     if (!image)
         return nil;
 
-    return bridge_cast(WebCore::ImageAdapter::tiffRepresentation({ *image }));
+    return bridge_cast(WebCore::tiffRepresentation(*image));
 }
 
 void PlaybackSessionInterfaceLMK::nowPlayingMetadataChanged(const WebCore::NowPlayingMetadata& metadata)
@@ -459,7 +459,7 @@ void PlaybackSessionInterfaceLMK::nowPlayingMetadataChanged(const WebCore::NowPl
     [m_player setArtwork:artworkData(metadata).get()];
 }
 
-void PlaybackSessionInterfaceLMK::swapFullscreenModesWith(PlaybackSessionInterfaceIOS& otherInterfaceIOS)
+void PlaybackSessionInterfaceLMK::swapFullscreenModesWith(PlaybackSessionInterfaceCocoa& otherInterfaceIOS)
 {
     auto& otherInterface = static_cast<PlaybackSessionInterfaceLMK&>(otherInterfaceIOS);
     std::swap(m_player, otherInterface.m_player);

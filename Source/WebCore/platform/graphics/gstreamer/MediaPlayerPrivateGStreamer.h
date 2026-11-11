@@ -189,7 +189,7 @@ public:
     GstElement* pipeline() const { return m_pipeline.get(); }
 
 #if USE(COORDINATED_GRAPHICS)
-    PlatformLayer* LEGACY_NODELETE platformLayer() override { return nullptr; }
+    NODELETE PlatformLayer* platformLayer() override { return nullptr; }
     bool supportsAcceleratedRendering() const override { return true; }
     void setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&) override;
     RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const override;
@@ -305,6 +305,29 @@ protected:
     };
     ChangePipelineStateResult changePipelineState(GstState);
 
+    struct VideoSinkStats {
+    public:
+        // This second videoSink reference is used to ensure access to a valid videoSink from any
+        // thread for statistics computing purposes. All the videoSink assignments happen on the
+        // main thread.
+        GRefPtr<GstElement> videoSink;
+        bool isProbeInstalled { false };
+        gulong videoSinkStatsProbeId { 0 };
+
+        // Used to avoid resetting during the mediaplayer load() that happens after restoring the
+        // player from suspend. The rest of the load() calls must reset the stats, as per the
+        // Media playback quality support spec.
+        bool isResetAllowed { true };
+
+        // Cached 3-state condition.
+        std::optional<bool> supportsLifetimeStats;
+
+        uint64_t totalDecodedVideoFrames { 0 };
+        uint64_t decodedVideoFrames { 0 };
+        uint64_t totalDroppedVideoFrames { 0 };
+        uint64_t droppedVideoFrames { 0 };
+    };
+
     static bool isAvailable();
 
     virtual void durationChanged();
@@ -414,6 +437,9 @@ protected:
     bool isSuspended() const { return m_isSuspended; };
 
     GRefPtr<GstElement> m_audioSink;
+    // If m_videoSink is changed, change also the videoSink reference in m_videoSinkStatsDataMutex.
+    // This is important to prevent access to a stale or cleared m_videoSink from a non-main thread
+    // in updateVideoSinkStatistics(), while m_videoSink is being cleared from the main thread.
     GRefPtr<GstElement> m_videoSink;
     GRefPtr<GstElement> m_pipeline;
     IntSize m_size;
@@ -434,6 +460,8 @@ protected:
     bool m_isBeingDestroyed WTF_GUARDED_BY_LOCK(m_drawLock) { false };
 
     ImageOrientation m_videoSourceOrientation;
+
+    DataMutex<VideoSinkStats> m_videoSinkStatsDataMutex;
 
 #if ENABLE(ENCRYPTED_MEDIA)
     Lock m_cdmAttachmentLock;
@@ -459,6 +487,7 @@ protected:
     String errorMessage() const override { return m_errorMessage; }
 
     bool updateVideoSinkStatistics();
+    void resetVideoSinkStatistics();
 
 private:
     class TaskAtMediaTimeScheduler {
@@ -500,9 +529,13 @@ private:
 
     ImageOrientation getVideoOrientation(const GstTagList*);
 
+    void maybeNotifyClientOfReadyAndNetworkChanges(MediaPlayerEnums::NetworkState, MediaPlayerEnums::ReadyState);
+
     GstElement* createVideoSink();
     GstElement* createAudioSink();
     GstElement* audioSink() const { return m_audioSink.get(); }
+    void installVideoSinkStatsProbe(const GRefPtr<GstElement>& videoSink);
+    void uninstallVideoSinkStatsProbe();
 
     friend class MediaPlayerFactoryGStreamer;
     static void getSupportedTypes(HashSet<String>&);
@@ -557,8 +590,10 @@ private:
 
     void setPlaybinURL(const URL& urlString);
 
-    void updateTracks(const GRefPtr<GstObject>& collectionOwner);
-    void updateVideoSizeAndOrientationFromCaps(const GstCaps*);
+    void updateTracks(const GRefPtr<GstObject>& collectionOwner, const GRefPtr<GstStreamCollection>&);
+    bool updateVideoSizeAndOrientationFromCaps(GstCaps*);
+    bool updateVideoSizeAndOrientationFromCapsAndTags(const GRefPtr<GstCaps>&, const GRefPtr<GstTagList>&);
+    bool updateVideoSizeAndOrientationFromStream(GstStream*);
     bool hasFirstVideoSampleReachedSink() const;
 
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -649,17 +684,10 @@ private:
     uint64_t m_networkReadPosition { 0 };
     mutable uint64_t m_readPositionAtLastDidLoadingProgress { 0 };
 
-    uint64_t m_totalVideoFrames { 0 };
-    uint64_t m_droppedVideoFrames { 0 };
-
     DataMutex<TaskAtMediaTimeScheduler> m_TaskAtMediaTimeSchedulerDataMutex;
 
 private:
     std::optional<VideoFrameMetadata> videoFrameMetadata() final;
-#if ENABLE(MEDIA_STREAM)
-    std::pair<String, GRefPtr<GstDevice>> resolveAudioOutputDevice(const String& deviceId);
-#endif
-    bool applyAudioSinkDevice(GstElement* audioSink, const GRefPtr<GstDevice>&, const String& deviceId);
 
     uint64_t m_sampleCount { 0 };
     uint64_t m_lastVideoFrameMetadataSampleCount { 0 };
@@ -672,8 +700,6 @@ private:
     bool m_initialSegmentSeekDone { false };
 
     String m_errorMessage;
-
-    GRefPtr<GstStreamCollection> m_streamCollection;
 
     AbortableTaskQueue m_sinkTaskQueue;
 
@@ -701,16 +727,19 @@ private:
     const RefPtr<GStreamerQuirksManager> m_quirksManagerForTesting;
     HashMap<const GStreamerQuirk*, std::unique_ptr<GStreamerQuirkBase::GStreamerQuirkState>> m_quirkStates;
 
-    std::optional<VideoFrameGStreamer::Info> m_videoInfo;
+    std::optional<VideoFrameGStreamer::Info> m_videoInfo WTF_GUARDED_BY_LOCK(m_sampleMutex);
 
     bool m_volumeLocked { false };
 
     void determineContainerTypeFromCaps(const GstCaps*);
     enum ContainerType {
         Ogg,
+        WebM,
         Other
     };
     ContainerType m_containerType { ContainerType::Other };
+
+    GRefPtr<GstElement> m_urisourceBin;
 };
 
 } // namespace WebCore

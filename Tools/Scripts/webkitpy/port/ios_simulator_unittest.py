@@ -20,8 +20,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from unittest.mock import Mock, patch
+
 from webkitcorepy import Version
 
+import unittest
+
+from webkitpy.common.system.systemhost_mock import MockSystemHost
+from webkitpy.port.driver import Driver
 from webkitpy.port.ios_simulator import IOSSimulatorPort
 from webkitpy.port import ios_testcase
 from webkitpy.port import port_testcase
@@ -45,11 +51,38 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
         return port
 
     def test_setup_environ_for_server(self):
-        port = self.make_port(options=MockOptions(leaks=True, guard_malloc=True))
-        env = port.setup_environ_for_server(port.driver_name())
-        self.assertEqual(env['MallocStackLogging'], '1')
-        self.assertEqual(env['MallocScribble'], '1')
-        self.assertEqual(env['DYLD_INSERT_LIBRARIES'], '/usr/lib/libgmalloc.dylib')
+        for leaks in [False, True]:
+            for guard_malloc in [False, True]:
+                with self.subTest(leaks=leaks, guard_malloc=guard_malloc):
+                    self.assert_leaks_and_guard_malloc_environment(self.make_port(options=MockOptions(leaks=leaks, guard_malloc=guard_malloc)))
+
+    SANITIZER_ADDITIONAL_ENV_VARS = [
+        'ASAN_OPTIONS=log_path=/tmp/asan',
+        'TSAN_OPTIONS=halt_on_error=1',
+        '__XPC_TSAN_OPTIONS=log_path=/tmp/xpc',
+    ]
+
+    def test_setup_environ_for_test_sanitizer_options(self):
+        port = self.make_port(options=MockOptions(additional_env_var=self.SANITIZER_ADDITIONAL_ENV_VARS))
+        env = Driver(port, None, pixel_tests=False)._setup_environ_for_test()
+        self.assertEqual(env['ASAN_OPTIONS'], 'log_path=/tmp/asan:allocator_may_return_null=1')
+        self.assertEqual(env['__XPC_ASAN_OPTIONS'], 'log_path=/tmp/asan:allocator_may_return_null=1')
+        self.assertEqual(env['TSAN_OPTIONS'], 'halt_on_error=1')
+        self.assertEqual(env['__XPC_TSAN_OPTIONS'], 'log_path=/tmp/xpc:halt_on_error=1')
+
+    def test_environment_for_api_tests_sanitizer_options(self):
+        port = self.make_port(options=MockOptions(additional_env_var=self.SANITIZER_ADDITIONAL_ENV_VARS))
+        env = port.environment_for_api_tests()
+        self.assertEqual(env['SIMCTL_CHILD_ASAN_OPTIONS'], 'log_path=/tmp/asan:allocator_may_return_null=1')
+        self.assertEqual(env['SIMCTL_CHILD___XPC_ASAN_OPTIONS'], 'log_path=/tmp/asan:allocator_may_return_null=1')
+        self.assertEqual(env['SIMCTL_CHILD_TSAN_OPTIONS'], 'halt_on_error=1')
+        self.assertEqual(env['SIMCTL_CHILD___XPC_TSAN_OPTIONS'], 'log_path=/tmp/xpc:halt_on_error=1')
+
+    def test_environment_for_api_tests_simctl_child_variable_wins(self):
+        port = self.make_port(options=MockOptions(additional_env_var=['SIMCTL_CHILD_ASAN_OPTIONS=detect_leaks=0', 'SIMCTL_CHILD_FOO=prefixed', 'FOO=unprefixed']))
+        env = port.environment_for_api_tests()
+        self.assertEqual(env['SIMCTL_CHILD_ASAN_OPTIONS'], 'detect_leaks=0')
+        self.assertEqual(env['SIMCTL_CHILD_FOO'], 'prefixed')
 
     def test_operating_system(self):
         self.assertEqual('ios-simulator', self.make_port().operating_system())
@@ -124,6 +157,24 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
             '/mock-checkout/LayoutTests/platform/wk2',
         ])
 
+    def test_api_test_expectations_files_with_apple_additions(self):
+        # 'ios' and 'ios-<version>' map to the same internal platform, as do 'ios-simulator' and 'ios-simulator-<version>'.
+        # Each internal file should only be listed once.
+        with port_testcase.bind_mock_apple_additions():
+            port = self.make_port()
+            major_os_version = port.device_version().major
+            files = port.api_test_expectations_files()
+
+        self.assertEqual(files, [
+            '/mock-checkout/TestExpectations/apitests',
+            '/mock-checkout/TestExpectations/platform/ios/apitests',
+            f'/additional_testing_path/APITestExpectationsForUnreleasedSoftware/ios-add-ios{major_os_version}/apitests',
+            f'/mock-checkout/TestExpectations/platform/ios-{major_os_version}/apitests',
+            '/mock-checkout/TestExpectations/platform/ios-simulator/apitests',
+            f'/additional_testing_path/APITestExpectationsForUnreleasedSoftware/ios-add-ios{major_os_version}-simulator/apitests',
+            f'/mock-checkout/TestExpectations/platform/ios-simulator-{major_os_version}/apitests',
+        ])
+
     def test_layout_searchpath_wih_device_type(self):
         port = self.make_port(port_name='ios-simulator-wk2')
         major_os_version = port._options.version.split('.')[0]
@@ -157,6 +208,17 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
             '/mock-checkout/LayoutTests/platform/wk2',
         ])
 
+    def test_device_type_matches_any_runtime_patch_version(self):
+        port = self.make_port()
+        port.set_option('version', None)
+        port.device_version = lambda: Version(18, 4, 1)
+        self.assertEqual(port._device_type_with_version().software_version, Version(18, 4))
+
+    def test_device_type_keeps_requested_version(self):
+        port = self.make_port()
+        port.set_option('version', '18.4.1')
+        self.assertEqual(port._device_type_with_version().software_version, Version(18, 4, 1))
+
     def test_max_child_processes(self):
         port = self.make_port()
         self.assertEqual(port.max_child_processes(DeviceType.from_string('Apple Watch')), 0)
@@ -169,3 +231,36 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
         self.assertEqual(configuration['platform'], 'ios')
         self.assertEqual(configuration['style'], 'release')
         self.assertEqual(configuration['version_name'], 'iOS {}'.format(port.device_version()))
+
+    def test_did_spawn_worker_warms_up_booted_simulator(self):
+        port = self.make_port()
+        port.target_host = lambda worker_number: Mock(platform_device=Mock(booted_by_script=True))
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.did_spawn_worker(1)
+        warm_up_runner.assert_called_once_with(1)
+
+    def test_did_spawn_worker_does_not_warm_up_already_booted_simulator(self):
+        port = self.make_port()
+        port.target_host = lambda worker_number: Mock(platform_device=Mock(booted_by_script=False))
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.did_spawn_worker(1)
+        warm_up_runner.assert_not_called()
+
+
+class TeardownFailureTest(unittest.TestCase):
+
+    class FailingDevice(object):
+        def finished_testing(self):
+            raise ValueError('could not shut down')
+
+    def test_a_single_teardown_failure_is_raised(self):
+        devices = [self.FailingDevice()]
+
+        class FakeManager(object):
+            INITIALIZED_DEVICES = devices
+
+        port = IOSSimulatorPort(MockSystemHost(), 'ios-simulator', options=MockOptions(child_processes=1))
+        port.DEVICE_MANAGER = FakeManager
+
+        with self.assertRaises(ValueError):
+            port.clean_up_test_run()

@@ -92,9 +92,13 @@ public:
     void simulateShutdownCompleted();
     void scheduleOnNextFrame(Function<void()>&&);
     void addInputConnection(Ref<WebFakeXRInputController>&& input) { m_inputConnections.append(WTF::move(input)); };
-#if ENABLE(WEBXR_HIT_TEST)
+#if ENABLE(WEBXR_HIT_TEST) || ENABLE(WEBXR_PLANE_DETECTION)
     void setWorld(const FakeXRWorldInit&);
     void clearWorld();
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    void updateWorld(const FakeXRWorldInit&);
+    void simulateIncompletePlaneDetectionData() { m_simulateIncompletePlaneData = true; }
 #endif
 
 private:
@@ -108,7 +112,7 @@ private:
     std::optional<PlatformXR::LayerHandle> createLayer(IntSize);
     std::optional<PlatformXR::LayerInfo> createLayerProjection(uint32_t width, uint32_t height, bool alpha) final;
 #if ENABLE(WEBXR_LAYERS)
-    std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, IntSize, PlatformXR::LayerLayout) final;
+    std::optional<PlatformXR::LayerInfo> createCompositionLayer(PlatformXR::CompositionLayerType, IntSize, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode) final;
 #endif
     void deleteLayer(PlatformXR::LayerHandle) final;
 #if ENABLE(WEBXR_HIT_TEST)
@@ -118,6 +122,9 @@ private:
     void deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource) final;
 
     Vector<PlatformXR::FrameData::HitTestResult> hitTestWorld(const PlatformXR::Ray&, const Vector<WebCore::XRHitTestTrackableType>&);
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    Vector<PlatformXR::FrameData::Plane> detectedPlanes() const;
 #endif
 
     void stopTimer();
@@ -132,7 +139,13 @@ private:
 #if ENABLE(WEBXR_HIT_TEST)
     HashMap<PlatformXR::HitTestSource, UniqueRef<PlatformXR::HitTestOptions>> m_hitTestSources;
     HashMap<PlatformXR::TransientInputHitTestSource, UniqueRef<PlatformXR::TransientInputHitTestOptions>> m_transientInputHitTestSources;
+#endif
+#if ENABLE(WEBXR_HIT_TEST) || ENABLE(WEBXR_PLANE_DETECTION)
     FakeXRWorldInit m_world;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    uint32_t m_worldGeneration { 0 };
+    bool m_simulateIncompletePlaneData { false };
 #endif
     Vector<Ref<WebFakeXRInputController>> m_inputConnections;
 };
@@ -155,9 +168,13 @@ public:
     SimulatedXRDevice& simulatedXRDevice() { return m_device; }
     void setSupportsShutdownNotification();
     void simulateShutdown();
-#if ENABLE(WEBXR_HIT_TEST)
+#if ENABLE(WEBXR_HIT_TEST) || ENABLE(WEBXR_PLANE_DETECTION)
     void setWorld(const FakeXRWorldInit&);
     void clearWorld();
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    void updateWorld(const FakeXRWorldInit& world) { m_device->updateWorld(world); }
+    void simulateIncompletePlaneDetectionData() { m_device->simulateIncompletePlaneDetectionData(); }
 #endif
 
     static ExceptionOr<PlatformXR::FrameData::Pose> parseRigidTransform(const FakeXRRigidTransformInit&);

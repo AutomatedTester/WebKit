@@ -101,10 +101,8 @@ static ALWAYS_INLINE bool tryGrowAndShiftButterflyRight(JSObject* object, VM& vm
 
 const ClassInfo JSArray::s_info = { "Array"_s, &JSNonFinalObject::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSArray) };
 
-JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& scope, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
+Butterfly* JSArray::tryCreateUninitializedRestrictedButterfly(VM& vm, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
 {
-    VM& vm = scope.vm();
-
     if (initialLength > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
         return nullptr;
 
@@ -118,7 +116,7 @@ JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& sc
             || hasDouble(indexingType)
             || hasContiguous(indexingType));
 
-        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(structure, initialLength);
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(outOfLineStorage, initialLength);
         void* temp = vm.auxiliarySpace().allocate(
             vm,
             Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
@@ -128,19 +126,13 @@ JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& sc
         butterfly = Butterfly::fromBase(temp, 0, outOfLineStorage);
         butterfly->setVectorLength(vectorLength);
         butterfly->setPublicLength(initialLength);
-        if (hasDouble(indexingType)) {
-            for (unsigned i = initialLength; i < vectorLength; ++i)
-                butterfly->contiguousDouble().atUnsafe(i) = PNaN;
-        } else {
-            for (unsigned i = initialLength; i < vectorLength; ++i)
-                butterfly->contiguous().atUnsafe(i).clear();
-        }
+        Butterfly::clearRange(indexingType, butterfly, initialLength, vectorLength);
     } else {
         ASSERT(
             indexingType == ArrayWithSlowPutArrayStorage
             || indexingType == ArrayWithArrayStorage);
         static constexpr unsigned indexBias = 0;
-        unsigned vectorLength = ArrayStorage::optimalVectorLength(indexBias, structure, initialLength);
+        unsigned vectorLength = ArrayStorage::optimalVectorLength(indexBias, outOfLineStorage, initialLength);
         void* temp = vm.auxiliarySpace().allocate(
             vm,
             Butterfly::totalSize(indexBias, outOfLineStorage, true, ArrayStorage::sizeFor(vectorLength)),
@@ -156,6 +148,17 @@ JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& sc
         for (unsigned i = initialLength; i < vectorLength; ++i)
             storage->m_vector[i].clear();
     }
+
+    return butterfly;
+}
+
+JSArray* JSArray::tryCreateUninitializedRestricted(ObjectInitializationScope& scope, GCDeferralContext* deferralContext, Structure* structure, unsigned initialLength)
+{
+    VM& vm = scope.vm();
+
+    Butterfly* butterfly = tryCreateUninitializedRestrictedButterfly(vm, deferralContext, structure, initialLength);
+    if (!butterfly) [[unlikely]]
+        return nullptr;
 
     JSArray* result = createWithButterfly(vm, deferralContext, structure, butterfly);
 
@@ -341,7 +344,7 @@ bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return JSObject::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
-static int LEGACY_NODELETE compareKeysForQSort(const void* a, const void* b)
+NODELETE static int compareKeysForQSort(const void* a, const void* b)
 {
     unsigned da = *static_cast<const unsigned*>(a);
     unsigned db = *static_cast<const unsigned*>(b);
@@ -492,8 +495,7 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
 
         if (newLength < length) {
             // Copy any keys we might be interested in into a vector.
-            Vector<unsigned, 0, UnsafeVectorOverflow> keys;
-            keys.reserveInitialCapacity(std::min(map->size(), static_cast<size_t>(length - newLength)));
+            Vector<unsigned, 0, UnsafeVectorOverflow> keys(ReserveCapacityTag { }, std::min(map->size(), static_cast<size_t>(length - newLength)));
             SparseArrayValueMap::const_iterator end = map->end();
             for (SparseArrayValueMap::const_iterator it = map->begin(); it != end; ++it) {
                 unsigned index = it->index();
@@ -1134,8 +1136,8 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
         JSCellButterfly* immutableButterfly = nullptr;
         if (isCoW) {
             immutableButterfly = JSCellButterfly::fromButterfly(this->butterfly());
-            auto iter = vm.heap.immutableButterflyToStringCache.find(immutableButterfly);
-            if (iter != vm.heap.immutableButterflyToStringCache.end())
+            auto iter = vm.immutableButterflyToStringCache.find(immutableButterfly);
+            if (iter != vm.immutableButterflyToStringCache.end())
                 return iter->value;
         }
 
@@ -1146,7 +1148,7 @@ JSString* JSArray::fastToString(JSGlobalObject* globalObject)
 
         if (!sawHoles && !genericCase && result && isCoW) {
             ASSERT(JSCellButterfly::fromButterfly(this->butterfly()) == immutableButterfly);
-            vm.heap.immutableButterflyToStringCache.add(immutableButterfly, result);
+            vm.immutableButterflyToStringCache.add(immutableButterfly, result);
         }
 
         return result;
@@ -2083,6 +2085,24 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
     }
 }
 
+static NEVER_INLINE unsigned copyToArgumentsFillingHoles(JSArray* array, JSValue* firstElementDest, unsigned offset, unsigned i, unsigned length)
+{
+    Butterfly* butterfly = array->butterfly();
+    IndexingType indexingType = array->indexingType();
+    unsigned end = std::min(length, hasAnyArrayStorage(indexingType) ? butterfly->arrayStorage()->vectorLength() : butterfly->publicLength());
+    if (i >= end)
+        return i;
+
+    auto* buffer = std::bit_cast<WriteBarrier<Unknown>*>(firstElementDest);
+    if (hasAnyArrayStorage(indexingType))
+        copyArrayElements<ArrayFillMode::Undefined, NeedsGCSafeOps::No>(buffer, i - offset, butterfly->arrayStorage()->m_vector, i, end - i, indexingType);
+    else if (indexingType == ArrayWithDouble)
+        copyArrayElements<ArrayFillMode::Undefined, NeedsGCSafeOps::No>(buffer, i - offset, butterfly->contiguousDouble().data(), i, end - i, indexingType);
+    else
+        copyArrayElements<ArrayFillMode::Undefined, NeedsGCSafeOps::No>(buffer, i - offset, butterfly->contiguous().data(), i, end - i, indexingType);
+    return end;
+}
+
 void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElementDest, unsigned offset, unsigned length)
 {
     VM& vm = globalObject->vm();
@@ -2150,6 +2170,9 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
         firstElementDest[i - offset] = v.get();
     }
     
+    if (i < length && canDoFastIndexedAccess())
+        i = copyToArgumentsFillingHoles(this, firstElementDest, offset, i, length);
+
     for (; i < length; ++i) {
         firstElementDest[i - offset] = get(globalObject, i);
         RETURN_IF_EXCEPTION(scope, void());
@@ -2267,18 +2290,13 @@ JSArray* constructArrayPair(JSGlobalObject* globalObject, JSValue first, JSValue
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ObjectInitializationScope initializationScope(vm);
 
-    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-
-    JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, structure, 2);
+    GCDeferralContext deferralContext(vm);
+    JSArray* array = tryConstructArrayPair(globalObject, deferralContext, first, second);
     if (!array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);
         return nullptr;
     }
-    array->initializeIndex(initializationScope, 0, first);
-    array->initializeIndex(initializationScope, 1, second);
-
     return array;
 }
 
@@ -2426,7 +2444,7 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
                 continue;
             resultLength++;
             if (lengthExceeded()) [[unlikely]] {
-                throwTypeError(globalObject, scope, "flatten array exceeds 2**52 - 1");
+                throwTypeError(globalObject, scope, "flatten array exceeds 2**53 - 1");
                 return std::numeric_limits<uint64_t>::max();
             }
         }
@@ -2449,7 +2467,7 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
                     return flatLength;
                 resultLength += flatLength;
                 if (lengthExceeded()) [[unlikely]] {
-                    throwTypeError(globalObject, scope, "flatten array exceeds 2**52 - 1");
+                    throwTypeError(globalObject, scope, "flatten array exceeds 2**53 - 1");
                     return std::numeric_limits<uint64_t>::max();
                 }
             } else {
@@ -2460,7 +2478,7 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
                 }
                 resultLength++;
                 if (lengthExceeded()) [[unlikely]] {
-                    throwTypeError(globalObject, scope, "flatten array exceeds 2**52 - 1");
+                    throwTypeError(globalObject, scope, "flatten array exceeds 2**53 - 1");
                     return std::numeric_limits<uint64_t>::max();
                 }
             }
@@ -2475,7 +2493,7 @@ static uint64_t calculateFlattenedLength(JSGlobalObject* globalObject, JSArray* 
                 continue;
             resultLength++;
             if (lengthExceeded()) [[unlikely]] {
-                throwTypeError(globalObject, scope, "flatten array exceeds 2**52 - 1");
+                throwTypeError(globalObject, scope, "flatten array exceeds 2**53 - 1");
                 return std::numeric_limits<uint64_t>::max();
             }
         }

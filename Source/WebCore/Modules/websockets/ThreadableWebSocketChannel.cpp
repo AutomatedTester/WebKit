@@ -33,6 +33,7 @@
 #include "ThreadableWebSocketChannel.h"
 
 #include "ContentRuleListResults.h"
+#include "DedicatedWorkerGlobalScope.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h"
 #include "DocumentQuirks.h"
@@ -53,14 +54,18 @@
 
 namespace WebCore {
 
-RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(Document& document, WebSocketChannelClient& client, SocketProvider& provider, IsInitiatedByDedicatedWorker isInitiatedByDedicatedWorker)
+RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(Document& document, WebSocketChannelClient& client, SocketProvider& provider, IsInitiatedByWorker isInitiatedByWorker)
 {
-    return provider.createWebSocketChannel(document, client, isInitiatedByDedicatedWorker);
+    return provider.createWebSocketChannel(document, client, isInitiatedByWorker);
 }
 
 RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(ScriptExecutionContext& context, WebSocketChannelClient& client, SocketProvider& provider)
 {
     if (RefPtr workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(context)) {
+        auto isInitiatedByWorker = is<DedicatedWorkerGlobalScope>(*workerGlobalScope) ? IsInitiatedByWorker::Yes : IsInitiatedByWorker::No;
+        if (RefPtr channel = provider.createWebSocketChannel(*workerGlobalScope, client, isInitiatedByWorker))
+            return channel;
+
         auto identifier = workerGlobalScope->thread()->runLoop().createUniqueId();
         return WorkerThreadableWebSocketChannel::create(*workerGlobalScope, client, makeString("webSocketChannelMode"_s, identifier), provider);
     }

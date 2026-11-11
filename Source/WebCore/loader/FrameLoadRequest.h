@@ -30,7 +30,9 @@
 #include <WebCore/Element.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationHistoryBehavior.h>
+#include <WebCore/NavigationIdentifier.h>
 #include <WebCore/ReferrerPolicy.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ShouldTreatAsContinuingLoad.h>
 #include <WebCore/SubstituteData.h>
@@ -52,8 +54,14 @@ public:
     LockBackForwardList lockBackForwardList() const { return m_lockBackForwardList; }
     void setLockBackForwardList(LockBackForwardList lockBackForwardList) { m_lockBackForwardList = lockBackForwardList; }
 
+    ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded() const { return m_replaceIfNotCompletelyLoaded; }
+    void setReplaceIfNotCompletelyLoaded(ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded) { m_replaceIfNotCompletelyLoaded = replaceIfNotCompletelyLoaded; }
+
     NewFrameOpenerPolicy newFrameOpenerPolicy() const { return m_newFrameOpenerPolicy; }
     void setNewFrameOpenerPolicy(NewFrameOpenerPolicy newFrameOpenerPolicy) { m_newFrameOpenerPolicy = newFrameOpenerPolicy; }
+
+    const RegistrableDomain& openedByScriptDomain() const LIFETIME_BOUND { return m_openedByScriptDomain; }
+    void setOpenedByScriptDomain(RegistrableDomain&& domain) { m_openedByScriptDomain = WTF::move(domain); }
 
     // The shouldReplaceDocumentIfJavaScriptURL parameter will go away when the FIXME to eliminate the
     // corresponding parameter from ScriptController::executeIfJavaScriptURL() is addressed.
@@ -102,7 +110,9 @@ protected:
 private:
     LockHistory m_lockHistory { LockHistory::No };
     LockBackForwardList m_lockBackForwardList { LockBackForwardList::No };
+    ReplaceIfNotCompletelyLoaded m_replaceIfNotCompletelyLoaded { ReplaceIfNotCompletelyLoaded::No };
     NewFrameOpenerPolicy m_newFrameOpenerPolicy { NewFrameOpenerPolicy::Allow };
+    RegistrableDomain m_openedByScriptDomain;
     ShouldReplaceDocumentIfJavaScriptURL m_shouldReplaceDocumentIfJavaScriptURL { ReplaceDocumentIfJavaScriptURL };
     ShouldOpenExternalURLsPolicy m_shouldOpenExternalURLsPolicy { ShouldOpenExternalURLsPolicy::ShouldNotAllow };
     AtomString m_downloadAttribute;
@@ -130,8 +140,8 @@ public:
 
     bool isEmpty() const { return m_resourceRequest.isEmpty(); }
 
-    WEBCORE_EXPORT Document& LEGACY_NODELETE requester() const;
-    const SecurityOrigin& LEGACY_NODELETE requesterSecurityOrigin() const;
+    NODELETE WEBCORE_EXPORT Document& requester() const;
+    NODELETE const SecurityOrigin& requesterSecurityOrigin() const;
 
     ResourceRequest& resourceRequest() LIFETIME_BOUND { return m_resourceRequest; }
     const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }
@@ -187,6 +197,9 @@ public:
     MonotonicTime originalNavigationStartTime() const { return m_originalNavigationStartTime; }
     void setOriginalNavigationStartTime(MonotonicTime time) { m_originalNavigationStartTime = time; }
 
+    std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
+    void setNavigationID(NavigationIdentifier navigationID) { m_navigationID = navigationID; }
+
 private:
     Ref<Document> m_requester;
     Ref<SecurityOrigin> m_requesterSecurityOrigin;
@@ -203,6 +216,7 @@ private:
     std::optional<OptionSet<AdvancedPrivacyProtections>> m_advancedPrivacyProtections;
     NavigationHistoryBehavior m_navigationHistoryBehavior { NavigationHistoryBehavior::Auto };
     MonotonicTime m_originalNavigationStartTime;
+    Markable<NavigationIdentifier> m_navigationID;
     bool m_isHandledByAboutSchemeHandler { false };
     bool m_skipNavigateEvent { false };
 };

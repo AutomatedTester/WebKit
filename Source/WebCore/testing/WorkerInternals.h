@@ -41,9 +41,11 @@ class WEBCORE_TESTSUPPORT_EXPORT WorkerInternals : public RefCounted<WorkerInter
 public:
     static Ref<WorkerInternals> create() { return adoptRef(*new WorkerInternals); }
 
+    bool isIOKitAvailable();
+
 #if ENABLE(WEBGL)
     void simulateEventForWebGLContext(SimulatedWebGLContextEvent, WebGLRenderingContextBase&);
-    RequestedGPU LEGACY_NODELETE requestedGPU(WebGLRenderingContextBase&);
+    NODELETE RequestedGPU requestedGPU(WebGLRenderingContextBase&);
     Vector<int> webglMaxDrawingBufferSize(WebGLRenderingContextBase&);
 #endif
 

@@ -68,6 +68,7 @@ class Element;
 class Event;
 class Exception;
 class FloatQuad;
+class HTMLFrameOwnerElement;
 class InspectorHistory;
 #if ENABLE(VIDEO)
 class HTMLMediaElement;
@@ -99,16 +100,16 @@ public:
     static String toErrorString(ExceptionCode);
     static String toErrorString(Exception&&);
 
-    static String documentURLString(Document*);
+    NODELETE static String documentURLString(Document*);
     static String documentBaseURLString(Document*);
 
     // We represent embedded doms as a part of the same hierarchy. Hence we treat children of frame owners differently.
     // We also skip whitespace text nodes conditionally. Following methods encapsulate these specifics.
-    static Node* LEGACY_NODELETE innerFirstChild(Node*);
-    static Node* LEGACY_NODELETE innerNextSibling(Node*);
-    static Node* LEGACY_NODELETE innerPreviousSibling(Node*);
-    static unsigned innerChildNodeCount(Node*);
-    static Node* LEGACY_NODELETE innerParentNode(Node*);
+    NODELETE static Node* innerFirstChild(Node*);
+    NODELETE static Node* innerNextSibling(Node*);
+    NODELETE static Node* innerPreviousSibling(Node*);
+    NODELETE static unsigned innerChildNodeCount(Node*);
+    NODELETE static Node* innerParentNode(Node*);
 
     static Node* scriptValueAsNode(JSC::JSValue);
     static JSC::JSValue nodeAsScriptValue(JSC::JSGlobalObject&, Node*);
@@ -154,6 +155,7 @@ public:
     Inspector::Protocol::ErrorStringOr<void> setInspectModeEnabled(bool, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig, std::optional<bool>&& showRulers);
 #endif
     Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> requestNode(const Inspector::Protocol::Runtime::RemoteObjectId&);
+    Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> requestFrameOwner(const Inspector::Protocol::Network::FrameId&);
     Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> pushNodeByPathToFrontend(const String& path);
     Inspector::Protocol::ErrorStringOr<void> hideHighlight();
     Inspector::Protocol::ErrorStringOr<void> highlightRect(int x, int y, int width, int height, RefPtr<JSON::Object>&& color, RefPtr<JSON::Object>&& outlineColor, std::optional<bool>&& usePageCoordinates);
@@ -190,7 +192,7 @@ public:
     void didInsertDOMNode(Node&);
     void didRemoveDOMNode(Node&);
     void willDestroyDOMNode(Node&);
-    void LEGACY_NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
+    NODELETE void willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
     void didModifyDOMAttr(Element&, const AtomString& name, const AtomString& value);
     void didRemoveDOMAttr(Element&, const AtomString& name);
     void characterDataModified(CharacterData&);
@@ -200,6 +202,7 @@ public:
     void didChangeCustomElementState(Element&);
     bool handleTouchEvent(Node&);
     void didCommitLoad(Document*);
+    void frameOwnerContentFrameChanged(HTMLFrameOwnerElement&);
     void frameDocumentUpdated(LocalFrame&);
     void pseudoElementCreated(PseudoElement&);
     void pseudoElementDestroyed(PseudoElement&);
@@ -254,6 +257,7 @@ private:
     // Node-related methods.
     Inspector::Protocol::DOM::NodeId bind(Node&);
     void unbind(Node&);
+    void resendFrameOwner(HTMLFrameOwnerElement&);
 
     Node* assertEditableNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
     Element* assertEditableElement(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);

@@ -128,8 +128,7 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
     if (!parent)
         return;
 
-    Vector<RetainPtr<AVContentKeyRequest>> requests;
-    requests.reserveInitialCapacity(keyRequests.count);
+    Vector<RetainPtr<AVContentKeyRequest>> requests(ReserveCapacityTag { }, keyRequests.count);
     [keyRequests enumerateObjectsUsingBlock:[&](AVContentKeyRequest* request, NSUInteger, BOOL*) {
         requests.append(request);
     }];
@@ -202,7 +201,7 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 namespace WebCore {
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& LEGACY_NODELETE logChannel() { return LogEME; }
+NODELETE static WTFLogChannel& logChannel() { return LogEME; }
 
 // Variants of LOGIDENTIFIER / *_LOG for use inside lambdas, where the logging members have to be
 // reached through a protected pointer instead of an implicitly captured `this`. The LoggerHelper
@@ -581,7 +580,7 @@ void CDMInstanceFairPlayStreamingAVFObjC::outputObscuredDueToInsufficientExterna
 {
     for (auto& sessionInterface : m_sessions) {
         if (sessionInterface)
-            sessionInterface->outputObscuredDueToInsufficientExternalProtectionChanged(obscured);
+            protect(sessionInterface)->outputObscuredDueToInsufficientExternalProtectionChanged(obscured);
     }
 }
 
@@ -627,7 +626,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
         if (!sessionInterface)
             continue;
 
-        auto sessionKeys = sessionInterface->keyIDs();
+        auto sessionKeys = protect(sessionInterface)->keyIDs();
         if (std::ranges::any_of(sessionKeys, [&](auto& sessionKey) {
             return keyIDs.containsIf([&](auto& keyID) {
                 return keyID.get() == sessionKey.get();
@@ -641,7 +640,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
 CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC::sessionForKey(AVContentKey *key) const
 {
     auto index = m_sessions.findIf([&] (auto session) {
-        return session && session->hasKey(key);
+        return session && protect(session)->hasKey(key);
     });
 
     if (index != notFound)
@@ -653,7 +652,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
 CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC::sessionForRequest(AVContentKeyRequest *request) const
 {
     auto index = m_sessions.findIf([&] (auto session) {
-        return session && session->hasRequest(request);
+        return session && protect(session)->hasRequest(request);
     });
 
     if (index != notFound)
@@ -674,7 +673,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
     return nullptr;
 }
 
-static bool LEGACY_NODELETE isPotentiallyUsableKeyStatus(CDMInstanceSession::KeyStatus status)
+NODELETE static bool isPotentiallyUsableKeyStatus(CDMInstanceSession::KeyStatus status)
 {
     switch (status) {
     case CDMInstanceSession::KeyStatus::Expired:
@@ -694,7 +693,7 @@ static bool LEGACY_NODELETE isPotentiallyUsableKeyStatus(CDMInstanceSession::Key
 bool CDMInstanceFairPlayStreamingAVFObjC::isAnyKeyUsable(const CDMKeyIDs& keys) const
 {
     for (auto& sessionInterface : m_sessions) {
-        if (sessionInterface && sessionInterface->isAnyKeyUsable(keys))
+        if (sessionInterface && protect(sessionInterface)->isAnyKeyUsable(keys))
             return true;
     }
     return false;
@@ -1358,8 +1357,7 @@ RetainPtr<NSDictionary> CDMInstanceSessionFairPlayStreamingAVFObjC::optionsForKe
         return @{ };
 
     auto options = adoptNS([[NSMutableDictionary alloc] init]);
-    Vector<uint8_t> seedData;
-    seedData.reserveInitialCapacity(mediaKeysHashSeedString.length());
+    Vector<uint8_t> seedData(ReserveCapacityTag { }, mediaKeysHashSeedString.length());
     for (auto character : mediaKeysHashSeedString.span8()) {
         if (isASCIIHexDigit(character))
             seedData.append(toASCIIHexValue(character));
@@ -1616,7 +1614,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::groupSessionIdentifierChanged(A
 #endif
 }
 
-static CDMKeyStatus LEGACY_NODELETE requestStatusToCDMStatus(AVContentKeyRequestStatus status)
+NODELETE static CDMKeyStatus requestStatusToCDMStatus(AVContentKeyRequestStatus status)
 {
     switch (status) {
         case AVContentKeyRequestStatusRequestingResponse:
@@ -1686,7 +1684,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::externalProtectionStatusDidChan
 }
 
 #if HAVE(AVCONTENTKEYREQUEST_PENDING_PROTECTION_STATUS)
-static std::optional<CDMKeyStatus> LEGACY_NODELETE keyStatusForContentProtectionStatus(AVExternalContentProtectionStatus status)
+NODELETE static std::optional<CDMKeyStatus> keyStatusForContentProtectionStatus(AVExternalContentProtectionStatus status)
 {
     switch (status) {
     case AVExternalContentProtectionStatusPending:

@@ -996,14 +996,6 @@ void VTTCue::obtainCSSBoxes()
         style->setTextContent(WTF::move(cssString));
         displayTree->appendChild(WTF::move(style));
     }
-
-    if (const auto& styleSheets = track()->styleSheets()) {
-        for (const auto& cssString : *styleSheets) {
-            auto style = HTMLStyleElement::create(HTMLNames::styleTag, document.get(), false);
-            style->setTextContent(String { cssString });
-            displayTree->appendChild(WTF::move(style));
-        }
-    }
 }
 
 void VTTCue::markFutureAndPastNodes(ContainerNode* root, const MediaTime& previousTimestamp, const MediaTime& movieTime)
@@ -1228,11 +1220,12 @@ void VTTCue::setCueSettings(const String& inputString)
                     if (!input.scan(','))
                         break;
 
-                    if (input.scan(startKeyword().span8()))
+                    auto alignmentRun = input.collectUntil<isTabOrSpace>();
+                    if (input.scanRun(alignmentRun, startKeyword()))
                         alignment = LineAlignSetting::Start;
-                    else if (input.scan(centerKeyword().span8()))
+                    else if (input.scanRun(alignmentRun, centerKeyword()))
                         alignment = LineAlignSetting::Center;
-                    else if (input.scan(endKeyword().span8()))
+                    else if (input.scanRun(alignmentRun, endKeyword()))
                         alignment = LineAlignSetting::End;
                     else {
                         ERROR_LOG(identifier, "Invalid line setting alignment");
@@ -1281,11 +1274,12 @@ void VTTCue::setCueSettings(const String& inputString)
                     return false;
 
                 // 2.2 One of the following strings: "line-left", "center", "line-right"
-                if (input.scan(lineLeftKeyword().span8()))
+                auto alignmentRun = input.collectUntil<isTabOrSpace>();
+                if (input.scanRun(alignmentRun, lineLeftKeyword()))
                     alignment = PositionAlignSetting::LineLeft;
-                else if (input.scan(centerKeyword().span8()))
+                else if (input.scanRun(alignmentRun, centerKeyword()))
                     alignment = PositionAlignSetting::Center;
-                else if (input.scan(lineRightKeyword().span8()))
+                else if (input.scanRun(alignmentRun, lineRightKeyword()))
                     alignment = PositionAlignSetting::LineRight;
                 else {
                     ALWAYS_LOG(identifier, "Invalid position setting alignment");
@@ -1412,7 +1406,7 @@ void VTTCue::toJSON(JSON::Object& object) const
 }
 
 #if ENABLE(SPEECH_SYNTHESIS)
-static float LEGACY_NODELETE mapVideoRateToSpeechRate(float rate)
+NODELETE static float mapVideoRateToSpeechRate(float rate)
 {
     // WebSpeech says to go from .1 -> 10 (default 1)
     // Video rate is 0 -> 2 (default 1). [The spec has no maximum rate, but the default controls only go to 2x, so use that]

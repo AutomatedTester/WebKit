@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -117,6 +117,16 @@ const std::optional<const Styleable> Styleable::fromRenderer(const RenderElement
         if (auto* element = renderer.element())
             return fromElement(*element);
         break;
+    case PseudoElementType::FirstLetter:
+        // ::first-letter is a typographic (non-tree-abiding) pseudo-element realized as an anonymous
+        // renderer with no element of its own. Walk up to the originating block (the one carrying the
+        // pseudo style) to recover the Styleable that owns any animations targeting the pseudo-element.
+        // ::first-line has no associated renderer, so it cannot get here.
+        for (CheckedPtr ancestor = renderer.parent(); ancestor; ancestor = ancestor->parent()) {
+            if (RefPtr element = ancestor->element(); element && ancestor->style().hasPseudoStyle(PseudoElementType::FirstLetter))
+                return Styleable(*element, Style::PseudoElementIdentifier { PseudoElementType::FirstLetter });
+        }
+        break;
     default:
         return std::nullopt;
     }
@@ -195,7 +205,7 @@ std::unique_ptr<Style::ComputedStyle> Styleable::computeAnimatedStyle() const
     if (!effectStack)
         return animatedStyle;
 
-    for (const auto& effect : effectStack->sortedEffects())
+    for (RefPtr effect : effectStack->sortedEffects())
         effect->getAnimatedStyle(animatedStyle);
 
     return animatedStyle;
@@ -482,13 +492,13 @@ void Styleable::updateCSSAnimations(const Style::ComputedStyle* currentStyle, co
     protect(element)->cssAnimationsDidUpdate(pseudoElementIdentifier);
 }
 
-static KeyframeEffect* keyframeEffectForElementAndProperty(const Styleable& styleable, const AnimatableCSSProperty& property)
+static RefPtr<KeyframeEffect> keyframeEffectForElementAndProperty(const Styleable& styleable, const AnimatableCSSProperty& property)
 {
     if (auto* keyframeEffectStack = styleable.keyframeEffectStack()) {
         auto& effects = keyframeEffectStack->sortedEffects();
-        for (const auto& effect : effects | std::views::reverse) {
+        for (RefPtr effect : effects | std::views::reverse) {
             if (effect->animatesProperty(property))
-                return effect.get();
+                return effect;
         }
     }
 
@@ -615,7 +625,7 @@ static void updateCSSTransitionsForStyleableAndProperty(const Styleable& styleab
         if (auto* lastStyleChangeEventStyle = styleable.lastStyleChangeEventStyle()) {
             auto style = Style::ComputedStyle::clone(*lastStyleChangeEventStyle);
             if (auto* keyframeEffectStack = styleable.keyframeEffectStack()) {
-                for (const auto& effect : keyframeEffectStack->sortedEffects()) {
+                for (RefPtr effect : keyframeEffectStack->sortedEffects()) {
                     if (effect->animatesProperty(property))
                         protect(*effect)->apply(style, { nullptr });
                 }
@@ -820,11 +830,11 @@ void Styleable::updateCSSTransitions(const Style::ComputedStyle& currentStyle, c
             return quirks;
         }();
 
-        Style::conservativelyCollectChangedAnimatableProperties(*targetStyle, newStyle, transitionProperties, collectionQuirks);
+        Style::conservativelyCollectChangedAnimatableProperties(*targetStyle, newStyle, transitionProperties, protect(element.document())->settings(), collectionQuirks);
 
         // When we have keyframeEffectStack, it can affect on properties. So we just add them.
         if (keyframeEffectStack()) {
-            for (const auto& effect : keyframeEffectStack()->sortedEffects()) {
+            for (RefPtr effect : keyframeEffectStack()->sortedEffects()) {
                 for (const auto& property : effect->animatedProperties())
                     addProperty(property);
                 if (RefPtr transition = dynamicDowncast<CSSTransition>(effect->animation()))

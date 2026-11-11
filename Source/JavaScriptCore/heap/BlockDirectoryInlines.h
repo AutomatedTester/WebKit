@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2018, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,7 +33,7 @@ namespace JSC {
 
 inline void BlockDirectory::forEachBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
-    assertIsMutatorOrMutatorIsStopped();
+    assertMayAccessBitsUnlocked();
     liveBitsView().forEachSetBit(
         [&] (size_t index) {
             functor(m_blocks[index].first);
@@ -42,7 +42,7 @@ inline void BlockDirectory::forEachBlock(NOESCAPE const std::invocable<MarkedBlo
 
 inline void BlockDirectory::forEachNotEmptyBlock(NOESCAPE const std::invocable<MarkedBlock::Handle*> auto& functor)
 {
-    assertIsMutatorOrMutatorIsStopped();
+    assertMayAccessBitsUnlocked();
     markingNotEmptyBitsView().forEachSetBit(
         [&] (size_t index) {
             functor(m_blocks[index].first);
@@ -51,7 +51,11 @@ inline void BlockDirectory::forEachNotEmptyBlock(NOESCAPE const std::invocable<M
 
 inline MarkedBlock::Handle* BlockDirectory::findBlockToSweep()
 {
-    return findBlockToSweep(m_unsweptCursor);
+    auto watched = m_unsweptCursor.watch<MemoryOrder::FullyFenced>();
+    unsigned cursor = watched.value;
+    MarkedBlock::Handle* block = findBlockToSweep(cursor);
+    m_unsweptCursor.tryUpdateWatched<MemoryOrder::Relaxed>(watched, cursor);
+    return block;
 }
 
 } // namespace JSC

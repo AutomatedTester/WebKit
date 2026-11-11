@@ -162,7 +162,7 @@ struct OverrideScreenSize {
     FloatSize size;
 };
 
-static const LocalFrame& LEGACY_NODELETE rootFrame(const LocalFrame& frame, Frame* parent)
+NODELETE static const LocalFrame& rootFrame(const LocalFrame& frame, Frame* parent)
 {
     SUPPRESS_UNCOUNTED_LOCAL auto* localParent = dynamicDowncast<LocalFrame>(parent);
     if (localParent)
@@ -233,7 +233,7 @@ LocalFrame::~LocalFrame()
 {
     setView(nullptr);
 
-    m_inspectorController->inspectedFrameDestroyed();
+    m_inspectorController->inspectedFrameDestroyed(*this);
 
     // Clear prefetched resources before the FrameLoader is torn down. In-flight
     // prefetch loads trigger a cancel chain (allClientsRemoved -> cancelLoad ->
@@ -861,7 +861,7 @@ void LocalFrame::injectUserScriptImmediately(DOMWrapperWorld& world, const UserS
     WTFEndSignpost(this, UserScript);
 }
 
-RenderView* LEGACY_NODELETE LocalFrame::contentRenderer() const
+NODELETE RenderView* LocalFrame::contentRenderer() const
 {
     return document() ? document()->renderView() : nullptr;
 }
@@ -921,6 +921,32 @@ void LocalFrame::willDetachPage()
     ASSERT(!document() || !document()->renderView());
 }
 
+void LocalFrame::willBeReplacedByRemoteFrame()
+{
+    if (!m_cachedPageCount) {
+        loader().detachFromParent();
+        return;
+    }
+
+    ASSERT(isMainFrame());
+    ASSERT(m_doc && m_doc->backForwardCacheState() == Document::InBackForwardCache);
+    ASSERT(!tree().firstChild());
+    ASSERT(!m_existsOnlyForCachedPages);
+    m_existsOnlyForCachedPages = true;
+
+    InspectorInstrumentation::frameDetachedFromParent(*this);
+
+    if (RefPtr page = this->page()) {
+        page->removeRootFrame(*this);
+        if (RefPtr scrollingCoordinator = page->scrollingCoordinator())
+            scrollingCoordinator->rootFrameWasRemoved(frameID());
+    }
+
+#if ASSERT_ENABLED
+    frameExistsOnlyForCachedPages(*this);
+#endif
+}
+
 String LocalFrame::displayStringModifiedByEncoding(const String& str) const
 {
     return document() ? protect(document())->displayStringModifiedByEncoding(str) : str;
@@ -928,7 +954,7 @@ String LocalFrame::displayStringModifiedByEncoding(const String& str) const
 
 VisiblePosition LocalFrame::visiblePositionForPoint(const IntPoint& framePoint) const
 {
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     HitTestResult result = eventHandler().hitTestResultAtPoint(framePoint, hitType);
     RefPtr node = result.innerNonSharedNode();
     if (!node)
@@ -1130,9 +1156,9 @@ void LocalFrame::setPageAndTextZoomFactors(float pageZoomFactor, float textZoomF
     }
 }
 
-float LocalFrame::frameScaleFactorForChild(const Frame& child) const
+float LocalFrame::frameOwnerZoomFactorForChild(const Frame& child) const
 {
-    // The frame scale factor for a child frame is the accumulated CSS zoom
+    // The frame owner zoom factor for a child frame is the accumulated CSS zoom
     // applied to the frame element. On the ComputedStyle, the used zoom also
     // includes the page zoom factor, so we must divide it out to get back to
     // the accumulated CSS zoom value.
@@ -1869,7 +1895,7 @@ static inline NodeQualifier ancestorRespondingToClickEventsNodeQualifier(Securit
 RefPtr<Node> LocalFrame::betterApproximateNode(const IntPoint& testPoint, const NodeQualifier& nodeQualifierFunction, Node* best, Node* failedNode, IntPoint& bestPoint, IntRect& bestRect, const IntRect& testRect)
 {
     IntRect candidateRect;
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     RefPtr candidate = nodeQualifierFunction(eventHandler().hitTestResultAtPoint(testPoint, hitType), failedNode, &candidateRect);
 
     // Bail if we have no candidate, or the candidate is already equal to our current best node,
@@ -1910,7 +1936,7 @@ bool LocalFrame::hitTestResultAtViewportLocation(const FloatPoint& viewportLocat
         return false;
 
     center = view->windowToContents(roundedIntPoint(viewportLocation));
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
     hitTestResult = eventHandler().hitTestResultAtPoint(center, hitType);
     return true;
 }
@@ -1961,7 +1987,7 @@ RefPtr<Node> LocalFrame::qualifyingNodeAtViewportLocation(const FloatPoint& view
             IntSize testOffset(testOffsets[n] * searchRadius, testOffsets[n + 1] * searchRadius);
             IntPoint testPoint = testCenter + testOffset;
 
-            constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
+            constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
             auto candidateInfo = eventHandler().hitTestResultAtPoint(testPoint, hitType);
             RefPtr candidateNode = nodeQualifierFunction(candidateInfo, 0, 0);
             if (candidateNode && candidateNode->isDescendantOf(originalApproximateNode)) {

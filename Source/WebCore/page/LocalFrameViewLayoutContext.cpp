@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LocalFrameViewLayoutContext.h"
 
+#include "ContainerNodeInlines.h"
 #include "DebugPageOverlays.h"
 #include "Document.h"
 #include "DocumentEnums.h"
@@ -100,8 +101,16 @@ public :
 
         checkAndReportNeedsLayoutError(m_renderView);
 
-        for (auto* descendant = m_renderView.firstChild(); descendant; descendant = descendant->nextInPreOrder(&m_renderView))
+        // Style-interleaved layout doesn't lay out the content of query containers with unresolved descendants (see RenderBlock::layout()).
+        CheckedRef styleScope = m_renderView.document().styleScope();
+        for (auto* descendant = m_renderView.firstChild(); descendant;) {
             checkAndReportNeedsLayoutError(*descendant);
+            if (styleScope->isQueryContainerWithUnresolvedDescendants(dynamicDowncast<Element>(descendant->node()))) {
+                descendant = descendant->nextInPreOrderAfterChildren(&m_renderView);
+                continue;
+            }
+            descendant = descendant->nextInPreOrder(&m_renderView);
+        }
     }
 
 private:
@@ -178,7 +187,7 @@ void LocalFrameViewLayoutContext::layout(bool canDeferUpdateLayerPositions)
         return;
 
     Style::DocumentScope::LayoutDependencyUpdateContext layoutDependencyUpdateContext;
-    while (document() && document()->styleScope().invalidateForLayoutDependencies(layoutDependencyUpdateContext)) {
+    while (document() && protect(document()->styleScope())->invalidateForLayoutDependencies(layoutDependencyUpdateContext)) {
         protect(document())->updateStyleIfNeeded();
 
         if (!needsLayout())
@@ -199,8 +208,10 @@ void LocalFrameViewLayoutContext::interleavedLayout()
 
     performLayout(false);
 
+    RenderBlock::restoreLayoutBitsAfterInterleavedLayout();
+
     Style::DocumentScope::LayoutDependencyUpdateContext layoutDependencyUpdateContext;
-    document()->styleScope().invalidateForLayoutDependencies(layoutDependencyUpdateContext);
+    protect(document()->styleScope())->invalidateForLayoutDependencies(layoutDependencyUpdateContext);
 }
 
 void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPositions)
@@ -267,12 +278,12 @@ void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPosition
         TraceScope tracingScope(RenderTreeLayoutStart, RenderTreeLayoutEnd);
         SetForScope layoutPhase(m_layoutPhase, LayoutPhase::InRenderTreeLayout);
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
-        SubtreeLayoutStateMaintainer subtreeLayoutStateMaintainer(subtreeLayoutRoot());
-        RenderView::RepaintRegionAccumulator repaintRegionAccumulator(renderView());
+        SubtreeLayoutStateMaintainer subtreeLayoutStateMaintainer(protect(subtreeLayoutRoot()));
+        RenderView::RepaintRegionAccumulator repaintRegionAccumulator(protect(renderView()));
 #ifndef NDEBUG
         RenderTreeNeedsLayoutChecker checker(*renderView());
 #endif
-        layoutRoot->layout();
+        protect(layoutRoot)->layout();
         {
             CheckedPtr renderView = this->renderView();
             auto state = renderView ? renderView->textAutosizingState() : RenderView::TextAutosizingState::Normal;
@@ -297,7 +308,7 @@ void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPosition
                 break;
             }
         }
-        layoutRoot->absoluteQuads(layoutAreas);
+        protect(layoutRoot)->absoluteQuads(layoutAreas);
 
         clearSubtreeLayoutRoot();
         ASSERT(m_percentHeightIgnoreList.isEmptyIgnoringNullReferences());
@@ -331,7 +342,7 @@ void LocalFrameViewLayoutContext::performLayout(bool canDeferUpdateLayerPosition
         protect(view())->didLayout(layoutRoot, canDeferUpdateLayerPositions);
         runOrScheduleAsynchronousTasks(canDeferUpdateLayerPositions);
     }
-    InspectorInstrumentation::didLayout(frame, *layoutRoot, layoutAreas);
+    InspectorInstrumentation::didLayout(frame, *protect(layoutRoot), layoutAreas);
     DebugPageOverlays::didLayout(frame);
 }
 
@@ -499,7 +510,7 @@ void LocalFrameViewLayoutContext::flushPendingSVGTransformAttributeUpdatesIfNeed
     // container happens once per parent in Pass 3, not once per child.
     auto childRectInParentSpace = [](const RenderSVGModelObject& shape) -> LayoutRect {
         auto localRect = shape.visualOverflowRectEquivalent();
-        auto transform = shape.localTransform();
+        auto transform = shape.nominalTransform();
         auto rect = transform.isIdentity() ? localRect : enclosingLayoutRect(transform.mapRect(FloatRect { localRect }));
         rect.move(shape.locationOffsetEquivalent());
         return rect;
@@ -520,9 +531,8 @@ void LocalFrameViewLayoutContext::flushPendingSVGTransformAttributeUpdatesIfNeed
         SingleThreadWeakPtr<const RenderLayerModelObject> repaintContainer;
         LayoutRect oldRect;
     };
-    Vector<FastRecord> fastRecords;
+    Vector<FastRecord> fastRecords(ReserveCapacityTag { }, pending.size());
     Vector<SlowRecord> slowRecords;
-    fastRecords.reserveInitialCapacity(pending.size());
     for (auto& weakRenderer : pending) {
         CheckedPtr renderer = weakRenderer.get();
         if (!renderer || renderer->renderTreeBeingDestroyed())
@@ -862,11 +872,12 @@ bool LocalFrameViewLayoutContext::canPerformLayout() const
 void LocalFrameViewLayoutContext::applyTextSizingIfNeeded(RenderElement& layoutRoot)
 {
     ASSERT(document());
-    if (protect(document())->quirks().shouldIgnoreTextAutoSizing())
+    Ref document = *this->document();
+    if (document->quirks().shouldIgnoreTextAutoSizing())
         return;
     Ref settings = layoutRoot.settings();
     bool idempotentMode = settings->textAutosizingUsesIdempotentMode();
-    if (!settings->textAutosizingEnabled() || idempotentMode || protect(renderView())->printing())
+    if (!document->textAutosizingEnabled() || idempotentMode || protect(renderView())->printing())
         return;
     auto minimumZoomFontSize = settings->minimumZoomFontSize();
     if (!idempotentMode && !minimumZoomFontSize)

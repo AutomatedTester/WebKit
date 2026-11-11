@@ -487,6 +487,7 @@ list(APPEND WebKitResources "        <file alias='css/gtk-theme.css'>gtk-theme.c
   "        <file alias='images/panIcon'>panIcon.png</file>\n"
   "        <file alias='images/textAreaResizeCorner@2x'>textAreaResizeCorner@2x.png</file>\n"
   "        <file alias='images/textAreaResizeCorner'>textAreaResizeCorner.png</file>\n"
+  "        <file alias='quirks/QuirkTable.json'>QuirkTable.json</file>\n"
 )
 
 if (ENABLE_WEB_AUDIO)
@@ -508,6 +509,7 @@ GLIB_COMPILE_RESOURCES(
     OUTPUT        ${WebKitGTK_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.c
     SOURCE_XML    ${WebKitGTK_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.xml
     RESOURCE_DIRS ${CMAKE_SOURCE_DIR}/Source/WebCore/Resources
+                  ${CMAKE_SOURCE_DIR}/Source/WebCore/page
                   ${CMAKE_SOURCE_DIR}/Source/WebCore/platform/audio/resources
                   ${CMAKE_SOURCE_DIR}/Source/WebKit/Resources/gtk
 )
@@ -623,7 +625,6 @@ GI_INTROSPECT(WebKit${WEBKITGTK_API_INFIX} ${WEBKITGTK_API_VERSION} webkit${WEBK
         ${WEBKITGTK_SOURCES_FOR_INTROSPECTION}
         Shared/API/glib
         UIProcess/API/glib
-    NO_IMPLICIT_SOURCES
 )
 
 GI_DOCGEN(WebKit${WEBKITGTK_API_INFIX} gtk/gtk${GTK_API_VERSION}-webkitgtk.toml.in
@@ -671,7 +672,6 @@ GI_INTROSPECT(${WEBKITGTK_WEB_PROCESS_EXTENSION_API_NAME} ${WEBKITGTK_API_VERSIO
         Shared/API/glib/WebKitURIRequest.cpp
         Shared/API/glib/WebKitURIResponse.cpp
         WebProcess/InjectedBundle/API/glib
-    NO_IMPLICIT_SOURCES
 )
 
 GI_DOCGEN(${WEBKITGTK_WEB_PROCESS_EXTENSION_API_NAME} gtk/webkitgtk-web-process-extension.toml.in

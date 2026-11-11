@@ -107,7 +107,7 @@ struct MultiDeleteByOffsetData {
     Vector<DeleteByVariant, 2> variants;
 
     bool writesStructures() const;
-    bool LEGACY_NODELETE allVariantsStoreEmpty() const;
+    NODELETE bool allVariantsStoreEmpty() const;
 };
 
 struct MultiGetByValData {
@@ -272,6 +272,9 @@ struct EntrySwitchData {
 
 struct CallVarargsData {
     int firstVarArgOffset;
+    // Only for CallVarargsWithSpread, whose children are [callee, thisValue, elem0, ...]: bitVector
+    // marks which of the interleaved arguments (elem i is child 2 + i) are spreads.
+    BitVector* bitVector { nullptr };
 };
 
 struct LoadVarargsData {
@@ -282,6 +285,8 @@ struct LoadVarargsData {
     unsigned offset; // Which array element to start with. Usually this is 0.
     unsigned mandatoryMinimum; // The number of elements on the stack that must be initialized; if the array is too short then the missing elements must get undefined. Does not include "this".
     unsigned limit; // Maximum number of elements to load. Includes "this".
+    // Only for VarargsLengthWithSpread / LoadVarargsWithSpread: marks which operands are spreads.
+    BitVector* bitVector { nullptr };
 };
 
 struct StackAccessData {
@@ -502,7 +507,7 @@ public:
     }
 
     void remove(Graph&);
-    void LEGACY_NODELETE removeWithoutChecks();
+    NODELETE void removeWithoutChecks();
 
     void convertToCheckStructure(RegisteredStructureSet* set)
     {
@@ -539,14 +544,14 @@ public:
     }
     
     void replaceWith(Graph&, Node* other);
-    void LEGACY_NODELETE replaceWithWithoutChecks(Node* other);
+    NODELETE void replaceWithWithoutChecks(Node* other);
 
-    void LEGACY_NODELETE convertToIdentity();
-    void LEGACY_NODELETE convertToIdentityOn(Node*);
+    NODELETE void convertToIdentity();
+    NODELETE void convertToIdentityOn(Node*);
 
     void convertToGetByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
-    void LEGACY_NODELETE convertToPutByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
-    void LEGACY_NODELETE convertToInByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
+    NODELETE void convertToPutByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
+    NODELETE void convertToInByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
 
     bool mustGenerate() const
     {
@@ -958,25 +963,25 @@ public:
         m_opInfo = static_cast<uint32_t>(true);
     }
 
-    void LEGACY_NODELETE convertToNewArrayBuffer(FrozenValue* immutableButterfly);
-    void LEGACY_NODELETE convertToNewArrayWithSize();
-    void LEGACY_NODELETE convertToNewArrayWithButterfly(Graph&, Node* butterfly);
-    void LEGACY_NODELETE convertToNewArrayWithSizeAndStructure(Graph&, RegisteredStructure);
+    NODELETE void convertToNewArrayBuffer(FrozenValue* immutableButterfly);
+    NODELETE void convertToNewArrayWithSize();
+    NODELETE void convertToNewArrayWithButterfly(Graph&, Node* butterfly);
+    NODELETE void convertToNewArrayWithSizeAndStructure(Graph&, RegisteredStructure);
 
-    void LEGACY_NODELETE convertToNewBoundFunction(FrozenValue*);
+    NODELETE void convertToNewBoundFunction(FrozenValue*);
 
-    void LEGACY_NODELETE convertToDirectCall(FrozenValue*);
+    NODELETE void convertToDirectCall(FrozenValue*);
 
-    void LEGACY_NODELETE convertToCallWasm(FrozenValue*);
+    NODELETE void convertToCallWasm(FrozenValue*);
 
-    void LEGACY_NODELETE convertToCallDOM(Graph&);
+    NODELETE void convertToCallDOM(Graph&);
 
-    void LEGACY_NODELETE convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp);
-    void LEGACY_NODELETE convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp);
-    void LEGACY_NODELETE convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp);
-    void LEGACY_NODELETE convertToRegExpMatchFast(Node* globalObjectNode);
-    void LEGACY_NODELETE convertToRegExpSearch(Node* globalObjectNode);
-    void LEGACY_NODELETE convertToRegExpTestInline(FrozenValue* globalObject, FrozenValue* regExp);
+    NODELETE void convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp);
+    NODELETE void convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp);
+    NODELETE void convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp);
+    NODELETE void convertToRegExpMatchFast(Node* globalObjectNode);
+    NODELETE void convertToRegExpSearch(Node* globalObjectNode);
+    NODELETE void convertToRegExpTestInline(FrozenValue* globalObject, FrozenValue* regExp);
 
     enum DescriptorSlot : unsigned {
         EnumerableSlot = 0,
@@ -1158,7 +1163,7 @@ public:
         }
     }
     
-    bool LEGACY_NODELETE hasVariableAccessData(Graph&);
+    NODELETE bool hasVariableAccessData(Graph&);
     bool accessesStack(Graph& graph)
     {
         return hasVariableAccessData(graph);
@@ -1417,7 +1422,7 @@ public:
         return op() == PutHint;
     }
     
-    PromotedLocationDescriptor LEGACY_NODELETE promotedLocationDescriptor();
+    NODELETE PromotedLocationDescriptor promotedLocationDescriptor();
     
     // This corrects the arithmetic node flags, so that irrelevant bits are
     // ignored. In particular, anything other than ArithMul or ValueMul does not need
@@ -1464,11 +1469,6 @@ public:
         return m_flags & NodeMayHaveNonNumericResult;
     }
 
-    bool mayHaveBigInt32Result()
-    {
-        return m_flags & NodeMayHaveBigInt32Result;
-    }
-
     bool mayHaveHeapBigIntResult()
     {
         return m_flags & NodeMayHaveHeapBigIntResult;
@@ -1476,7 +1476,7 @@ public:
 
     bool mayHaveBigIntResult()
     {
-        return mayHaveBigInt32Result() || mayHaveHeapBigIntResult();
+        return mayHaveHeapBigIntResult();
     }
 
     bool hasNewArrayBufferData()
@@ -1554,7 +1554,12 @@ public:
 
     BitVector* bitVector()
     {
-        ASSERT(op() == NewArrayWithSpread || op() == PhantomNewArrayWithSpread);
+        ASSERT(op() == NewArrayWithSpread || op() == PhantomNewArrayWithSpread || op() == CallVarargsWithSpread || op() == VarargsLengthWithSpread || op() == LoadVarargsWithSpread);
+        // The spread nodes carry their BitVector inside CallVarargsData / LoadVarargsData.
+        if (op() == CallVarargsWithSpread)
+            return m_opInfo.as<CallVarargsData*>()->bitVector;
+        if (op() == VarargsLengthWithSpread || op() == LoadVarargsWithSpread)
+            return m_opInfo.as<LoadVarargsData*>()->bitVector;
         return m_opInfo.as<BitVector*>();
     }
 
@@ -1590,6 +1595,7 @@ public:
     {
         switch (op()) {
         case NewTypedArray:
+        case TypedArraySet:
             return true;
         default:
             return false;
@@ -1674,6 +1680,7 @@ public:
     {
         switch (op()) {
         case CallVarargs:
+        case CallVarargsWithSpread:
         case CallForwardVarargs:
         case TailCallVarargs:
         case TailCallForwardVarargs:
@@ -1686,16 +1693,16 @@ public:
             return false;
         }
     }
-    
+
     CallVarargsData* callVarargsData()
     {
         ASSERT(hasCallVarargsData());
         return m_opInfo.as<CallVarargsData*>();
     }
-    
+
     bool hasLoadVarargsData()
     {
-        return op() == LoadVarargs || op() == ForwardVarargs || op() == VarargsLength;
+        return op() == LoadVarargs || op() == ForwardVarargs || op() == VarargsLength || op() == VarargsLengthWithSpread || op() == LoadVarargsWithSpread;
     }
     
     LoadVarargsData* loadVarargsData()
@@ -2155,6 +2162,7 @@ public:
         case Construct:
         case DirectConstruct:
         case CallVarargs:
+        case CallVarargsWithSpread:
         case CallDirectEval:
         case TailCallVarargsInlinedCaller:
         case ConstructVarargs:
@@ -2515,6 +2523,7 @@ public:
         case NewSet:
         case NewWeakMap:
         case NewWeakSet:
+        case NewProxyObject:
         case NewArrayWithSizeAndStructure:
         case NewTypedArrayBuffer:
         case RegExpStringIteratorNext:
@@ -3338,13 +3347,6 @@ public:
         return isSymbolSpeculation(prediction());
     }
 
-#if USE(BIGINT32)
-    bool shouldSpeculateBigInt32()
-    {
-        return isBigInt32Speculation(prediction());
-    }
-#endif
-
     bool shouldSpeculateHeapBigInt()
     {
         return isHeapBigIntSpeculation(prediction());
@@ -3579,13 +3581,6 @@ public:
         return op1->shouldSpeculateBigInt() && op2->shouldSpeculateBigInt();
     }
 
-#if USE(BIGINT32)
-    static bool shouldSpeculateBigInt32(Node* op1, Node* op2)
-    {
-        return op1->shouldSpeculateBigInt32() && op2->shouldSpeculateBigInt32();
-    }
-#endif
-
     static bool shouldSpeculateHeapBigInt(Node* op1, Node* op2)
     {
         return op1->shouldSpeculateHeapBigInt() && op2->shouldSpeculateHeapBigInt();
@@ -3610,11 +3605,6 @@ public:
     {
         return nodeCanSpeculateInt52(arithNodeFlags(), source);
     }
-
-    bool canSpeculateBigInt32(RareCaseProfilingSource source)
-    {
-        return nodeCanSpeculateBigInt32(arithNodeFlags(), source);
-    }
     
     RareCaseProfilingSource sourceFor(PredictionPass pass)
     {
@@ -3631,11 +3621,6 @@ public:
     bool canSpeculateInt52(PredictionPass pass)
     {
         return canSpeculateInt52(sourceFor(pass));
-    }
-
-    bool canSpeculateBigInt32(PredictionPass pass)
-    {
-        return canSpeculateBigInt32(sourceFor(pass));
     }
 
     bool hasTypeLocation()
@@ -4143,6 +4128,37 @@ private:
 public:
     BasicBlock* owner;
 };
+
+// The spread operands of CallVarargsWithSpread / VarargsLengthWithSpread / LoadVarargsWithSpread (the ones
+// bitVector() marks) reach the FTL in one of three shapes. An eliminated spread survived arguments
+// elimination as a PhantomSpread over either a PhantomCreateRest (a forwarded segment: it has no value of
+// its own, so it is passed to the frame-setup operations as an empty-JSValue sentinel plus a
+// VarargsSpreadForwardDescriptor) or a PhantomNewArrayBuffer (a constant butterfly cell). Any other operand
+// has a value: a materialized spread butterfly cell, or, at a position bitVector() does not mark, a plain
+// argument. Only the FTL sees the phantom shapes, since arguments elimination requires SSA form; in the DFG
+// every operand has a value.
+
+// Returns the PhantomCreateRest of an eliminated forwarded rest, or nullptr.
+inline Node* eliminatedSpreadForwardedRest(Node* spreadOperand)
+{
+    if (spreadOperand->op() != PhantomSpread)
+        return nullptr;
+    Node* inner = spreadOperand->child1().node();
+    if (inner->op() != PhantomCreateRest)
+        return nullptr;
+    return inner;
+}
+
+// Returns the PhantomNewArrayBuffer of an eliminated constant-buffer spread, or nullptr.
+inline Node* eliminatedSpreadConstantButterfly(Node* spreadOperand)
+{
+    if (spreadOperand->op() != PhantomSpread)
+        return nullptr;
+    Node* inner = spreadOperand->child1().node();
+    if (inner->op() != PhantomNewArrayBuffer)
+        return nullptr;
+    return inner;
+}
 
 // Uncomment this to log NodeSet operations.
 // typedef LoggingHashSet<Node::HashSetTemplateInstantiationString, Node*> NodeSet;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2019, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,6 +32,7 @@
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
 #include "MarkedBlockInlines.h"
+#include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
@@ -221,7 +222,8 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
             // A block must own no WeakBlock before it changes cell size and owner: a survivor would
             // go on reading mark bits for cells that no longer exist at those addresses. Sweeping an
             // empty block leaves it that way, since every handle in it is reaped dead and finalized.
-            RELEASE_ASSERT(!block->weakSet().head());
+            // Only the mutator adds blocks to a WeakSet, so one with none can't change under this read.
+            RELEASE_ASSERT([&]() WTF_IGNORES_THREAD_SAFETY_ANALYSIS { return !block->weakSet().head(); }());
             ASSERT(!block->weakSet().isOnList());
 
             block->removeFromDirectory();
@@ -244,8 +246,6 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
 {
     ASSERT(block);
     ASSERT(!block->isFreeListed());
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    ASSERT(m_directory->isInUse(block));
     
     block->sweep(&m_freeList);
     
@@ -255,8 +255,6 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
         ASSERT(block->isFreeListed());
         block->unsweepWithNoNewlyAllocated();
         ASSERT(!block->isFreeListed());
-        ASSERT(!m_directory->isEmpty(block));
-        ASSERT(!m_directory->isCanAllocate(block));
         return nullptr;
     }
     
@@ -268,8 +266,7 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
             return nullptr;
         }, cellSize);
 
-    // FIXME: We should make this work with thread safety analysis.
-    m_directory->m_bits.setIsEden(m_currentBlock->index(), true);
+    m_directory->markedSpace().heap().assertIsExclusiveAccessHolder();
     m_directory->markedSpace().didAllocateInBlock(m_currentBlock);
     return result;
 }

@@ -109,7 +109,6 @@ set(_webkit_c_api_headers
     UIProcess/API/C/WKUserContentExtensionStoreRef.h
     UIProcess/API/C/WKUserMediaPermissionRequest.h
     UIProcess/API/C/WKUserScriptRef.h
-    UIProcess/API/C/WKViewportAttributes.h
     UIProcess/API/C/WKWebsiteDataStoreConfigurationRef.h
     UIProcess/API/C/WKWebsiteDataStoreRef.h
     UIProcess/API/C/WKWebsitePolicies.h
@@ -267,13 +266,13 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     Shared/API/c/cg/WKImageCG.h
 
-    Shared/API/c/mac/WKBaseMac.h
-    Shared/API/c/mac/WKCertificateInfoMac.h
-    Shared/API/c/mac/WKObjCTypeWrapperRef.h
-    Shared/API/c/mac/WKURLRequestNS.h
-    Shared/API/c/mac/WKURLResponseNS.h
-    Shared/API/c/mac/WKWebArchiveRef.h
-    Shared/API/c/mac/WKWebArchiveResource.h
+    Shared/API/c/cocoa/WKBaseMac.h
+    Shared/API/c/cocoa/WKCertificateInfoMac.h
+    Shared/API/c/cocoa/WKObjCTypeWrapperRef.h
+    Shared/API/c/cocoa/WKURLRequestNS.h
+    Shared/API/c/cocoa/WKURLResponseNS.h
+    Shared/API/c/cocoa/WKWebArchiveRef.h
+    Shared/API/c/cocoa/WKWebArchiveResource.h
 
     UIProcess/_WKWebViewPrintFormatter.h
 
@@ -282,13 +281,13 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     UIProcess/API/C/cg/WKIconDatabaseCG.h
 
-    UIProcess/API/C/mac/WKContextPrivateMac.h
-    UIProcess/API/C/mac/WKFrameMac.h
+    UIProcess/API/C/cocoa/WKContextPrivateMac.h
+    UIProcess/API/C/cocoa/WKFrameMac.h
+    UIProcess/API/C/cocoa/WKNotificationPrivateMac.h
+    UIProcess/API/C/cocoa/WKPagePrivateMac.h
+    UIProcess/API/C/cocoa/WKProtectionSpaceNS.h
+    UIProcess/API/C/cocoa/WKWebsiteDataStoreRefPrivateMac.h
     UIProcess/API/C/mac/WKInspectorPrivateMac.h
-    UIProcess/API/C/mac/WKNotificationPrivateMac.h
-    UIProcess/API/C/mac/WKPagePrivateMac.h
-    UIProcess/API/C/mac/WKProtectionSpaceNS.h
-    UIProcess/API/C/mac/WKWebsiteDataStoreRefPrivateMac.h
 
     UIProcess/API/Cocoa/NSAttributedStringPrivate.h
     UIProcess/API/Cocoa/WKBackForwardListItemPrivate.h
@@ -405,6 +404,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     UIProcess/API/Cocoa/_WKJSHandle.h
     UIProcess/API/Cocoa/_WKLayoutMode.h
     UIProcess/API/Cocoa/_WKLinkIconParameters.h
+    UIProcess/API/Cocoa/_WKMediaCapturePermissionPromptConfiguration.h
     UIProcess/API/Cocoa/_WKModalContainerInfo.h
     UIProcess/API/Cocoa/_WKNSStringExtras.h
     UIProcess/API/Cocoa/_WKNSURLExtras.h
@@ -508,6 +508,17 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebNavigationURLFilter.h
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebRequestFilter.h
 
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMDocument.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMElement.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNode.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNodePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRange.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRangePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMText.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMTextIterator.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugIn.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextController.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextControllerPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInCSSStyleDeclarationHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInEditingDelegate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInFrame.h
@@ -515,27 +526,14 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInHitTestResult.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInLoadDelegate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandle.h
-    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandlePrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPageGroup.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInRangeHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInScriptWorld.h
 
-    WebProcess/InjectedBundle/API/c/mac/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundlePageMac.h
     WebProcess/InjectedBundle/API/c/mac/WKBundlePageBannerMac.h
-    WebProcess/InjectedBundle/API/c/mac/WKBundlePageMac.h
-
-    WebProcess/InjectedBundle/API/mac/WKDOMDocument.h
-    WebProcess/InjectedBundle/API/mac/WKDOMElement.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNode.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNodePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRange.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRangePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMText.h
-    WebProcess/InjectedBundle/API/mac/WKDOMTextIterator.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugIn.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextController.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextControllerPrivate.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInPrivate.h
 )
 endif ()
 
@@ -548,7 +546,7 @@ set(WebKit_PROJECT_HEADERS
 
     Platform/Logging.h
 
-    Shared/mac/SecItemRequestData.h
+    Shared/Cocoa/SecItemRequestData.h
 
     UIProcess/Cocoa/WKShareSheet.h
 
@@ -586,9 +584,159 @@ set(WebKit_PROJECT_HEADERS
     WebKitSwift/TextAnimation/WKSTextStyleSourceDelegate.h
     WebKitSwift/TextAnimation/WKTextAnimationManagerIOS.h
 
+    WebKitSwift/WebXR/WKWebXRImmersiveSpaceHost.h
+
     WebKitSwift/WritingTools/WKIntelligenceReplacementTextEffectCoordinator.h
     WebKitSwift/WritingTools/WKIntelligenceSmartReplyTextEffectCoordinator.h
     WebKitSwift/WritingTools/WKIntelligenceTextEffectCoordinator.h
 
     WebProcess/cocoa/IdentityDocumentServices/DigitalCredentialsRequestValidatorBridge.h
 )
+
+if (WEBKIT_SDK_IS_IOS_FAMILY)
+set(_webkit_ios_headers
+    UIProcess/Cocoa/AppKitSoftLink.h
+    UIProcess/Cocoa/AutomationClient.h
+    UIProcess/Cocoa/AutomationSessionClient.h
+    UIProcess/Cocoa/CSPExtensionUtilities.h
+    UIProcess/Cocoa/CapturePreviewDeviceSelection.h
+    UIProcess/Cocoa/CapturePreviewLevelMeterState.h
+    UIProcess/Cocoa/CapturePreviewPromptModel.h
+    UIProcess/Cocoa/CoreTelephonyUtilities.h
+    UIProcess/Cocoa/DiagnosticLoggingClient.h
+    UIProcess/Cocoa/DisplayCaptureSessionManager.h
+    UIProcess/Cocoa/ExtensionCapabilityGranter.h
+    UIProcess/Cocoa/FindClient.h
+    UIProcess/Cocoa/FullscreenClient.h
+    UIProcess/Cocoa/GlobalFindInPageState.h
+    UIProcess/Cocoa/IconLoadingDelegate.h
+    UIProcess/Cocoa/LegacyCustomProtocolManagerClient.h
+    UIProcess/Cocoa/LegacyDownloadClient.h
+    UIProcess/Cocoa/LegacyWebArchiveCallbackAggregator.h
+    UIProcess/Cocoa/MediaUtilities.h
+    UIProcess/Cocoa/NavigationState.h
+    UIProcess/Cocoa/PageClientImplCocoa.h
+    UIProcess/Cocoa/PickerDismissalReason.h
+    UIProcess/Cocoa/PlatformWritingToolsUtilities.h
+    UIProcess/Cocoa/PlaybackSessionManagerProxy.h
+    UIProcess/Cocoa/PreferenceObserver.h
+    UIProcess/Cocoa/ResourceLoadDelegate.h
+    UIProcess/Cocoa/SafeBrowsingUtilities.h
+    UIProcess/Cocoa/SecItemShimProxy.h
+    UIProcess/Cocoa/SessionStateCoding.h
+    UIProcess/Cocoa/TextCheckingController.h
+    UIProcess/Cocoa/TransientZoomState.h
+    UIProcess/Cocoa/UIDelegate.h
+    UIProcess/Cocoa/UIRemoteObjectRegistry.h
+    UIProcess/Cocoa/UIWindowScene+Extras.h
+    UIProcess/Cocoa/UserMediaPermissionRequestProxyCocoa.h
+    UIProcess/Cocoa/VideoPresentationManagerProxy.h
+    UIProcess/Cocoa/WKCapturePreviewPrompting.h
+    UIProcess/Cocoa/WKClickHighlightController.h
+    UIProcess/Cocoa/WKClickHighlightView.h
+    UIProcess/Cocoa/WKColorExtensionView.h
+    UIProcess/Cocoa/WKContactPicker.h
+    UIProcess/Cocoa/WKDeferringGestureRecognizer.h
+    UIProcess/Cocoa/WKEditCommand.h
+    UIProcess/Cocoa/WKFullKeyboardAccessWatcher.h
+    UIProcess/Cocoa/WKPortalVolumetricGestureController.h
+    UIProcess/Cocoa/WKReloadFrameErrorRecoveryAttempter.h
+    UIProcess/Cocoa/WKScreenTimeConfigurationObserver.h
+    UIProcess/Cocoa/WKShareSheet.h
+    UIProcess/Cocoa/WKStorageAccessAlert.h
+    UIProcess/Cocoa/WKTextEffectManager.h
+    UIProcess/Cocoa/WKTextPlaceholder.h
+    UIProcess/Cocoa/WKTextSelectionRect.h
+    UIProcess/Cocoa/WKWebViewContentProvider.h
+    UIProcess/Cocoa/WKWebViewContentProviderRegistry.h
+    UIProcess/Cocoa/WebInspectorPreferenceObserver.h
+    UIProcess/Cocoa/WebKitSwiftOverlayMacros.h
+    UIProcess/Cocoa/WebKitSwiftSoftLink.h
+    UIProcess/Cocoa/WebPagePreferencesLockdownModeObserver.h
+    UIProcess/Cocoa/WebURLSchemeHandlerCocoa.h
+    UIProcess/Cocoa/XPCEventHandler.h
+    UIProcess/Cocoa/_WKCaptionStyleMenuController.h
+    UIProcess/Cocoa/_WKCaptionStyleMenuControllerInternal.h
+    UIProcess/Cocoa/_WKWarningView.h
+
+    UIProcess/ios/CompactContextMenuPresenter.h
+    UIProcess/ios/DragDropInteractionState.h
+    UIProcess/ios/GestureRecognizerConsistencyEnforcer.h
+    UIProcess/ios/LayerHostingVisibilityPropagator.h
+    UIProcess/ios/PageClientImplIOS.h
+    UIProcess/ios/PointerTouchCompatibilitySimulator.h
+    UIProcess/ios/ProcessStateMonitor.h
+    UIProcess/ios/RevealFocusedElementDeferrer.h
+    UIProcess/ios/ScrollPerfIntervalState.h
+    UIProcess/ios/SmartMagnificationController.h
+    UIProcess/ios/UIKitUtilities.h
+    UIProcess/ios/WKActionSheet.h
+    UIProcess/ios/WKActionSheetAssistant.h
+    UIProcess/ios/WKApplicationStateTrackingView.h
+    UIProcess/ios/WKBaseScrollView.h
+    UIProcess/ios/WKBrowserEngineDefinitions.h
+    UIProcess/ios/WKCapturePreviewViewController.h
+    UIProcess/ios/WKContentView.h
+    UIProcess/ios/WKContentViewInteraction.h
+    UIProcess/ios/WKExtendedTextInputTraits.h
+    UIProcess/ios/WKExtrinsicButton.h
+    UIProcess/ios/WKGeolocationProviderIOS.h
+    UIProcess/ios/WKHighlightLongPressGestureRecognizer.h
+    UIProcess/ios/WKImageAnalysisGestureRecognizer.h
+    UIProcess/ios/WKKeyboardScrollingAnimator.h
+    UIProcess/ios/WKMouseDeviceObserver.h
+    UIProcess/ios/WKMouseInteraction.h
+    UIProcess/ios/WKPageHostedPortalView.h
+    UIProcess/ios/WKPasswordView.h
+    UIProcess/ios/WKPortalVolumetricSceneController.h
+    UIProcess/ios/WKScrollView.h
+    UIProcess/ios/WKScrollViewTrackingTapGestureRecognizer.h
+    UIProcess/ios/WKStylusDeviceObserver.h
+    UIProcess/ios/WKSyntheticFlagsChangedWebEvent.h
+    UIProcess/ios/WKSyntheticTapGestureRecognizer.h
+    UIProcess/ios/WKTextInteractionWrapper.h
+    UIProcess/ios/WKTouchActionGestureRecognizer.h
+    UIProcess/ios/WKTouchEventsGestureRecognizer.h
+    UIProcess/ios/WKTouchEventsGestureRecognizerTypes.h
+    UIProcess/ios/WKUIScrollEdgeEffect.h
+    UIProcess/ios/WKUSDPreviewView.h
+    UIProcess/ios/WKVideoView.h
+    UIProcess/ios/WKVisibilityPropagationView.h
+    UIProcess/ios/WKWebGeolocationPolicyDecider.h
+    UIProcess/ios/WebDataListSuggestionsDropdownIOS.h
+    UIProcess/ios/WebDeviceOrientationUpdateProviderProxy.h
+    UIProcess/ios/_WKCaptionStyleMenuControllerAVKit.h
+
+    UIProcess/ios/forms/WKAirPlayRoutePicker.h
+    UIProcess/ios/forms/WKDatePickerPopoverController.h
+    UIProcess/ios/forms/WKDatePickerViewController.h
+    UIProcess/ios/forms/WKDateTimeInputControl.h
+    UIProcess/ios/forms/WKFileUploadPanel.h
+    UIProcess/ios/forms/WKFocusedFormControlView.h
+    UIProcess/ios/forms/WKFormAccessoryView.h
+    UIProcess/ios/forms/WKFormColorControl.h
+    UIProcess/ios/forms/WKFormPeripheral.h
+    UIProcess/ios/forms/WKFormPeripheralBase.h
+    UIProcess/ios/forms/WKFormPopover.h
+    UIProcess/ios/forms/WKFormSelectControl.h
+    UIProcess/ios/forms/WKFormSelectPicker.h
+    UIProcess/ios/forms/WKFormSelectPopover.h
+    UIProcess/ios/forms/WKNumberPadView.h
+    UIProcess/ios/forms/WKNumberPadViewController.h
+    UIProcess/ios/forms/WKQuickboardViewControllerDelegate.h
+    UIProcess/ios/forms/WKSelectMenuListViewController.h
+    UIProcess/ios/forms/WKTextInputListViewController.h
+    UIProcess/ios/forms/WKTimePickerViewController.h
+
+    ${CMAKE_SOURCE_DIR}/Source/WebKitLegacy/ios/WebCoreSupport/WebSelectionRect.h
+    ${CMAKE_SOURCE_DIR}/Source/WebKitLegacy/mac/Misc/WebNSURLExtras.h
+    ${CMAKE_SOURCE_DIR}/Source/WebKitLegacy/mac/WebView/WebFeature.h
+)
+# Mac Catalyst's WebKit.framework ships the macOS headers, so the iOS ones are only the project's there.
+if (WEBKIT_SDK_IS_MACCATALYST)
+    list(APPEND WebKit_PROJECT_HEADERS ${_webkit_ios_headers} Platform/spi/ios/UIKitSPI.h)
+else ()
+    list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS ${_webkit_ios_headers})
+endif ()
+unset(_webkit_ios_headers)
+endif ()

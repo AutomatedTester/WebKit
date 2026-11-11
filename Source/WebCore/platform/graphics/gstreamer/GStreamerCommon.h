@@ -327,6 +327,16 @@ bool gstElementFactoryEquals(GstElement*, ASCIILiteral name);
 GstElement* createAutoAudioSink(const String& role);
 GstElement* createPlatformAudioSink(const String& role, const String& deviceId = { }, const GRefPtr<GstDevice>& = { });
 
+#if ENABLE(MEDIA_STREAM)
+// Resolves an audio output device ID ("default" or an existing persistent ID)
+// to its actual persistent ID and matching GstDevice.
+std::pair<String, GRefPtr<GstDevice>> gstResolveAudioOutputDevice(const String& deviceId);
+// Reconfigures an existing audio sink element (recursing into bins)
+// to use the given GstDevice as its output audio device.
+// Returns true if the sink was correctly reconfigured.
+bool gstApplyAudioSinkDevice(GstElement* audioSink, const GRefPtr<GstDevice>&, const String& deviceId);
+#endif
+
 bool webkitGstSetElementStateSynchronously(GstElement*, GstState, NOESCAPE const Function<bool(GstMessage*)>& = [](GstMessage*) -> bool {
     return true;
 });
@@ -385,6 +395,9 @@ bool gstObjectHasProperty(GstElement*, ASCIILiteral name);
 bool gstObjectHasProperty(GstPad*, ASCIILiteral name);
 
 bool gstElementMatchesFactoryAndHasProperty(GstElement*, ASCIILiteral factoryNamePattern, ASCIILiteral propertyName);
+
+// Descends into nested bins and returns the sink found there, or the innermost bin when it has no sink.
+GRefPtr<GstElement> gstElementFindInnermostSink(GstElement*);
 
 GRefPtr<GstBuffer> wrapSpanData(const std::span<const uint8_t>&);
 GRefPtr<GstBuffer> wrapSharedBuffer(Ref<SharedBuffer>&&);

@@ -38,6 +38,7 @@
 #import <algorithm>
 #import <pal/spi/mac/NSTextFinderSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CheckedPtr.h>
 #import <wtf/Deque.h>
 #import <wtf/NakedPtr.h>
@@ -92,7 +93,7 @@ private:
             allMatches.grow(matchCount);
             // FIXME: Clean this up and figure out why we are getting a -1 index
             if (matchIndex >= 0 && static_cast<uint32_t>(matchIndex) < matchCount)
-                allMatches[matchIndex].appendVector(matchRects);
+                borrow(allMatches)[matchIndex].appendVector(matchRects);
         }
 
         [m_textFinderClient didFindStringMatchesWithRects:allMatches didWrapAround:didWrapAround];
@@ -202,8 +203,7 @@ private:
 
 - (void)replaceMatches:(NSArray *)matches withString:(NSString *)replacementText inSelectionOnly:(BOOL)selectionOnly resultCollector:(void (^)(NSUInteger replacementCount))resultCollector
 {
-    Vector<uint32_t> matchIndices;
-    matchIndices.reserveInitialCapacity(matches.count);
+    Vector<uint32_t> matchIndices(ReserveCapacityTag { }, matches.count);
     // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
     for (SUPPRESS_UNRETAINED_LOCAL id match in matches) {
         if ([match isKindOfClass:WKTextFinderMatch.class])

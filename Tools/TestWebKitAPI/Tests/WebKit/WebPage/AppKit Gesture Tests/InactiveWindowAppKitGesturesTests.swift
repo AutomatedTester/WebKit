@@ -25,12 +25,12 @@
 
 import Foundation
 import struct Foundation.URL
-@_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
+@_spi(Testing) import WebKit
 import SwiftUI
 import struct Swift.String
 private import struct TestWebKitAPILibrary.DOMRect
 import Testing
-private import TestWebKitAPILibrary
+@_spi(WebKitAdditions_Testing) private import TestWebKitAPILibrary
 private import Recap
 private import AppKit_Private.NSMenu_Private
 
@@ -83,7 +83,7 @@ extension AppKitGesturesTests.InactiveWindow {
         let targetBounds = try await screenBounds(ofElementWithID: "target")
 
         await recap.play { composer in
-            composer._wk_click(at: targetBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -93,6 +93,28 @@ extension AppKitGesturesTests.InactiveWindow {
             "return window.clickCount || 0;"
         }
         #expect(clickCount == 0)
+    }
+
+    @Test
+    func singleClickIntoInactiveWindowDoesNotShowClickHighlight() async throws {
+        let html = """
+            <body style="margin: 0">
+            <a id="target" href="#" style="display: block; width: 200px; height: 50px;">Link</a>
+            </body>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let targetBounds = try await screenBounds(ofElementWithID: "target")
+
+        await recap.play { composer in
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(page.clickHighlightRect == .zero)
     }
 }
 

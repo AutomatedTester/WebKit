@@ -225,15 +225,15 @@ void ClipOutRoundedRect::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("rect"_s, rect());
 }
 
-void ClipToImageBuffer::apply(GraphicsContext& context) const
+void ClipToNativeImage::apply(GraphicsContext& context) const
 {
-    context.clipToImageBuffer(m_imageBuffer, m_destinationRect);
+    context.clipToNativeImage(m_image, m_destinationRect);
 }
 
-void ClipToImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
+void ClipToNativeImage::dump(TextStream& ts, OptionSet<AsTextFlag> flags) const
 {
     if (flags.contains(AsTextFlag::IncludeResourceIdentifiers))
-        ts.dumpProperty("image-buffer-identifier"_s, m_imageBuffer->renderingResourceIdentifier());
+        ts.dumpProperty("image-identifier"_s, m_image->renderingResourceIdentifier());
     ts.dumpProperty("dest-rect"_s, destinationRect());
 }
 
@@ -254,6 +254,18 @@ void ClipPath::apply(GraphicsContext& context) const
 
 void ClipPath::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 {
+    ts.dumpProperty("path"_s, path());
+    ts.dumpProperty("wind-rule"_s, windRule());
+}
+
+void ClipTransformedPath::apply(GraphicsContext& context) const
+{
+    context.clipTransformedPath(m_pathTransform, m_path, m_windRule);
+}
+
+void ClipTransformedPath::dump(TextStream& ts, OptionSet<AsTextFlag>) const
+{
+    ts.dumpProperty("path-transform"_s, pathTransform());
     ts.dumpProperty("path"_s, path());
     ts.dumpProperty("wind-rule"_s, windRule());
 }
@@ -280,12 +292,15 @@ void DrawFilteredImageBuffer::dump(TextStream& ts, OptionSet<AsTextFlag> flags) 
 
 void DrawGlyphs::apply(GraphicsContext& context) const
 {
-    context.drawGlyphsImmediate(m_font, m_glyphs.span(), m_advances.span(), m_localAnchor, m_fontSmoothingMode);
+    RELEASE_ASSERT(isResolved());
+    context.drawGlyphsImmediate(std::get<Ref<const FontBase>>(m_font), m_glyphs.span(), m_advances.span(), m_localAnchor, m_fontSmoothingMode);
 }
 
 void DrawGlyphs::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 {
     // FIXME: dump more stuff.
+    if (auto* fontIndex = std::get_if<uint64_t>(&m_font))
+        ts.dumpProperty("font-index"_s, *fontIndex);
     ts.dumpProperty("local-anchor"_s, localAnchor());
     ts.dumpProperty("font-smoothing-mode"_s, fontSmoothingMode());
     ts.dumpProperty("length"_s, length());
@@ -311,20 +326,37 @@ DrawDisplayList::DrawDisplayList(Ref<const DisplayList>&& displayList)
 {
 }
 
+DrawDisplayList::DrawDisplayList(uint64_t displayListIndex)
+    : m_displayList(displayListIndex)
+{
+}
+
 DrawDisplayList::~DrawDisplayList() = default;
 
 Ref<const DisplayList> DrawDisplayList::displayList() const
 {
-    return m_displayList;
+    auto* displayList = std::get_if<Ref<const DisplayList>>(&m_displayList);
+    RELEASE_ASSERT(displayList);
+    return *displayList;
+}
+
+void DrawDisplayList::setDisplayList(Ref<const DisplayList>&& displayList)
+{
+    m_displayList = WTF::move(displayList);
 }
 
 void DrawDisplayList::apply(GraphicsContext& context, ControlFactory& controlFactory) const
 {
-    return context.drawDisplayList(m_displayList, controlFactory);
+    RELEASE_ASSERT(isResolved());
+    return context.drawDisplayList(std::get<Ref<const DisplayList>>(m_displayList), controlFactory);
 }
 
 void DrawDisplayList::dump(TextStream& ts, OptionSet<AsTextFlag>) const
 {
+    if (auto* displayListIndex = std::get_if<uint64_t>(&m_displayList)) {
+        ts.dumpProperty("display-list-index"_s, *displayListIndex);
+        return;
+    }
     Ref displayList = this->displayList();
     ts.dumpProperty("display-list"_s, displayList);
 }
@@ -459,6 +491,17 @@ void DrawLinesForText::dump(TextStream& ts, OptionSet<AsTextFlag>) const
     ts.dumpProperty("lineSegments"_s, lineSegments());
     ts.dumpProperty("is-printing"_s, isPrinting());
     ts.dumpProperty("style"_s, style());
+}
+
+void DrawMeshGradient::apply(GraphicsContext& context) const
+{
+    context.drawMeshGradient(m_gradient, m_destination);
+}
+
+void DrawMeshGradient::dump(TextStream& ts, OptionSet<AsTextFlag>) const
+{
+    ts.dumpProperty("gradient"_s, gradient());
+    ts.dumpProperty("destination"_s, destination());
 }
 
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const

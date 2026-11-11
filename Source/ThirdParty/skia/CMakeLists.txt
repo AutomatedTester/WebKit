@@ -177,6 +177,7 @@ add_library(Skia STATIC
     src/core/SkPath.cpp
     src/core/SkPathBuilder.cpp
     src/core/SkPathData.cpp
+    src/core/SkPathDump.cpp
     src/core/SkPathEffect.cpp
     src/core/SkPathIter.cpp
     src/core/SkPathMeasure.cpp
@@ -989,6 +990,7 @@ WEBKIT_ADD_TARGET_CXX_FLAGS(Skia
     -Wno-nontrivial-memcall
     -Wno-undef
     -Wno-uninitialized
+    -Wno-unused-but-set-variable
     -Wno-unused-parameter
 )
 

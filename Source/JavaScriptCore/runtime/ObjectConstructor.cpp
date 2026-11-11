@@ -25,6 +25,7 @@
 #include "JSArray.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "NumberPrototype.h"
 #include "ObjectConstructorInlines.h"
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
@@ -425,13 +426,21 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
     }
 
     {
+        Vector<unsigned, 8> indices;
         Vector<RefPtr<UniquedStringImpl>, 8> properties;
         MarkedArgumentBuffer values;
         bool canUseFastPath = false;
-        if (!target->canHaveExistingOwnIndexedProperties() && !target->hasNonReifiedStaticProperties()) {
+        if (!target->canHaveExistingOwnIndexedGetterSetterProperties() && !target->hasNonReifiedStaticProperties()) {
             Structure* targetStructure = target->structure();
             if (targetStructure->canPerformFastPropertyEnumerationCommon()) {
                 canUseFastPath = true;
+                if (target->canHaveExistingOwnIndexedProperties()) {
+                    target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned index, JSValue value) {
+                        indices.append(index);
+                        values.appendWithCrashOnOverflow(value);
+                        return IterationStatus::Continue;
+                    });
+                }
                 targetStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum)
                         return true;
@@ -449,7 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
 
         if (canUseFastPath) {
             Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-            JSArray* entries = JSArray::tryCreate(vm, arrayStructure, properties.size());
+            JSArray* entries = JSArray::tryCreate(vm, arrayStructure, values.size());
             if (!entries) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return { };
@@ -482,6 +491,18 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     targetStructure->setCachedPropertyNames(vm, CachedPropertyNamesKind::EnumerableStrings, StructureRareData::cachedPropertyNamesSentinel());
             }
 
+            unsigned index = 0;
+            auto append = [&](JSString* key) ALWAYS_INLINE_LAMBDA {
+                JSArray* entry = constructArrayPair(globalObject, key, values.at(index));
+                RETURN_IF_EXCEPTION(scope, void());
+                entries->putDirectIndex(globalObject, index++, entry);
+            };
+
+            for (unsigned propertyIndex : indices) {
+                append(numberToString(vm, propertyIndex, 10));
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+
             for (size_t i = 0; i < properties.size(); ++i) {
                 JSString* key = nullptr;
                 if (cachedButterfly) {
@@ -493,19 +514,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                 if (!key)
                     key = jsOwnedString(vm, properties[i].get());
 
-                JSArray* entry = nullptr;
-                {
-                    ObjectInitializationScope initializationScope(vm);
-                    if ((entry = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 2))) [[likely]] {
-                        entry->initializeIndex(initializationScope, 0, key);
-                        entry->initializeIndex(initializationScope, 1, values.at(i));
-                    }
-                }
-                if (!entry) [[unlikely]] {
-                    throwOutOfMemoryError(globalObject, scope);
-                    return { };
-                }
-                entries->putDirectIndex(globalObject, i, entry);
+                append(key);
                 RETURN_IF_EXCEPTION(scope, { });
             }
 
@@ -538,18 +547,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
         RETURN_IF_EXCEPTION(scope, void());
 
         JSString* key = jsOwnedString(vm, propertyName.uid());
-        JSArray* entry = nullptr;
-        {
-            ObjectInitializationScope initializationScope(vm);
-            if ((entry = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 2))) [[likely]] {
-                entry->initializeIndex(initializationScope, 0, key);
-                entry->initializeIndex(initializationScope, 1, value);
-            }
-        }
-        if (!entry) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return;
-        }
+        JSArray* entry = constructArrayPair(globalObject, key, value);
+        RETURN_IF_EXCEPTION(scope, void());
         entries->putDirectIndex(globalObject, index++, entry);
     };
 
@@ -600,12 +599,11 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorValues, (JSGlobalObject* globalObject,
         if (canUseFastPath) {
             unsigned indexedPropertyCount = 0;
             if (target->canHaveExistingOwnIndexedProperties()) {
-                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>(globalObject, [&](unsigned, JSValue) {
+                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned, JSValue) {
                     ++indexedPropertyCount;
                     return IterationStatus::Continue;
                 });
             }
-            RETURN_IF_EXCEPTION(scope, { });
 
             JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), indexedPropertyCount + namedPropertyCount);
             if (!result) [[unlikely]] {
@@ -616,11 +614,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorValues, (JSGlobalObject* globalObject,
             auto values = result->butterfly()->contiguous();
             unsigned index = 0;
             if (indexedPropertyCount) {
-                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>(globalObject, [&](unsigned, JSValue value) {
+                target->forEachOwnIndexedProperty<JSObject::SortMode::Ascending>([&](unsigned, JSValue value) {
                     values.at(result, index++).setWithoutWriteBarrier(value);
                     return IterationStatus::Continue;
                 });
-                RETURN_IF_EXCEPTION(scope, { });
             }
             target->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 if (entry.attributes() & PropertyAttribute::DontEnum)
@@ -946,10 +943,8 @@ static JSValue defineProperties(JSGlobalObject* globalObject, JSObject* object, 
 
     unsigned index = 0;
     unsigned numProperties = propertyNames.size();
-    Vector<PropertyDescriptor, 16> descriptors;
+    Vector<PropertyDescriptor, 16> descriptors(ReserveCapacityTag { }, numProperties);
     MarkedArgumentBuffer markBuffer;
-
-    descriptors.reserveInitialCapacity(numProperties);
 
 #define RETURN_IF_EXCEPTION_CLEARING_OVERFLOW(value) do { \
     if (scope.exception()) [[unlikely]] { \
@@ -1148,7 +1143,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (is<JSFinalObject>(*object) || isJSArray(object)) {
         object->seal(vm);
         return object;
     }
@@ -1181,7 +1176,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (is<JSFinalObject>(*object) || isJSArray(object)) {
         object->freeze(vm);
         return object;
     }
@@ -1234,8 +1229,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsSealed, (JSGlobalObject* globalObjec
         return JSValue::encode(jsBoolean(true));
     JSObject* object = asObject(obj);
 
-    // Quick check for final objects.
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
+    // Quick check for final objects and arrays.
+    if (is<JSFinalObject>(*object) || isJSArray(object))
         return JSValue::encode(jsBoolean(object->isSealed(vm)));
 
     // 2. Return ? TestIntegrityLevel(O, "sealed").
@@ -1252,8 +1247,8 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIsFrozen, (JSGlobalObject* globalObjec
         return JSValue::encode(jsBoolean(true));
     JSObject* object = asObject(obj);
 
-    // Quick check for final objects.
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()))
+    // Quick check for final objects and arrays.
+    if (is<JSFinalObject>(*object) || isJSArray(object))
         return JSValue::encode(jsBoolean(object->isFrozen(vm)));
 
     // 2. Return ? TestIntegrityLevel(O, "frozen").
@@ -1278,7 +1273,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIs, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(jsBoolean(sameValue(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
-static CachedPropertyNamesKind LEGACY_NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+NODELETE static CachedPropertyNamesKind inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
 {
     switch (propertyNameMode) {
     case PropertyNameMode::Strings:

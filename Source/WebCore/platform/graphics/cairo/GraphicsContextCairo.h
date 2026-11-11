@@ -69,8 +69,8 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, RasterDrawingOptions) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions) final;
 
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
@@ -101,11 +101,11 @@ public:
     void clipOut(const Path&) final;
     void clipPath(const Path&, WindRule) final;
     IntRect clipBounds() const final;
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
     
     RenderingMode renderingMode() const final;
 
-    cairo_t* LEGACY_NODELETE cr() const;
+    NODELETE cairo_t* cr() const;
     Vector<float>& layers();
     void pushImageMask(cairo_surface_t*, const FloatRect&);
 

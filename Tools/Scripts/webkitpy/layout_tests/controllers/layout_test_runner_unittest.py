@@ -51,6 +51,9 @@ class FakePrinter(object):
     num_started = 0
     num_tests = 0
 
+    def begin_tests(self, num_tests, retrying):
+        pass
+
     def print_expected(self, run_results, get_tests_with_result_type):
         pass
 
@@ -290,6 +293,29 @@ class SharderTests(unittest.TestCase):
         self.sharder = Sharder(port.split_test)
         test_list = test_list or self.test_list
         return self.sharder.shard_tests([self.get_test_input(test) for test in test_list], num_workers, fully_parallel)
+
+    def test_sort_by_duration(self):
+        shards = self.get_shards(num_workers=2, fully_parallel=False)
+        test_times = {
+            'animations/keyframes.html': 1.0,
+            'dom/html/level2/html/HTMLAnchorElement03.html': 30.0,
+            'fast/css/display-none-inline-style-change-crash.html': 5.0,
+            'http/tests/security/view-source-no-refresh.html': 0.1,
+        }
+        self.assertEqual([shard.name for shard in self.sharder.sort_by_duration(shards, test_times)], [
+            'dom/html/level2/html',
+            'http/tests/websocket/tests',
+            'http/tests/xmlhttprequest',
+            'ietestcenter/Javascript',
+            'fast/css',
+            'animations',
+            'http/tests/security',
+        ])
+
+    def test_sort_by_duration_without_test_times(self):
+        shards = self.get_shards(num_workers=2, fully_parallel=False)
+        for test_times in (None, {}):
+            self.assertEqual(self.sharder.sort_by_duration(shards, test_times), shards)
 
     def assert_shards(self, actual_shards, expected_shard_names):
         self.assertEqual(len(actual_shards), len(expected_shard_names))

@@ -82,10 +82,10 @@ static std::pair<ASCIILiteral, RetainPtr<NSString>> serviceNameAndIdentifier(Pro
             if (!useCaptivePortal && !useEnhancedSecurity)
                 return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent" };
 
-            if (useEnhancedSecurity)
-                return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.EnhancedSecurity" };
+            if (useCaptivePortal)
+                return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.CaptivePortal" };
 
-            return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.CaptivePortal" };
+            return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.EnhancedSecurity" };
         }
         NSString *webContentAppex = nil;
 
@@ -394,10 +394,6 @@ void ProcessLauncher::tryFinishLaunchingProcess(ASCIILiteral name, Function<void
             xpc_dictionary_set_bool(bootstrapMessage.get(), "configure-jsc-for-testing", true);
         if (!client->isJITEnabled())
             xpc_dictionary_set_bool(bootstrapMessage.get(), "disable-jit", true);
-        if (client->shouldEnableSharedArrayBuffer())
-            xpc_dictionary_set_bool(bootstrapMessage.get(), "enable-shared-array-buffer", true);
-        if (client->shouldDisableJITCage())
-            xpc_dictionary_set_bool(bootstrapMessage.get(), "disable-jit-cage", true);
     }
 
     xpc_dictionary_set_string(bootstrapMessage.get(), "message-name", "bootstrap");
@@ -589,7 +585,7 @@ void ProcessLauncher::terminateXPCConnection()
 
     xpc_connection_cancel(m_xpcConnection.get());
 #if !USE(EXTENSIONKIT)
-    terminateWithReason(m_xpcConnection.get(), WebKit::ReasonCode::Invalidation, "ProcessLauncher::platformInvalidate");
+    terminateWithReason(m_xpcConnection.get(), WebKitReasonCode::Invalidation, "ProcessLauncher::platformInvalidate");
 #endif
     m_xpcConnection = nullptr;
 }

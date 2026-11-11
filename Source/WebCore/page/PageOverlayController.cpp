@@ -312,6 +312,15 @@ void PageOverlayController::uninstallPageOverlay(PageOverlay& overlay, PageOverl
     installedPageOverlaysChanged();
 }
 
+RefPtr<PageOverlay> PageOverlayController::documentOverlayForRootFrame(const PageOverlayClient& client, const LocalFrame& rootFrame) const
+{
+    for (auto& overlay : m_pageOverlays) {
+        if (&overlay->client() == &client && overlay->associatedFrame() == &rootFrame)
+            return overlay.ptr();
+    }
+    return nullptr;
+}
+
 void PageOverlayController::updateForceSynchronousScrollLayerPositionUpdates()
 {
 #if ENABLE(ASYNC_SCROLLING)
@@ -415,12 +424,15 @@ void PageOverlayController::updateSettingsForLayer(GraphicsLayer& layer)
     layer.setShowRepaintCounter(settings->showRepaintCounter());
 }
 
-bool PageOverlayController::handleMouseEvent(const PlatformMouseEvent& mouseEvent)
+bool PageOverlayController::handleMouseEvent(const PlatformMouseEvent& mouseEvent, LocalFrame& handlingFrame)
 {
     if (m_pageOverlays.isEmpty())
         return false;
 
+    Ref rootFrame { handlingFrame.rootFrame() };
     for (Ref overlay : borrow(m_pageOverlays).get() | std::views::reverse) {
+        if (RefPtr associatedFrame { overlay->associatedFrame() }; associatedFrame && associatedFrame != rootFrame.ptr())
+            continue;
         if (overlay->mouseEvent(mouseEvent))
             return true;
     }

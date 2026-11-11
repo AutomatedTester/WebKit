@@ -29,6 +29,10 @@
 #import <QuartzCore/CoreAnimation.h>
 #import <wtf/RetainPtr.h>
 
+#if PLATFORM(MAC)
+#import <pal/spi/mac/NSViewSPI.h>
+#endif
+
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
 
 @interface WKColorExtensionView () <CAAnimationDelegate>
@@ -47,6 +51,9 @@
 
     _delegate = delegate;
     self.hidden = YES;
+#if PLATFORM(MAC)
+    self.shouldBeArchived = NO;
+#endif
     return self;
 }
 
@@ -88,6 +95,11 @@
         return;
     }
 
+    if (!self.window) {
+        [self cancelFadeAnimation];
+        return;
+    }
+
     RetainPtr animation = [CABasicAnimation animationWithKeyPath:@"backgroundColor"];
     [animation setFromValue:(__bridge id)fromColor.get()];
     [animation setToValue:(__bridge id)toColor.get()];
@@ -121,6 +133,24 @@
     [layer setBackgroundColor:RetainPtr { [_targetColor CGColor] }.get()];
     self.hidden = !_isVisible;
 }
+
+#if PLATFORM(MAC)
+- (void)viewDidMoveToWindow
+{
+    [super viewDidMoveToWindow];
+
+    if (!self.window)
+        [self cancelFadeAnimation];
+}
+#else
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+
+    if (!self.window)
+        [self cancelFadeAnimation];
+}
+#endif
 
 @end
 

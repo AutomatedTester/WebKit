@@ -29,14 +29,15 @@
 #if ENABLE(WEBXR_LAYERS) && ENABLE(WEBGPU)
 
 #include "GPUDevice.h"
-#include "WebGPUXRBinding.h"
-#include "WebGPUXREye.h"
+#include "WebGPUXRLayerBacking.h"
 #include "WebXRFrame.h"
+#include "WebXRSession.h"
 #include "WebXRView.h"
 #include "XRCompositionLayer.h"
 #include "XRGPUProjectionLayerInit.h"
 #include "XRGPUSubImage.h"
 #include "XRProjectionLayer.h"
+#include <WebCore/WebGPUCppAPI.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -72,16 +73,7 @@ ExceptionOr<Ref<XRProjectionLayer>> XRGPUBinding::createProjectionLayer(ScriptEx
     if (!m_backing || !m_session)
         return Exception { ExceptionCode::AbortError };
 
-    if (init) {
-        auto converted = init->convertToBacking();
-        m_session->initializeTrackingAndRendering(XRCanvasConfiguration {
-            .colorFormat = converted.colorFormat,
-            .depthStencilFormat = converted.depthStencilFormat
-        });
-    } else
-        m_session->initializeTrackingAndRendering(std::nullopt);
-
-    WebGPU::XRProjectionLayerInit convertedInit;
+    WebGPU::XRProjectionLayerDescriptor convertedInit;
     if (init)
         convertedInit = init->convertToBacking();
     RefPtr projectionLayer = m_backing->createProjectionLayer(convertedInit);
@@ -89,7 +81,11 @@ ExceptionOr<Ref<XRProjectionLayer>> XRGPUBinding::createProjectionLayer(ScriptEx
         return Exception { ExceptionCode::AbortError };
 
     m_init = init;
-    return XRProjectionLayer::create(scriptExecutionContext, *m_session, projectionLayer.releaseNonNull(), { });
+    Ref layer = XRProjectionLayer::create(scriptExecutionContext, *m_session, WebGPUXRLayerBacking::create(projectionLayer.releaseNonNull()), { });
+    auto depthStencilFormat = init ? init->depthStencilFormat : std::nullopt;
+    layer->setDepthStencilFormat(depthStencilFormat);
+    layer->setIgnoreDepthValues(!depthStencilFormat);
+    return WTF::move(layer);
 }
 
 double XRGPUBinding::nativeProjectionScaleFactor() const
@@ -101,6 +97,9 @@ ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& pro
 {
     if (!m_backing)
         return Exception { ExceptionCode::AbortError };
+
+    if (projectionLayer.isDestroyed())
+        return Exception { ExceptionCode::InvalidStateError, "Cannot get a subimage from a destroyed layer."_s };
 
     auto layerData = projectionLayer.layerData();
     if (!layerData)
@@ -119,8 +118,10 @@ ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& pro
     if (eyeIndex)
         viewport.move(-setupData->viewports[0].width(), 0);
 
-    RefPtr subImage = m_backing->getViewSubImage(static_cast<WebGPU::XRProjectionLayer&>(projectionLayer.backing()));
-    return XRGPUSubImage::create(subImage.releaseNonNull(), convertToBacking(eye), WTF::move(actualSize), WTF::move(viewport), m_device);
+    // Every layer that an XRGPUBinding creates is backed by a WebGPUXRLayerBacking.
+    Ref backing = downcast<WebGPUXRLayerBacking>(projectionLayer.backing());
+    RefPtr subImage = m_backing->getViewSubImage(backing->projectionLayer());
+    return XRGPUSubImage::create(subImage.releaseNonNull(), convertToBacking(eye), WTF::move(actualSize), WTF::move(viewport), m_device, projectionLayer.depthStencilFormat());
 }
 
 ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& projectionLayer, WebXRFrame&, std::optional<XREye> eye)

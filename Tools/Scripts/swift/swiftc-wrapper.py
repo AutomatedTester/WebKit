@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # Thin wrapper around swiftc that:
-#   - filters one benign diagnostic out of stderr
 #   - relays the command line through a response file on Windows
 #   - forwards the MSVC-style linker switches that CMake's own defaults inject
 #   - merges per-frontend depfiles into one depfile for the whole module
@@ -31,31 +30,6 @@ from collections import namedtuple
 from pathlib import Path
 
 import depfile
-
-# Swift's C++ interop changes which imported members are @unsafe between
-# toolchain versions, so an `unsafe` that is required on one toolchain emits
-# "no unsafe operations occur within 'unsafe' expression" on another. The
-# diagnostic is in the UnnecessaryUnsafe group, but Swift's group flags only
-# escalate severity (-Werror/-Wwarning <group>) -- there is no per-group
-# suppression, and -suppress-warnings would hide everything -- so filter this
-# one diagnostic (and its multi-line source snippet) out of stderr instead.
-_BENIGN_WARNING = re.compile(r": warning: no unsafe operations occur within .unsafe. expression")
-_SOURCE_SNIPPET = re.compile(r"^[ \t]*[0-9]*[ \t]*\|")
-
-
-def filter_benign_warnings(lines):
-    skip = False
-    for line in lines:
-        if _BENIGN_WARNING.search(line):
-            skip = True
-            continue
-        if skip and _SOURCE_SNIPPET.match(line):
-            continue
-        if skip and line.strip() == "":
-            skip = False
-            continue
-        skip = False
-        yield line
 
 
 def quote_response_file_token(arg):
@@ -98,10 +72,11 @@ def dependency_files(output_file_map):
         return []
 
     paths = [entry["dependencies"] for entry in entries.values() if "dependencies" in entry]
-    # The driver derives the emit-module job's depfile name instead of taking it
-    # from the output-file-map, and that one has the fullest view of the
-    # module's imports, so pick it up from the map's own directory.
-    paths += (str(path) for path in Path(output_file_map).parent.glob("*.emit-module.d"))
+    # The driver derives the depfile names of the emit-module job, which has the
+    # fullest view of the module's imports, and of a whole-module compile, which
+    # writes no per-source depfiles, instead of taking them from the
+    # output-file-map, so pick them up from the map's own directory.
+    paths += (str(path) for path in Path(output_file_map).parent.glob("*.d"))
     return [path for path in paths if os.path.exists(path)]
 
 
@@ -228,19 +203,8 @@ def main(argv):
 
     rc = None
     try:
-        # Relay stderr line by line while the compiler runs.
-        with subprocess.Popen(
-            command,
-            stdout=sys.stdout,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-        ) as process:
-            for line in filter_benign_warnings(process.stderr):
-                sys.stderr.write(line)
-                sys.stderr.flush()
-            rc = process.wait()
-            return rc
+        rc = subprocess.call(command)
+        return rc
     finally:
         if response_file:
             os.remove(response_file)

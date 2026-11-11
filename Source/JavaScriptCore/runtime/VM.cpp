@@ -39,6 +39,7 @@
 #include "CheckpointOSRExitSideState.h"
 #include "CodeBlock.h"
 #include "CodeCache.h"
+#include "Collector.h"
 #include "CommonIdentifiers.h"
 #include "ControlFlowProfiler.h"
 #include "CrossTaskToken.h"
@@ -117,6 +118,7 @@
 #include "ProgramExecutableInlines.h"
 #include "PropertyInlineCache.h"
 #include "PropertyTableInlines.h"
+#include "ProxyConstructor.h"
 #include "RandomizingFuzzerAgent.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -778,7 +780,7 @@ Exception* VM::ensureTerminationException()
 }
 
 #if ENABLE(JIT)
-static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
+NODELETE static ThunkGenerator thunkGeneratorForIntrinsic(Intrinsic intrinsic)
 {
     switch (intrinsic) {
     case CharCodeAtIntrinsic:
@@ -1252,7 +1254,7 @@ void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
 
 void VM::scanSideState(ConservativeRoots& roots) const
 {
-    ASSERT(heap.worldIsStopped());
+    heap.collector().assertIsMarkerWithWorldStopped();
     for (const auto& sideState : m_checkpointSideState) {
         static_assert(sizeof(sideState->tmps) / sizeof(JSValue) == maxNumCheckpointTmps);
         roots.add(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);
@@ -1758,6 +1760,14 @@ NativeExecutable* VM::promiseAnySlowRejectFunctionExecutableSlow()
     return executable;
 }
 
+NativeExecutable* VM::proxyRevokeExecutableSlow()
+{
+    ASSERT(!m_proxyRevokeExecutable);
+    auto* executable = getHostFunction(proxyRevoke, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, emptyString());
+    m_proxyRevokeExecutable.setWithoutWriteBarrier(executable);
+    return executable;
+}
+
 bool VM::hasLanguageChange()
 {
     return m_intlCache->hasLanguageChange();
@@ -2007,6 +2017,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_promiseAllSettledSlowRejectFunctionExecutable);
     visitor.append(m_promiseAnyRejectFunctionExecutable);
     visitor.append(m_promiseAnySlowRejectFunctionExecutable);
+    visitor.append(m_proxyRevokeExecutable);
 }
 DEFINE_VISIT_AGGREGATE(VM);
 

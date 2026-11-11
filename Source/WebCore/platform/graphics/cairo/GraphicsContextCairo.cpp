@@ -142,7 +142,7 @@ void GraphicsContextCairo::drawRect(const FloatRect& rect, float borderThickness
     Cairo::drawRect(*this, rect, borderThickness, fillColor(), strokeStyle(), strokeColor());
 }
 
-void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void GraphicsContextCairo::drawNativeImage(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     auto& state = this->state();
     Cairo::drawPlatformImage(*this, nativeImage.platformImage().get(), destRect, srcRect, { options, imageInterpolationQualityForOptions(options) }, state.alpha(), Cairo::ShadowState(state));
@@ -218,10 +218,9 @@ IntRect GraphicsContextCairo::clipBounds() const
     return Cairo::State::getClipBounds(*platformContext());
 }
 
-void GraphicsContextCairo::clipToImageBuffer(ImageBuffer& buffer, const FloatRect& destRect)
+void GraphicsContextCairo::clipToNativeImage(const NativeImage& nativeImage, const FloatRect& destRect)
 {
-    if (auto nativeImage = nativeImageForDrawing(buffer))
-        Cairo::clipToImageBuffer(*this, nativeImage->platformImage().get(), destRect);
+    Cairo::clipToImageBuffer(*this, nativeImage.platformImage().get(), destRect);
 }
 
 void GraphicsContextCairo::drawFocusRing(const Path& path, float outlineWidth, const Color& color, float)
@@ -367,7 +366,7 @@ void GraphicsContextCairo::fillRectWithRoundedHole(const FloatRect& rect, const 
     Cairo::fillRectWithRoundedHole(*this, rect, roundedHoleRect, Cairo::FillSource(state), Cairo::ShadowState(state));
 }
 
-void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void GraphicsContextCairo::drawPattern(const NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     if (!patternTransform.isInvertible())
         return;

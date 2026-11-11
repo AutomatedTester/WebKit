@@ -29,6 +29,8 @@
 
 import logging
 
+from unittest.mock import patch
+
 from webkitcorepy import Version, OutputCapture
 
 from webkitpy.port.mac import MacPort
@@ -85,11 +87,10 @@ class MacTest(darwin_testcase.DarwinTest):
         self.assertRaises(AssertionError, self.assert_name, 'mac-tiger', 'leopard', 'mac-leopard-wk2')
 
     def test_setup_environ_for_server(self):
-        port = self.make_port(options=MockOptions(leaks=True, guard_malloc=True))
-        env = port.setup_environ_for_server(port.driver_name())
-        self.assertEqual(env['MallocStackLogging'], '1')
-        self.assertEqual(env['MallocScribble'], '1')
-        self.assertEqual(env['DYLD_INSERT_LIBRARIES'], '/usr/lib/libgmalloc.dylib')
+        for leaks in [False, True]:
+            for guard_malloc in [False, True]:
+                with self.subTest(leaks=leaks, guard_malloc=guard_malloc):
+                    self.assert_leaks_and_guard_malloc_environment(self.make_port(options=MockOptions(leaks=leaks, guard_malloc=guard_malloc)))
 
     def test_show_results_html_file(self):
         port = self.make_port()
@@ -129,6 +130,20 @@ class MacTest(darwin_testcase.DarwinTest):
             "This machine could support 2 child processes, but only has enough memory for 1.\n"
         )
         self.assertEqual(child_processes, 1)
+
+    def test_setup_test_run_warms_up_with_multiple_workers(self):
+        port = self.make_port()
+        port.set_option('child_processes', 2)
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.setup_test_run()
+        warm_up_runner.assert_called_once_with()
+
+    def test_setup_test_run_with_one_worker_does_not_warm_up(self):
+        port = self.make_port()
+        port.set_option('child_processes', 1)
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.setup_test_run()
+        warm_up_runner.assert_not_called()
 
     def test_32bit(self):
         port = self.make_port(options=MockOptions(architecture='x86'))
@@ -282,6 +297,37 @@ class MacTest(darwin_testcase.DarwinTest):
         port = self.make_port(options=MockOptions(configuration='Release', site_isolation_enabled_by_default=True))
         self.assertEqual('siteisolation', port.api_test_current_configuration().get('flavor'))
         self.assertIn('siteisolation', APITestExpectations(port).get_current_configuration())
+
+    def test_api_test_expectations_files_with_apple_additions(self):
+        # Both 'mac' and 'mac-lion' map to the internal 'mac-add-lion', which should only be listed once.
+        with port_testcase.bind_mock_apple_additions():
+            files = self.make_port().api_test_expectations_files()
+        self.assertEqual(files, [
+            '/mock-checkout/TestExpectations/apitests',
+            '/mock-checkout/TestExpectations/platform/mac/apitests',
+            '/additional_testing_path/APITestExpectationsForUnreleasedSoftware/mac-add-lion/apitests',
+            '/mock-checkout/TestExpectations/platform/mac-lion/apitests',
+        ])
+
+    def test_api_test_expectations_files_without_apple_additions(self):
+        files = self.make_port().api_test_expectations_files()
+        self.assertEqual(files, [
+            '/mock-checkout/TestExpectations/apitests',
+            '/mock-checkout/TestExpectations/platform/mac/apitests',
+            '/mock-checkout/TestExpectations/platform/mac-lion/apitests',
+        ])
+
+    def test_api_test_expectations_in_apple_additions_are_not_duplicates(self):
+        with port_testcase.bind_mock_apple_additions():
+            port = self.make_port()
+            port.host.filesystem.write_text_file(
+                '/additional_testing_path/APITestExpectationsForUnreleasedSoftware/mac-add-lion/apitests',
+                'TestWTF.Foo.Bar [ Skip ]\n',
+            )
+            expectations = APITestExpectations(port)
+            expectations.parse_all_expectations()
+        self.assertEqual([str(warning) for warning in expectations.lint() if 'Duplicate' in str(warning)], [])
+        self.assertTrue(expectations.get_expectation('TestWTF.Foo.Bar').skip)
 
     def test_rosetta_expectations(self):
         mock_host = MockSystemHost()

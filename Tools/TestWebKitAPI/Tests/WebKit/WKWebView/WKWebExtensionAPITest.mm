@@ -189,6 +189,173 @@ TEST(WKWebExtensionAPITest, MessageEventInContentScript)
     [manager run];
 }
 
+TEST(WKWebExtensionAPITest, JSHandleCreationInBackgroundPage)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"const canCreateJSHandle = typeof window.webkit?.createJSHandle === 'function'",
+        @"browser.test.assertTrue(canCreateJSHandle, 'createJSHandle should be available in an extension page')",
+
+        @"const handle = canCreateJSHandle ? window.webkit.createJSHandle(document.documentElement) : null",
+        @"browser.test.assertTrue(!!handle, 'createJSHandle should return a handle for an element')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    Util::loadAndRunExtension(manifest, @{
+        @"background.js": backgroundScript
+    });
+}
+
+TEST(WKWebExtensionAPITest, JSHandleCreationInContentScript)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *contentScript = Util::constructScript(@[
+        @"const canCreateJSHandle = typeof window.webkit?.createJSHandle === 'function'",
+        @"browser.test.assertTrue(canCreateJSHandle, 'createJSHandle should be available in a content script')",
+
+        @"const handle = canCreateJSHandle ? window.webkit.createJSHandle(document.body) : null",
+        @"browser.test.assertTrue(!!handle, 'createJSHandle should return a handle for an element')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    auto *resources = @{
+        @"background.js": @"// This script is intentionally left blank.",
+        @"content.js": contentScript
+    };
+
+    RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
+    RetainPtr manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager load];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPITest, JSHandleCreationInExtensionFrame)
+{
+    auto *frameManifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Extension",
+        @"description": @"Test Extension",
+        @"version": @"1.0",
+
+        @"background": @{
+            @"scripts": @[ @"background.js" ],
+            @"persistent": @NO
+        },
+
+        @"content_scripts": @[ @{
+            @"matches": @[ @"*://localhost/*" ],
+            @"js": @[ @"content.js" ]
+        } ],
+
+        @"web_accessible_resources": @[ @{
+            @"resources": @[ @"*.html" ],
+            @"matches": @[ @"*://localhost/*" ]
+        } ]
+    };
+
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body></body>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *frameScript = Util::constructScript(@[
+        @"const canCreateJSHandle = typeof window.webkit?.createJSHandle === 'function'",
+        @"browser.test.assertTrue(canCreateJSHandle, 'createJSHandle should be available in an extension frame')",
+
+        @"const handle = canCreateJSHandle ? window.webkit.createJSHandle(document.documentElement) : null",
+        @"browser.test.assertTrue(!!handle, 'createJSHandle should return a handle for an element')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    auto *contentScript = Util::constructScript(@[
+        @"const iframe = document.createElement('iframe')",
+        @"iframe.src = browser.runtime.getURL('extension-frame.html')",
+        @"document.body.appendChild(iframe)"
+    ]);
+
+    auto *resources = @{
+        @"background.js": @"// This script is intentionally left blank.",
+        @"content.js": contentScript,
+        @"extension-frame.js": frameScript,
+        @"extension-frame.html": @"<script src='extension-frame.js'></script>"
+    };
+
+    auto manager = Util::loadExtension(frameManifest, resources);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPITest, JSHandleCreationUnavailableInWebPage)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<body><script>document.body.dataset.canCreateJSHandle = String(typeof window.webkit?.createJSHandle === 'function')</script></body>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *contentScript = Util::constructScript(@[
+        @"browser.test.assertEq(document.body.dataset.canCreateJSHandle, 'false', 'createJSHandle should not be available to the web page')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    auto *resources = @{
+        @"background.js": @"// This script is intentionally left blank.",
+        @"content.js": contentScript
+    };
+
+    RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources]);
+    RetainPtr manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager load];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPITest, JSHandleCreationUnavailableInWebPageFrameInExtensionPage)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<script>parent.postMessage(typeof window.webkit?.createJSHandle, '*')</script>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"const iframe = document.createElement('iframe')",
+        [NSString stringWithFormat:@"iframe.src = 'http://localhost:%d/'", server.port()],
+
+        @"window.addEventListener('message', (event) => {",
+        @"  browser.test.assertEq(event.data, 'undefined', 'createJSHandle should not be available to a web page frame')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"document.body.appendChild(iframe)"
+    ]);
+
+    Util::loadAndRunExtension(manifest, @{
+        @"background.js": backgroundScript
+    });
+}
+
 TEST(WKWebExtensionAPITest, MessageEventWithSendMessageReply)
 {
     auto *backgroundScript = Util::constructScript(@[
@@ -294,6 +461,56 @@ TEST(WKWebExtensionAPITest, SendMessageBeforeListenerAdded)
     [manager.get().defaultTab.webView loadRequest:urlRequest];
 
     [manager run];
+}
+
+TEST(WKWebExtensionAPITest, TestFinishedEventListenerAddedToPageBeforeExtensionLoads)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<script>browser.test.onTestFinished.addListener((data) => { document.title = data.testName }); document.title = 'Listener Added'</script>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:@{ @"background.js": @"// This script is intentionally left blank.", @"content.js": @"// This script is intentionally left blank." }]);
+    RetainPtr manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    auto *webView = manager.get().defaultTab.webView;
+    [webView loadRequest:server.requestWithLocalhost()];
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [webView.title isEqualToString:@"Listener Added"];
+    }));
+
+    [manager load];
+
+    [manager sendTestFinishedWithArgument:@{ @"testName": @"Test Finished" }];
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [webView.title isEqualToString:@"Test Finished"];
+    }));
+}
+
+TEST(WKWebExtensionAPITest, TestStartedEventListenerAddedToPageAfterExtensionLoads)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, "<script>browser.test.onTestStarted.addListener((data) => { document.title = data.testName }); document.title = 'Listener Added'</script>"_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    RetainPtr extension = adoptNS([[WKWebExtension alloc] _initWithManifestDictionary:manifest resources:@{ @"background.js": @"// This script is intentionally left blank.", @"content.js": @"// This script is intentionally left blank." }]);
+    RetainPtr manager = adoptNS([[TestWebExtensionManager alloc] initForExtension:extension.get()]);
+
+    [manager load];
+
+    auto *webView = manager.get().defaultTab.webView;
+    [webView loadRequest:server.requestWithLocalhost()];
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [webView.title isEqualToString:@"Listener Added"];
+    }));
+
+    [manager sendTestStartedWithArgument:@{ @"testName": @"Test Started" }];
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [webView.title isEqualToString:@"Test Started"];
+    }));
 }
 
 TEST(WKWebExtensionAPITest, AddAnonymousAsyncTest)
@@ -694,6 +911,387 @@ TEST(WKWebExtensionAPITest, RunTestsVerifyFailedTestAborts)
     [manager run];
 
     EXPECT_EQ(manager.get().testResults.count, testNames.count);
+}
+
+TEST(WKWebExtensionAPITest, AssertionsThatPass)
+{
+    auto *testNames = @[
+        @"assertSafe",
+        @"assertSafeResolveWithResolvedPromise",
+        @"assertSafeResolveWithNonPromiseResult",
+        @"assertResolves",
+        @"assertRejects",
+        @"assertRejectsWithMatchingError",
+        @"assertThrows"
+    ];
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function assertSafe() {",
+        @"    const result = browser.test.assertSafe(() => 'Plain String')",
+        @"    browser.test.assertEq(result, 'Plain String')",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveWithResolvedPromise() {",
+        @"    const result = await browser.test.assertSafeResolve(() => Promise.resolve({ key: 'Value' }))",
+        @"    browser.test.assertDeepEq(result, { key: 'Value' })",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveWithNonPromiseResult() {",
+        @"    const result = await browser.test.assertSafeResolve(() => ({ key: 'Value' }))",
+        @"    browser.test.assertDeepEq(result, { key: 'Value' })",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertResolves() {",
+        @"    const result = await browser.test.assertResolves(Promise.resolve({ key: 'Value' }))",
+        @"    browser.test.assertDeepEq(result, { key: 'Value' })",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejects() {",
+        @"    await browser.test.assertRejects(Promise.reject(new Error('Expected Error')))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejectsWithMatchingError() {",
+        @"    await browser.test.assertRejects(Promise.reject(new Error('Expected Error')), /Expected/)",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertThrows() {",
+        @"    browser.test.assertThrows(() => { throw new Error('Expected Error') })",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => browser.test.notifyPass())"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    [manager run];
+
+    EXPECT_NS_EQUAL(manager.get().testsAdded, testNames);
+    EXPECT_EQ(manager.get().testResults.count, testNames.count);
+
+    for (NSString *testName in testNames)
+        EXPECT_TRUE([manager.get().testResults[testName] boolValue]) << testName.UTF8String << " should have passed";
+}
+
+TEST(WKWebExtensionAPITest, AssertionsThatFail)
+{
+    auto *testNames = @[
+        @"assertSafeWithThrowingFunction",
+        @"assertSafeResolveWithRejectedPromise",
+        @"assertSafeResolveWithRejectedAsyncFunction",
+        @"assertSafeResolveWithThrowingFunction",
+        @"assertResolvesWithRejectedPromise",
+        @"assertRejectsWithResolvedPromise",
+        @"assertRejectsWithMismatchedError",
+        @"assertThrowsWithoutThrowing"
+    ];
+
+    // The catch blocks hide the rejection that await rethrows, so these only fail if the assertion reports it itself.
+    auto *backgroundScript = Util::constructScript(@[
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function assertSafeWithThrowingFunction() {",
+        @"    browser.test.assertSafe(() => { throw new Error('Expected Error') })",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveWithRejectedPromise() {",
+        @"    try {",
+        @"      await browser.test.assertSafeResolve(() => Promise.reject(new Error('Expected Error')))",
+        @"    } catch (error) { }",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveWithRejectedAsyncFunction() {",
+        @"    try {",
+        @"      await browser.test.assertSafeResolve(async () => { throw new Error('Expected Error') })",
+        @"    } catch (error) { }",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveWithThrowingFunction() {",
+        @"    browser.test.assertSafeResolve(() => { throw new Error('Expected Error') })",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertResolvesWithRejectedPromise() {",
+        @"    try {",
+        @"      await browser.test.assertResolves(Promise.reject(new Error('Expected Error')))",
+        @"    } catch (error) { }",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejectsWithResolvedPromise() {",
+        @"    try {",
+        @"      await browser.test.assertRejects(Promise.resolve({ key: 'Value' }))",
+        @"    } catch (error) { }",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejectsWithMismatchedError() {",
+        @"    try {",
+        @"      await browser.test.assertRejects(Promise.reject(new Error('Other Error')), /Expected/)",
+        @"    } catch (error) { }",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertThrowsWithoutThrowing() {",
+        @"    browser.test.assertThrows(() => 'Plain String')",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => browser.test.notifyPass())"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    [manager run];
+
+    EXPECT_NS_EQUAL(manager.get().testsAdded, testNames);
+    EXPECT_EQ(manager.get().testResults.count, testNames.count);
+
+    for (NSString *testName in testNames)
+        EXPECT_FALSE([manager.get().testResults[testName] boolValue]) << testName.UTF8String << " should have failed";
+}
+
+TEST(WKWebExtensionAPITest, AssertRejectsRejectsReturnedPromiseOnFailure)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"let resolvedPromiseOutcome",
+        @"let mismatchedErrorOutcome",
+        @"let reachedAfterFailure = false",
+
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function assertRejectsWithResolvedPromise() {",
+        @"    resolvedPromiseOutcome = await browser.test.assertRejects(Promise.resolve({ key: 'Value' })).then(() => 'resolved', () => 'rejected')",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejectsWithMismatchedError() {",
+        @"    mismatchedErrorOutcome = await browser.test.assertRejects(Promise.reject(new Error('Other Error')), /Expected/).then(() => 'resolved', () => 'rejected')",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertRejectsStopsTest() {",
+        @"    await browser.test.assertRejects(Promise.resolve({ key: 'Value' }))",
+        @"    reachedAfterFailure = true",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => {",
+        @"  browser.test.sendMessage('Outcomes', { resolvedPromiseOutcome, mismatchedErrorOutcome, reachedAfterFailure })",
+        @"  browser.test.notifyPass()",
+        @"})"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    NSDictionary *outcomes = [manager runUntilTestMessage:@"Outcomes"];
+    EXPECT_NS_EQUAL(outcomes[@"resolvedPromiseOutcome"], @"rejected");
+    EXPECT_NS_EQUAL(outcomes[@"mismatchedErrorOutcome"], @"rejected");
+    EXPECT_FALSE([outcomes[@"reachedAfterFailure"] boolValue]);
+
+    [manager run];
+
+    EXPECT_FALSE([manager.get().testResults[@"assertRejectsWithResolvedPromise"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"assertRejectsWithMismatchedError"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"assertRejectsStopsTest"] boolValue]);
+}
+
+TEST(WKWebExtensionAPITest, AssertResolvesRejectsReturnedPromiseOnFailure)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"let rejectedPromiseOutcome",
+        @"let reachedAfterFailure = false",
+
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function assertResolvesWithRejectedPromise() {",
+        @"    rejectedPromiseOutcome = await browser.test.assertResolves(Promise.reject(new Error('Expected Error'))).then(() => 'resolved', () => 'rejected')",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertResolvesStopsTest() {",
+        @"    await browser.test.assertResolves(Promise.reject(new Error('Expected Error')))",
+        @"    reachedAfterFailure = true",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveStopsTest() {",
+        @"    await browser.test.assertSafeResolve(() => Promise.reject(new Error('Expected Error')))",
+        @"    reachedAfterFailure = true",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => {",
+        @"  browser.test.sendMessage('Outcomes', { rejectedPromiseOutcome, reachedAfterFailure })",
+        @"  browser.test.notifyPass()",
+        @"})"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    NSDictionary *outcomes = [manager runUntilTestMessage:@"Outcomes"];
+    EXPECT_NS_EQUAL(outcomes[@"rejectedPromiseOutcome"], @"rejected");
+    EXPECT_FALSE([outcomes[@"reachedAfterFailure"] boolValue]);
+
+    [manager run];
+
+    EXPECT_FALSE([manager.get().testResults[@"assertResolvesWithRejectedPromise"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"assertResolvesStopsTest"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"assertSafeResolveStopsTest"] boolValue]);
+}
+
+TEST(WKWebExtensionAPITest, AssertSafeStopsTestOnFailure)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"let reachedAfterAssertSafe = false",
+        @"let reachedAfterAssertSafeResolve = false",
+
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function assertSafeStopsTest() {",
+        @"    browser.test.assertSafe(() => { throw new Error('Expected Error') })",
+        @"    reachedAfterAssertSafe = true",
+        @"  }),",
+
+        @"  browser.test.addTest(async function assertSafeResolveStopsTest() {",
+        @"    await browser.test.assertSafeResolve(() => { throw new Error('Expected Error') })",
+        @"    reachedAfterAssertSafeResolve = true",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => {",
+        @"  browser.test.sendMessage('Outcomes', { reachedAfterAssertSafe, reachedAfterAssertSafeResolve })",
+        @"  browser.test.notifyPass()",
+        @"})"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    NSDictionary *outcomes = [manager runUntilTestMessage:@"Outcomes"];
+    EXPECT_FALSE([outcomes[@"reachedAfterAssertSafe"] boolValue]);
+    EXPECT_FALSE([outcomes[@"reachedAfterAssertSafeResolve"] boolValue]);
+
+    [manager run];
+
+    EXPECT_FALSE([manager.get().testResults[@"assertSafeStopsTest"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"assertSafeResolveStopsTest"] boolValue]);
+}
+
+TEST(WKWebExtensionAPITest, UnawaitedAssertionFailsEvenWhenItPasses)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function unawaitedPassingAssertRejects() {",
+        @"    browser.test.assertRejects(Promise.reject(new Error('Expected Error')))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function unawaitedPassingAssertResolves() {",
+        @"    browser.test.assertResolves(Promise.resolve('Value'))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function unawaitedPassingAssertSafeResolve() {",
+        @"    browser.test.assertSafeResolve(() => Promise.resolve('Value'))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function unawaitedFailingAssertSafeResolve() {",
+        @"    browser.test.assertSafeResolve(() => new Promise((resolve, reject) => setTimeout(() => reject(new Error('Expected Error')), 50)))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function awaitedPassingAssertions() {",
+        @"    await browser.test.assertRejects(Promise.reject(new Error('Expected Error')))",
+        @"    await browser.test.assertResolves(Promise.resolve('Value'))",
+        @"    await browser.test.assertSafeResolve(() => Promise.resolve('Value'))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function trailingTest() {",
+        @"    await new Promise(resolve => setTimeout(resolve, 200))",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => browser.test.notifyPass())"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    [manager run];
+
+    for (NSString *testName in @[ @"unawaitedPassingAssertRejects", @"unawaitedPassingAssertResolves", @"unawaitedPassingAssertSafeResolve", @"unawaitedFailingAssertSafeResolve" ])
+        EXPECT_FALSE([manager.get().testResults[testName] boolValue]) << testName.UTF8String << " should have failed";
+
+    EXPECT_TRUE([manager.get().testResults[@"awaitedPassingAssertions"] boolValue]);
+    EXPECT_TRUE([manager.get().testResults[@"trailingTest"] boolValue]);
+}
+
+TEST(WKWebExtensionAPITest, AwaitedAssertionFailureOutsideTestFinishesRun)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"(async () => {",
+        @"  await browser.test.assertRejects(Promise.resolve({ key: 'Value' }), /Expected/, 'Promise should reject')",
+
+        @"  browser.test.notifyPass()",
+        @"})()"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+    manager.get().collectsFailures = YES;
+
+    // The failed await throws and skips notifyPass(), so this only returns because the failure finishes the run.
+    [manager run];
+
+    NSError *error;
+    EXPECT_FALSE([manager checkCollectedFailuresWithError:&error]);
+    EXPECT_TRUE([error.localizedDescription containsString:@"Promise should reject"]);
+}
+
+TEST(WKWebExtensionAPITest, AssertionFailureOutsideTestFinishesRun)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.test.assertEq(1, 2, 'Values should be equal')"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+    manager.get().collectsFailures = YES;
+
+    [manager run];
+
+    NSError *error;
+    EXPECT_FALSE([manager checkCollectedFailuresWithError:&error]);
+    EXPECT_TRUE([error.localizedDescription containsString:@"Values should be equal"]);
+}
+
+TEST(WKWebExtensionAPITest, UnawaitedAssertionFailsTheTestThatStartedIt)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"let settleAssertRejects",
+        @"let settleAssertResolves",
+
+        @"const tests = [",
+
+        @"  browser.test.addTest(async function unawaitedAssertRejects() {",
+        @"    browser.test.assertRejects(new Promise(resolve => settleAssertRejects = resolve))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function unrelatedTest() {",
+        @"    settleAssertRejects()",
+        @"    await new Promise(resolve => setTimeout(resolve, 50))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function unawaitedAssertResolves() {",
+        @"    browser.test.assertResolves(new Promise((resolve, reject) => settleAssertResolves = () => reject(new Error('Expected Error'))))",
+        @"  }),",
+
+        @"  browser.test.addTest(async function trailingTest() {",
+        @"    settleAssertResolves()",
+        @"    await new Promise(resolve => setTimeout(resolve, 50))",
+        @"  })",
+        @"]",
+
+        @"Promise.allSettled(tests).then(() => browser.test.notifyPass())"
+    ]);
+
+    auto manager = Util::loadExtension(manifest, @{ @"background.js": backgroundScript });
+
+    [manager run];
+
+    EXPECT_FALSE([manager.get().testResults[@"unawaitedAssertRejects"] boolValue]);
+    EXPECT_TRUE([manager.get().testResults[@"unrelatedTest"] boolValue]);
+    EXPECT_FALSE([manager.get().testResults[@"unawaitedAssertResolves"] boolValue]);
+    EXPECT_TRUE([manager.get().testResults[@"trailingTest"] boolValue]);
 }
 
 } // namespace TestWebKitAPI

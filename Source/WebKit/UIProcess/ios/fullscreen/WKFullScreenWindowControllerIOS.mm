@@ -64,6 +64,7 @@
 #import <pal/spi/cocoa/NSStringSPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <pal/spi/cocoa/URLFormattingSPI.h>
+#import <pal/system/ios/Device.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -82,10 +83,6 @@
 #endif
 
 #import "WebKitSwiftSoftLink.h"
-
-#if !HAVE(URL_FORMATTING)
-SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(LinkPresentation)
-#endif
 
 static constexpr Seconds DefaultWatchdogTimerInterval = 1_s;
 
@@ -172,12 +169,27 @@ enum FullScreenState : NSInteger {
     ExitingFullScreen,
 };
 
+static CGFloat baseScale()
+{
+#if PLATFORM(APPLETV)
+    if (PAL::deviceClassIsHomeView())
+        return 544. / 448;
+#endif
+    return 1;
+}
+
+static CGFloat baseMinimumEffectiveDeviceWidth()
+{
+#if PLATFORM(APPLETV)
+    if (PAL::deviceClassIsHomeView())
+        return 448;
+#endif
+    return 0;
+}
+
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKFullScreenWindowControllerIOSAdditions.mm>)
 #import <WebKitAdditions/WKFullScreenWindowControllerIOSAdditions.mm>
 #else
-static constexpr auto baseScale = 1;
-static constexpr auto baseMinimumEffectiveDeviceWidth = 0;
-
 #if PLATFORM(VISION)
 static void setLightspillEnabledForElementFullscreenLayer(CALayer *, bool) { }
 #endif
@@ -185,9 +197,9 @@ static void setLightspillEnabledForElementFullscreenLayer(CALayer *, bool) { }
 
 struct WKWebViewState {
     WebCore::FloatBoxExtent _savedWebPageObscuredContentInsets;
-    CGFloat _savedPageScale = baseScale;
+    CGFloat _savedPageScale = baseScale();
     CGFloat _savedViewScale = 1.0;
-    CGFloat _savedZoomScale = baseScale;
+    CGFloat _savedZoomScale = baseScale();
     CGFloat _savedContentZoomScale = 1;
     BOOL _savedContentInsetWasExternallyOverridden = NO;
     UIEdgeInsets _savedEdgeInset = UIEdgeInsetsZero;
@@ -202,7 +214,7 @@ struct WKWebViewState {
     std::optional<CGPoint> _savedContentOffset;
     BOOL _savedBouncesZoom = NO;
     BOOL _savedForceAlwaysUserScalable = NO;
-    CGFloat _savedMinimumEffectiveDeviceWidth = baseMinimumEffectiveDeviceWidth;
+    CGFloat _savedMinimumEffectiveDeviceWidth = baseMinimumEffectiveDeviceWidth();
     BOOL _savedHaveSetUnobscuredSafeAreaInsets = NO;
     UIEdgeInsets _savedUnobscuredSafeAreaInsets = UIEdgeInsetsZero;
     BOOL _savedHasOverriddenLayoutParameters = NO;
@@ -1424,6 +1436,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)exitFullScreen:(CompletionHandler<void()>&&)completionHandler
 {
+    if (_fullScreenState > WebKit::InFullScreen) {
+        OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER, _fullScreenState, " > InFullScreen, already exiting");
+        return completionHandler();
+    }
+
     [self _cancelWatchdogTimer];
 
     if (_fullScreenState == WebKit::NotInFullScreen) {
@@ -1894,16 +1911,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     NSString *EVOrganizationName = [self _EVOrganizationName];
     BOOL showsEVOrganizationName = [EVOrganizationName length] > 0;
 
-    NSString *domain = nil;
-
-#if HAVE(URL_FORMATTING)
-    domain = [url _lp_simplifiedDisplayString];
-#else
-    if (LinkPresentationLibrary())
-        domain = [url _lp_simplifiedDisplayString];
-    else
-        domain = WTF::userVisibleString(url);
-#endif
+    NSString *domain = [url _lp_simplifiedDisplayString];
 
     NSString *text = nil;
     if ([[url scheme] caseInsensitiveCompare:@"data"] == NSOrderedSame)
@@ -1937,7 +1945,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     OBJC_ALWAYS_LOG(OBJC_LOGIDENTIFIER);
     _inInteractiveDismiss = true;
-    [self requestExitFullScreen];
     [self _dismissFullscreenViewController:[] { }];
 }
 

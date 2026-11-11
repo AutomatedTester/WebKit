@@ -45,7 +45,7 @@ struct OpacityParameters {
 
     Parameter value;
 
-    static OpacityParameters LEGACY_NODELETE passthroughForInterpolation();
+    NODELETE static OpacityParameters passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return true; }
@@ -69,7 +69,7 @@ template<> struct ToStyle<CSS::Opacity> { auto operator()(const CSS::Opacity&, c
 // MARK: - Blending
 
 template<> struct Blending<OpacityParameters> {
-    auto blend(const OpacityParameters&, const OpacityParameters&, const BlendingContext&) -> OpacityParameters;
+    NODELETE OpacityParameters blend(const OpacityParameters&, const OpacityParameters&, const BlendingContext&);
 };
 
 // MARK: - Evaluation
@@ -78,7 +78,7 @@ template<> struct Evaluation<OpacityParameters, Ref<FilterEffect>> { auto operat
 
 // MARK: - Platform
 
-template<> struct ToPlatform<OpacityParameters> { auto operator()(const OpacityParameters&) -> Ref<FilterOperation>; };
+template<> struct ToPlatform<OpacityParameters> { NODELETE Ref<FilterOperation> operator()(const OpacityParameters&); };
 
 } // namespace Style
 } // namespace WebCore

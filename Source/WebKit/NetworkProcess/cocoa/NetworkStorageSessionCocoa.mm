@@ -32,6 +32,7 @@
 #import <WebCore/CookieJar.h>
 #import <WebCore/CookieStoreGetOptions.h>
 #import <WebCore/HTTPCookieAcceptPolicyCocoa.h>
+#import <WebCore/Quirks.h>
 #import <WebCore/ResourceRequest.h>
 #import <WebCore/SameSiteInfo.h>
 #import <algorithm>
@@ -342,7 +343,7 @@ void NetworkStorageSession::deleteCookies(const ClientOrigin& origin, Completion
     }, WTF::move(completionHandler));
 }
 
-void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly scriptWrittenCookiesOnly, CompletionHandler<void()>&& completionHandler)
+void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly scriptWrittenCookiesOnly, ExemptAllowlistedCookies exemptAllowlistedCookies, CompletionHandler<void()>&& completionHandler)
 {
     HashSet<String> hostnamesSet;
     for (auto& hostname : hostnames)
@@ -351,6 +352,10 @@ void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> ho
     deleteCookiesMatching([&](NSHTTPCookie* cookie) {
         if (!cookie.domain || (includeHttpOnlyCookies == IncludeHttpOnlyCookies::No && cookie.isHTTPOnly))
             return false;
+        if (exemptAllowlistedCookies == ExemptAllowlistedCookies::Yes && m_exemptAllowlistedCookiesFromITP) {
+            if (Quirks::shouldExemptCookieFromITPDataRemoval(cookie.name))
+                return false;
+        }
 #if ENABLE(JS_COOKIE_CHECKING)
         bool setInJS = [retainPtr([cookie properties]) valueForKey:@"SetInJavaScript"];
         if (scriptWrittenCookiesOnly == ScriptWrittenCookiesOnly::Yes && !setInJS)

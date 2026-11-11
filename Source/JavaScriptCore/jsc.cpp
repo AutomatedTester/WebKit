@@ -245,7 +245,7 @@ public:
     }
 
     std::span<const uint8_t> data() const { return m_data.span(); }
-    int32_t LEGACY_NODELETE index() const { return m_index; }
+    NODELETE int32_t index() const { return m_index; }
 
     // Every recipient worker gets this same Message and deserializes from it concurrently, which
     // is safe because the side channels (other than arrayBufferContents) are read-only.
@@ -282,7 +282,7 @@ public:
     
     void enqueue(const AbstractLocker&, RefPtr<Message>);
     RefPtr<Message> dequeue();
-    bool LEGACY_NODELETE isMain() const { return m_isMain; }
+    NODELETE bool isMain() const { return m_isMain; }
 
     static Worker& current();
 
@@ -405,11 +405,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionDisassembleBase64);
 
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateHeapBigInt);
-#if USE(BIGINT32)
-static JSC_DECLARE_HOST_FUNCTION(functionCreateBigInt32);
-#endif
-static JSC_DECLARE_HOST_FUNCTION(functionUseBigInt32);
-static JSC_DECLARE_HOST_FUNCTION(functionIsBigInt32);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHeapBigInt);
 static JSC_DECLARE_HOST_FUNCTION(functionIs8BitString);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateNonRopeNonAtomString);
@@ -428,6 +423,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
 static JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateWeakHolder);
+static JSC_DECLARE_HOST_FUNCTION(functionSetWeakHolderValue);
 static JSC_DECLARE_HOST_FUNCTION(functionResetMemoryPeak);
 static JSC_DECLARE_HOST_FUNCTION(functionAddressOf);
 static JSC_DECLARE_HOST_FUNCTION(functionVersion);
@@ -626,7 +623,7 @@ void StopWatch::stop()
     m_stopTime = MonotonicTime::now();
 }
 
-long LEGACY_NODELETE StopWatch::getElapsedMS()
+NODELETE long StopWatch::getElapsedMS()
 {
     return (m_stopTime - m_startTime).millisecondsAs<long>();
 }
@@ -669,7 +666,7 @@ public:
         return Structure::create(vm, nullptr, prototype, TypeInfo(GlobalObjectType, StructureFlags), info());
     }
 
-    static RuntimeFlags LEGACY_NODELETE javaScriptRuntimeFlags(const JSGlobalObject*) { return RuntimeFlags::createAllEnabled(); }
+    NODELETE static RuntimeFlags javaScriptRuntimeFlags(const JSGlobalObject*) { return RuntimeFlags::createAllEnabled(); }
 
     static void getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
     {
@@ -700,7 +697,7 @@ private:
         }
 
         bool contains(UniquedStringImpl* name) const { return m_names.contains(name); }
-        const UncheckedKeyHashSet<UniquedStringImpl*>& LEGACY_NODELETE names() const { return m_names; }
+        NODELETE const UncheckedKeyHashSet<UniquedStringImpl*>& names() const { return m_names; }
 
     private:
         Vector<AtomString> m_strings; // To keep the UniqueStringImpls alive.
@@ -777,6 +774,8 @@ private:
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
         addFunction(vm, "memoryUsageStatistics"_s, functionMemoryUsageStatistics, 0);
         addFunction(vm, "MemoryFootprint"_s, functionCreateMemoryFootprint, 0);
+        addFunction(vm, "createWeakHolder"_s, functionCreateWeakHolder, 1);
+        addFunction(vm, "setWeakHolderValue"_s, functionSetWeakHolderValue, 2);
         addFunction(vm, "resetMemoryPeak"_s, functionResetMemoryPeak, 0);
         addFunction(vm, "addressOf"_s, functionAddressOf, 1);
         addFunction(vm, "version"_s, functionVersion, 1);
@@ -824,11 +823,6 @@ private:
 
         addFunction(vm, "createGlobalObject"_s, functionCreateGlobalObject, 0);
         addFunction(vm, "createHeapBigInt"_s, functionCreateHeapBigInt, 1);
-#if USE(BIGINT32)
-        addFunction(vm, "createBigInt32"_s, functionCreateBigInt32, 1);
-#endif
-        addFunction(vm, "useBigInt32"_s, functionUseBigInt32, 0);
-        addFunction(vm, "isBigInt32"_s, functionIsBigInt32, 1);
         addFunction(vm, "isHeapBigInt"_s, functionIsHeapBigInt, 1);
 
         addFunction(vm, "is8BitString"_s, functionIs8BitString, 1);
@@ -1064,7 +1058,7 @@ private:
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
 static bool supportsRichSourceInfo = true;
-static bool LEGACY_NODELETE shellSupportsRichSourceInfo(const JSGlobalObject*)
+NODELETE static bool shellSupportsRichSourceInfo(const JSGlobalObject*)
 {
     return supportsRichSourceInfo;
 }
@@ -1118,7 +1112,7 @@ JSC_DEFINE_CUSTOM_SETTER(testCustomValueSetter, (JSGlobalObject* lexicalGlobalOb
     return GlobalObject::testCustomSetterImpl(lexicalGlobalObject, thisObject, encodedValue, "_testCustomValueSetter"_s);
 }
 
-static char16_t LEGACY_NODELETE pathSeparator()
+NODELETE static char16_t pathSeparator()
 {
 #if OS(WINDOWS)
     return '\\';
@@ -1171,7 +1165,7 @@ static URL currentWorkingDirectory()
 // FIXME: We may wish to support module specifiers beginning with a (back)slash on Windows. We could either:
 // - align with V8 and SM:  treat '/foo' as './foo'
 // - align with PowerShell: treat '/foo' as 'C:/foo'
-static bool LEGACY_NODELETE isAbsolutePath(StringView path)
+NODELETE static bool isAbsolutePath(StringView path)
 {
 #if OS(WINDOWS)
     // Just look for local drives like C:\.
@@ -1292,7 +1286,7 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
 }
 
 template<typename Vector>
-static void LEGACY_NODELETE convertShebangToJSComment(Vector& buffer)
+NODELETE static void convertShebangToJSComment(Vector& buffer)
 {
     if (buffer.size() >= 2) {
         if (buffer[0] == '#' && buffer[1] == '!')
@@ -1511,7 +1505,7 @@ private:
     {
     }
 
-    bool LEGACY_NODELETE cacheEnabled() const { return m_cacheEnabled; }
+    NODELETE bool cacheEnabled() const { return m_cacheEnabled; }
 
     mutable RefPtr<CachedBytecode> m_cachedBytecode;
     const bool m_cacheEnabled;
@@ -2007,7 +2001,7 @@ class JSCMemoryFootprint : public JSDestructibleObject {
     using Base = JSDestructibleObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2054,6 +2048,91 @@ private:
 };
 
 const ClassInfo JSCMemoryFootprint::s_info = { "MemoryFootprint"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCMemoryFootprint) };
+
+// Holds its value in a Weak<> but keeps it alive by visiting it, as WebCore's JSValueInWrappedObject
+// does. Concurrent markers read the Weak<> while the mutator may replace it.
+class JSCWeakHolder final : public JSDestructibleObject {
+    using Base = JSDestructibleObject;
+public:
+    template<typename CellType, SubspaceAccess>
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static JSCWeakHolder* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        Structure* structure = createStructure(vm, globalObject, jsNull());
+        JSCWeakHolder* holder = new (NotNull, allocateCell<JSCWeakHolder>(vm)) JSCWeakHolder(vm, structure);
+        holder->finishCreation(vm);
+        return holder;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        static_cast<JSCWeakHolder*>(cell)->JSCWeakHolder::~JSCWeakHolder();
+    }
+
+    void setValue(VM& vm, JSValue value)
+    {
+        if (!value.isCell()) {
+            m_value.clear();
+            return;
+        }
+        Weak<JSCell> weak { value.asCell() };
+        WTF::storeStoreFence();
+        m_value = WTF::move(weak);
+        vm.writeBarrier(this, value);
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+private:
+    JSCWeakHolder(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    { }
+
+    Weak<JSCell> m_value;
+};
+
+const ClassInfo JSCWeakHolder::s_info = { "WeakHolder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCWeakHolder) };
+
+template<typename Visitor>
+void JSCWeakHolder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSCWeakHolder>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_value);
+}
+
+DEFINE_VISIT_CHILDREN(JSCWeakHolder);
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateWeakHolder, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    JSCWeakHolder* holder = JSCWeakHolder::create(vm, globalObject);
+    holder->setValue(vm, callFrame->argument(0));
+    return JSValue::encode(holder);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetWeakHolderValue, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* holder = dynamicDowncast<JSCWeakHolder>(callFrame->argument(0));
+    if (!holder)
+        return throwVMTypeError(globalObject, scope, "Expected a WeakHolder"_s);
+    holder->setValue(vm, callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -2394,7 +2473,7 @@ class JSFileDescriptor : public JSDestructibleObject {
     using Base = JSDestructibleObject;
 public:
     template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* LEGACY_NODELETE subspaceFor(VM& vm)
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
     {
         return &vm.destructibleObjectSpace();
     }
@@ -2425,7 +2504,7 @@ public:
         static_cast<JSFileDescriptor*>(thisObject)->~JSFileDescriptor();
     }
 
-    FILE* LEGACY_NODELETE descriptor() const { return m_descriptor; }
+    NODELETE FILE* descriptor() const { return m_descriptor; }
 
     DECLARE_INFO;
 
@@ -2711,6 +2790,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarGlobalObjectFor, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
+constexpr unsigned maxLiveAgentsInFuzzerMode = 64;
+static std::atomic<unsigned> numLiveAgents;
+
 JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -2739,8 +2821,14 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
         workerPath = callFrame->argument(1).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
-    
-    Thread::create(
+
+    unsigned previousLiveAgents = numLiveAgents.fetch_add(1);
+    if (Options::useFuzzerMode() && previousLiveAgents >= maxLiveAgentsInFuzzerMode) {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Too many live agents"_s)));
+    }
+
+    RefPtr thread = Thread::tryCreate(
         "JSC Agent"_s,
         [sourceCode = WTF::move(sourceCode).isolatedCopy(), workerPath = WTF::move(workerPath).isolatedCopy(), &didStartLock, &didStartCondition, &didStart] () {
             CommandLine commandLine(CommandLine::CommandLineForWorkers);
@@ -2764,8 +2852,14 @@ JSC_DEFINE_HOST_FUNCTION(functionDollarAgentStart, (JSGlobalObject* globalObject
                     if (!success)
                         exitProcess(EXIT_FAILURE);
                 });
-        })->detach();
-    
+            numLiveAgents.fetch_sub(1);
+        });
+    if (!thread) [[unlikely]] {
+        numLiveAgents.fetch_sub(1);
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope, "Failed to create agent thread"_s));
+    }
+    thread->detach();
+
     {
         Locker locker { didStartLock };
         while (!didStart)
@@ -3191,63 +3285,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateHeapBigInt, (JSGlobalObject* globalObject
     JSValue argument = callFrame->argument(0);
     JSValue bigInt = argument.toBigInt(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-#if USE(BIGINT32)
-    if (bigInt.isHeapBigInt())
-        return JSValue::encode(bigInt);
-    ASSERT(bigInt.isBigInt32());
-    int32_t value = bigInt.bigInt32AsInt32();
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
-#else
     return JSValue::encode(bigInt);
-#endif
-}
-
-#if USE(BIGINT32)
-JSC_DEFINE_HOST_FUNCTION(functionCreateBigInt32, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue argument = callFrame->argument(0);
-    JSValue bigIntValue = argument.toBigInt(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (bigIntValue.isBigInt32())
-        return JSValue::encode(bigIntValue);
-    ASSERT(bigIntValue.isHeapBigInt());
-    JSBigInt* bigInt = uncheckedDowncast<JSBigInt>(bigIntValue);
-    if (!bigInt->length())
-        return JSValue::encode(jsBigInt32(0));
-    if (bigInt->length() == 1) {
-        JSBigInt::Digit digit = bigInt->digit(0);
-        if (bigInt->sign()) {
-            if (digit <= static_cast<uint64_t>(-static_cast<int64_t>(INT32_MIN)))
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(-static_cast<int64_t>(digit))));
-        } else {
-            if (digit <= INT32_MAX)
-                return JSValue::encode(jsBigInt32(static_cast<int32_t>(digit)));
-        }
-    }
-    throwTypeError(globalObject, scope, "Out of range of BigInt32"_s);
-    return { };
-}
-#endif
-
-JSC_DEFINE_HOST_FUNCTION(functionUseBigInt32, (JSGlobalObject*, CallFrame*))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(true));
-#else
-    return JSValue::encode(jsBoolean(false));
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionIsBigInt32, (JSGlobalObject*, CallFrame* callFrame))
-{
-#if USE(BIGINT32)
-    return JSValue::encode(jsBoolean(callFrame->argument(0).isBigInt32()));
-#else
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsBoolean(false));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionIsHeapBigInt, (JSGlobalObject*, CallFrame* callFrame))
@@ -3717,7 +3755,7 @@ static void startTimeoutTimer(Seconds duration)
 // jsc shell test timeouts (i.e. crashDueToJSCShellTimeout is present in crash stack
 // traces) from other crashes.
 NO_RETURN_DUE_TO_CRASH NEVER_INLINE void crashDueToJSCShellTimeout();
-void LEGACY_NODELETE crashDueToJSCShellTimeout()
+NODELETE void crashDueToJSCShellTimeout()
 {
     CRASH();
 }
@@ -4262,7 +4300,7 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
 {
     Options::AllowUnfinalizedAccessScope scope;
     Options::initialize([] {
-        Options::useSharedArrayBuffer() = true;
+        Options::alwaysUseSharedArrayBuffer() = true;
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(APPLETV) && !PLATFORM(WATCHOS)
         Options::crashIfCantAllocateJITMemory() = true;
 #endif

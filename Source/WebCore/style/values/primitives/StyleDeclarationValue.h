@@ -52,11 +52,11 @@ struct DeclarationValue {
 // MARK: - Conversion
 
 template<> struct ToCSS<DeclarationValue> {
-    auto operator()(const DeclarationValue&, const Style::ComputedStyle&) -> CSS::DeclarationValue;
+    NODELETE CSS::DeclarationValue operator()(const DeclarationValue&, const Style::ComputedStyle&);
 };
 
 template<> struct ToStyle<CSS::DeclarationValue> {
-    auto operator()(const CSS::DeclarationValue&, const BuilderState&) -> DeclarationValue;
+    NODELETE DeclarationValue operator()(const CSS::DeclarationValue&, const BuilderState&);
 };
 
 // MARK: - Serialization

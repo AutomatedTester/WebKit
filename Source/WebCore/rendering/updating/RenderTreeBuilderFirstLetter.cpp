@@ -28,7 +28,6 @@
 #include "NodeInlines.h"
 #include "RenderBlock.h"
 #include "RenderButton.h"
-#include "RenderInline.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGText.h"
 #include "RenderTable.h"
@@ -37,8 +36,10 @@
 #include "RenderView.h"
 #include "StyleComputedStyle+SettersInlines.h"
 #include "StyleChange.h"
+#include "Text.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CharacterProperties.h>
+#include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
@@ -118,7 +119,7 @@ static inline bool isPrecedingTypographicSpaceForFirstLetter(char32_t c)
 }
 
 // https://drafts.csswg.org/css-text/#word-separator
-static inline bool isWordSeparator(char32_t c)
+NODELETE static inline bool isWordSeparator(char32_t c)
 {
     switch (c) {
     case ' ':
@@ -149,7 +150,7 @@ static inline bool shouldSkipBeforeFirstLetter(char32_t c)
         || isPrecedingTypographicSpaceForFirstLetter(c);
 }
 
-static bool isDutchIJDigraph(StringView text, unsigned offset)
+NODELETE static bool isDutchIJDigraph(StringView text, unsigned offset)
 {
     if (offset + 1 >= text.length())
         return false;
@@ -309,7 +310,7 @@ void RenderTreeBuilder::FirstLetter::updateStyle(RenderBlock& firstLetterBlock, 
     // The first-letter renderer needs to be replaced. Create a new renderer of the right type.
     RenderPtr<RenderBoxModelObject> newFirstLetter;
     if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     else
         newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();
@@ -336,21 +337,17 @@ void RenderTreeBuilder::FirstLetter::updateStyle(RenderBlock& firstLetterBlock, 
 void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChild)
 {
     RenderElement* textContentParent = currentTextChild.parent();
-    RenderElement* firstLetterContainer = nullptr;
-    if (auto* wrapperInlineForDisplayContents = currentTextChild.inlineWrapperForDisplayContents())
-        firstLetterContainer = wrapperInlineForDisplayContents->parent();
-    else
-        firstLetterContainer = textContentParent;
+    RenderElement* firstLetterContainer = textContentParent;
     if (!firstLetterContainer)
         return;
-    
+
     auto pseudoStyle = styleForFirstLetter(*firstLetterContainer);
     if (!pseudoStyle)
         return;
 
     RenderPtr<RenderBoxModelObject> newFirstLetter;
     if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     else
         newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();
@@ -368,8 +365,14 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
 
         RefPtr textNode = currentTextChild.textNode();
         WeakPtr beforeChild = currentTextChild.nextSibling();
-        WeakPtr inlineWrapperForDisplayContents = currentTextChild.inlineWrapperForDisplayContents();
-        auto hasInlineWrapperForDisplayContents = inlineWrapperForDisplayContents.get();
+        std::optional<Style::ComputedStyle> displayContentsParentStyle;
+        if (currentTextChild.inheritsStyleFromDisplayContentsParent())
+            displayContentsParentStyle = Style::ComputedStyle::clone(currentTextChild.style());
+        auto quoteType = [&] -> std::optional<QuoteType> {
+            if (CheckedPtr textFragment = dynamicDowncast<RenderTextFragment>(currentTextChild))
+                return textFragment->quoteType();
+            return { };
+        }();
         m_builder.destroy(currentTextChild);
 
         // Construct a text fragment for the text after the first letter.
@@ -378,12 +381,16 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
         if (textNode) {
             newRemainingText = createRenderer<RenderTextFragment>(*textNode, oldText, length, oldText.length() - length);
             textNode->setRenderer(newRemainingText.get());
-        } else
+        } else {
             newRemainingText = createRenderer<RenderTextFragment>(protect(m_builder.m_view.document()), oldText, length, oldText.length() - length);
+            // Like the text node above, the quote moves over to the remaining text.
+            if (quoteType)
+                newRemainingText->setQuoteTypeForRemainingText(*quoteType, oldText);
+        }
 
         RenderTextFragment& remainingText = *newRemainingText;
-        ASSERT_UNUSED(hasInlineWrapperForDisplayContents, hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContents.get());
-        remainingText.setInlineWrapperForDisplayContents(inlineWrapperForDisplayContents.get());
+        if (displayContentsParentStyle)
+            remainingText.setStyleInheritedFromDisplayContentsParent(WTF::move(*displayContentsParentStyle));
         m_builder.attach(*textContentParent, WTF::move(newRemainingText), beforeChild.get());
 
         // FIXME: Make attach the final step so that we don't need to keep firstLetter around.

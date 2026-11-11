@@ -206,6 +206,16 @@ enum AutoplayPolicy {
 
 [
     ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    JSGenerateToJSObject,
+] dictionary BackgroundGradientCacheEntry {
+    required unrestricted float width;
+    required unrestricted float height;
+    required boolean hasColorFilter;
+    required unsigned long long patternBufferIdentifier;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
 ] dictionary FullscreenInsets {
     float top = 0;
     float left = 0;
@@ -449,6 +459,20 @@ enum AV1ConfigurationRange {
 [
     ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
     JSGenerateToJSObject,
+] dictionary InlineLayoutInfo {
+    // Increases with every inline layout of any block container. Compare it before and after a change to see if this block laid out its inline content.
+    unsigned long long sequenceNumber = 0;
+    DOMString range = "";
+    // The layout reused the line built while computing the maximum intrinsic width.
+    boolean isFromMaximumIntrinsicWidthLine = false;
+    unsigned long laidOutLineCount = 0;
+    // Lines kept from the previous layout.
+    unsigned long reusedLineCount = 0;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    JSGenerateToJSObject,
 ] dictionary PDFAnnotationRect {
     float x = 0;
     float y = 0;
@@ -472,11 +496,6 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     unsigned long long imageBufferForCanvasLimit = 0;
 };
 
-enum RenderingMode {
-    "Unaccelerated",
-    "Accelerated"
-};
-
 enum ContentsFormat {
     "RGBA8",
 #if defined(ENABLE_PIXEL_FORMAT_RGB10)
@@ -485,6 +504,28 @@ enum ContentsFormat {
 #if defined(ENABLE_PIXEL_FORMAT_RGBA16F)
     "RGBA16F",
 #endif
+};
+
+[Conditional=WEBGL&VIDEO] enum WebGLVideoUploadPath {
+    "default",
+    "software",
+    "hardware"
+};
+
+enum LayerType {
+    "primary",
+    "backdrop"
+};
+
+[
+    Conditional=WEBGL&VIDEO,
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    JSGenerateToJSObject,
+] dictionary WebGLVideoUploadRecord {
+    DOMString path;
+    DOMString reason;
+    DOMString pixelFormat;
+    unsigned long long sequence = 0;
 };
 
 [
@@ -558,6 +599,7 @@ enum ContentsFormat {
     float usedOutlineOffset(Element element);
 
     DOMString computedAppleColorFilter(Element element);
+    [Conditional=AX_CUSTOM_COLOR_MODE] undefined setAXCustomColorModeElementQuirksForTesting(DOMString forceFilterSelector, DOMString preserveAuthoredColorsSelector);
     DOMString usedBackgroundColor(Element element);
 
     Node ensureUserAgentShadowRoot(Element host);
@@ -651,6 +693,8 @@ enum ContentsFormat {
 
     DOMString documentBackgroundColor();
 
+    DOMString textScaleMetaMode();
+
     DOMString paintedCaretColor();
 
     boolean displayP3Available();
@@ -700,6 +744,7 @@ enum ContentsFormat {
     Range subrange(Range range, unsigned long rangeLocation, unsigned long rangeLength);
     Range? rangeForDictionaryLookupAtLocation(long x, long y);
     Range? rangeOfStringNearLocation(Range range, DOMString text, long targetOffset);
+    unsigned long computeNodeIndexCount();
     sequence<TextIteratorState> statesOfTextIterator(Range range);
 
     DOMString textFragmentDirectiveForRange(Range range);
@@ -790,6 +835,7 @@ enum ContentsFormat {
     unsigned long imageBlankDrawCount(HTMLImageElement element);
     DOMString imageLastDecodingOptions(HTMLImageElement element);
     unsigned long imageCachedSubimageCreateCount(HTMLImageElement element);
+    sequence<BackgroundGradientCacheEntry> backgroundGradientCache(Element element);
     unsigned long remoteImagesCountForTesting();
     undefined setAsyncDecodingEnabledForTesting(HTMLImageElement element, boolean enabled);
     undefined setForceUpdateImageDataEnabledForTesting(HTMLImageElement element, boolean enabled);
@@ -831,7 +877,9 @@ enum ContentsFormat {
     const unsigned short LAYER_TREE_INCLUDES_ROOT_LAYERS = 4096;
     DOMString layerTreeAsText(Document document, optional unsigned short flags = 0);
 
-    unsigned long long layerIDForElement(Element element);
+    DOMString viewTransitionOldCaptureState(Document document, [AtomString] DOMString name);
+
+    unsigned long long layerIDForElement(Element element, optional LayerType layerType = "primary");
     unsigned long long horizontalScrollbarLayerID(optional Node? node = null);
     unsigned long long verticalScrollbarLayerID(optional Node? node = null);
     DOMRect horizontalScrollbarFrameRect(optional Node? node = null);
@@ -994,6 +1042,10 @@ enum ContentsFormat {
     undefined startTrackingLayoutUpdates();
     unsigned long layoutUpdateCount();
 
+    // Inline layouts record their info only while enabled. Reset between tests.
+    undefined setInlineLayoutInfoCollectionEnabled(boolean enabled);
+    InlineLayoutInfo lastInlineLayoutInfo(Element element);
+
     undefined startTrackingRenderLayerPositionUpdates();
     unsigned long renderLayerPositionUpdateCount();
 
@@ -1002,6 +1054,9 @@ enum ContentsFormat {
 
     undefined startTrackingRenderingUpdates();
     unsigned long renderingUpdateCount();
+
+    unsigned long sentFrameViewportInfoCount();
+    unsigned long sentFrameGeometryCount();
 
     double? timeToNextRenderingUpdate();
 
@@ -1140,6 +1195,8 @@ enum ContentsFormat {
     // allowTestOnlyIPC test option, otherwise the GPU message is rejected and the WebContent process is killed.
     [Conditional=VIDEO] undefined postSystemRemoteControlCommand(DOMString command, optional unrestricted float argument = 0);
     [Conditional=VIDEO] undefined activeAudioRouteDidChange(boolean shouldPause);
+    [Conditional=VIDEO] undefined simulateActiveOutputDeviceChange();
+    [Conditional=VIDEO] boolean activeVideoRouteSupportsAirPlayVideo();
     [Conditional=VIDEO] undefined beginAudioSessionInterruption();
     [Conditional=VIDEO] undefined endAudioSessionInterruption();
     [Conditional=VIDEO] undefined clearAudioSessionInterruptionFlag();
@@ -1272,6 +1329,12 @@ enum ContentsFormat {
     [Conditional=WEBGL] RequestedGPU requestedGPU(WebGL2RenderingContext context);
     [Conditional=WEBGL] sequence<long> webglMaxDrawingBufferSize(WebGLRenderingContext context);
     [Conditional=WEBGL] sequence<long> webglMaxDrawingBufferSize(WebGL2RenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglDefaultFramebufferAllocatedSize(WebGLRenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglDefaultFramebufferAllocatedSize(WebGL2RenderingContext context);
+    [Conditional=WEBGL&VIDEO] undefined setWebGLVideoUploadPath(WebGLRenderingContext context, WebGLVideoUploadPath path);
+    [Conditional=WEBGL&VIDEO] undefined setWebGLVideoUploadPath(WebGL2RenderingContext context, WebGLVideoUploadPath path);
+    [Conditional=WEBGL&VIDEO] WebGLVideoUploadRecord? webglLastVideoUpload(WebGLRenderingContext context);
+    [Conditional=WEBGL&VIDEO] WebGLVideoUploadRecord? webglLastVideoUpload(WebGL2RenderingContext context);
 
     undefined setPageVisibility(boolean isVisible);
     undefined setPageIsFocused(boolean isFocused);
@@ -1398,6 +1461,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] boolean elementIsActiveNowPlayingSession(HTMLMediaElement element);
     [Conditional=VIDEO] Promise<boolean> elementIsActiveNowPlayingSessionInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] Promise<boolean> elementIsRemoteCommandTargetInGPUProcess(HTMLMediaElement element);
+    [Conditional=VIDEO] Promise<DOMRect> hostedVideoLayerBoundsInGPUProcess(HTMLMediaElement element);
     [Conditional=VIDEO] attribute double nowPlayingUpdateInterval;
 
     [Conditional=VIDEO] HTMLMediaElement? bestMediaElementForRemoteControls(PlaybackControlsPurpose purpose);
@@ -1459,6 +1523,7 @@ enum ContentsFormat {
     undefined addPrefetchLoadEventListener(HTMLLinkElement link, EventListener? callback);
 
     [Conditional=WEB_AUTHN] undefined setMockWebAuthenticationConfiguration(MockWebAuthenticationConfiguration configuration);
+    [Conditional=PHONE_NUMBER_POSSESSION] undefined setMockPhoneNumberPossessionConfiguration(MockPhoneNumberPossessionConfiguration configuration);
 
     InternalsMapLike createInternalsMapLike();
     InternalsSetLike createInternalsSetLike();
@@ -1468,6 +1533,7 @@ enum ContentsFormat {
     boolean hasSandboxMachLookupAccessToGlobalName(DOMString process, DOMString service);
     boolean hasSandboxMachLookupAccessToXPCServiceName(DOMString process, DOMString service);
     boolean hasSandboxIOKitOpenAccessToClass(DOMString process, DOMString ioKitClass);
+    boolean isIOKitAvailable();
     boolean hasSandboxUnixSyscallAccess(DOMString process, unsigned long syscall);
 
 #if defined(ENABLE_LOGD_BLOCKING_IN_WEBCONTENT) && ENABLE_LOGD_BLOCKING_IN_WEBCONTENT
@@ -1492,6 +1558,8 @@ enum ContentsFormat {
     long readPreferenceInteger(DOMString domain, DOMString key);
     DOMString encodedPreferenceValue(DOMString domain, DOMString key);
 
+    undefined setPresentationIntentHTMLInterchangeEnabled(boolean enabled);
+
     boolean supportsPictureInPicture();
 
     boolean isRemoteUIAppForAccessibility();
@@ -1512,14 +1580,17 @@ enum ContentsFormat {
     [Conditional=ENCRYPTED_MEDIA] unsigned long mediaKeySessionInternalInstanceSessionObjectRefCount(MediaKeySession session);
 
     undefined setContentSizeCategory(ContentSizeCategory category);
+    undefined setTextScaleFactor(float textScaleFactor);
 
     [Conditional=TELEPHONE_NUMBER_DETECTION] unsigned long telephoneNumberRangesChangedCount();
+    [Conditional=SERVICE_CONTROLS] undefined setHasRelevantSelectionServicesForTesting(boolean hasServices);
 
     [Conditional=ATTACHMENT_ELEMENT, Conditional=SERVICE_CONTROLS] boolean hasImageControls(HTMLImageElement element);
     [Conditional=ATTACHMENT_ELEMENT] DOMString attachmentElementShadowUserAgentStyleSheet();
 
     [Conditional=MEDIA_SESSION] double currentMediaSessionPosition(MediaSession session);
     [Conditional=MEDIA_SESSION] undefined sendMediaSessionAction(MediaSession session, MediaSessionActionDetails actionDetails);
+    [Conditional=MEDIA_SESSION&MEDIA_SESSION_CALL_TO_ACTION] CallToActionLabel? mediaSessionCallToActionLabel(MediaSession session);
     [Conditional=MEDIA_SESSION&WEB_CODECS] Promise<WebCodecsVideoFrame> loadArtworkImage(DOMString url);
     [Conditional=MEDIA_SESSION] sequence<DOMString> platformSupportedCommands();
 
@@ -1572,6 +1643,7 @@ enum ContentsFormat {
     undefined unlockPDFDocumentForTesting(Element element, DOMString password);
     boolean sendEditingCommandToPDFForTesting(Element element, DOMString commandName, optional DOMString argument = "");
     sequence<DOMString> pdfContextMenuItemTitlesForTesting(Element element, long x, long y);
+    DOMRect pdfBoundsOnScreenForTesting(Element element);
 
     readonly attribute DOMString defaultSpatialTrackingLabel;
 
@@ -1585,6 +1657,8 @@ enum ContentsFormat {
     undefined setSubframeURLForQuirks(DOMString urlString);
     undefined setTopDocumentHostForQuirks(DOMString host);
     sequence<DOMString> activeQuirks();
+    sequence<DOMString> activeQuirkNames();
+    [CallWith=CurrentGlobalObject] undefined setQuirkTableForTesting(any table);
 
     [CallWith=CurrentGlobalObject] ReadableStream readableStreamFromMessagePort(MessagePort port);
     [CallWith=CurrentGlobalObject] WritableStream writableStreamFromMessagePort(MessagePort port);
@@ -1600,6 +1674,8 @@ enum ContentsFormat {
     [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForModel(HTMLModelElement model);
     [Conditional=SPATIAL_PORTAL] sequence<unrestricted double>? spatialPortalResolvedTransform(Element element);
     [Conditional=SPATIAL_PORTAL] DOMString effectiveEnvironmentMap(Element element);
+
+    [Conditional=AX_CUSTOM_COLOR_MODE, CallWith=CurrentDocument] boolean isAXCustomColorModeActive();
 
     [Conditional=CONNECTED_VOLUMETRIC_SCENE] DOMString volumetricScenePresentationMode(Element element);
 

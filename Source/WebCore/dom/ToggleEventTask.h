@@ -42,7 +42,7 @@ struct ToggleEventData {
 
 class ToggleEventTask final: public RefCounted<ToggleEventTask> {
 public:
-    static Ref<ToggleEventTask> create(Element&);
+    NODELETE static Ref<ToggleEventTask> create(Element&);
 
     void queue(ToggleState oldState, ToggleState newState, Element* source);
 

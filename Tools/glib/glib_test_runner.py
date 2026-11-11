@@ -15,6 +15,7 @@
 # the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
 # Boston, MA 02110-1301, USA.
 
+import ctypes
 import errno
 import os
 import select
@@ -22,7 +23,7 @@ import socket
 import struct
 import subprocess
 import sys
-from signal import alarm, signal, SIGALRM
+from signal import alarm, signal, SIGALRM, SIGKILL
 from io import BytesIO
 
 
@@ -47,8 +48,21 @@ from io import BytesIO
 SETUP_SUBTEST_STR = 'beforeAll'
 SHUTDOWN_FAILED_STR = 'afterAll'
 
+EXIT_POLL_INTERVAL_SECONDS = 1
+
 class TestTimeout(Exception):
     pass
+
+
+PR_SET_PDEATHSIG = 1
+
+
+def _die_with_runner():
+    ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, SIGKILL)
+
+
+# Run test programs in their own session, dying with the runner (Linux only).
+ISOLATED_SESSION_ARGS = dict(start_new_session=True, preexec_fn=_die_with_runner) if sys.platform.startswith('linux') else {}
 
 
 class Message(object):
@@ -105,6 +119,7 @@ class GLibTestRunner(object):
         self._slow_timeout = slow_timeout
 
         self._stderr_fd = None
+        self._stderr_chunks = []
         self._subtest = None
         self._subtest_messages = []
         self._results = {}
@@ -129,16 +144,26 @@ class GLibTestRunner(object):
         elif message.log_type == LOG_MESSAGE:
             self._subtest_message([message.strings[0]])
 
-    def _read_from_pipe(self, pipe_r):
+    def _read_from_pipe(self, pipe_r, process):
         data = b''
-        read_set = [pipe_r]
-        while read_set:
+        read_set = [pipe_r, self._stderr_fd]
+        while pipe_r in read_set:
             try:
-                rlist, _, _ = select.select(read_set, [], [])
+                rlist, _, _ = select.select(read_set, [], [], EXIT_POLL_INTERVAL_SECONDS)
             except select.error as e:
                 if e.args[0] == errno.EINTR:
                     continue
                 raise
+
+            if not rlist and process.poll() is not None:
+                break
+
+            if self._stderr_fd in rlist:
+                buffer = os.read(self._stderr_fd, 4096)
+                if not buffer:
+                    read_set.remove(self._stderr_fd)
+                else:
+                    self._stderr_chunks.append(buffer)
 
             if pipe_r in rlist:
                 buffer = os.read(pipe_r, 4096)
@@ -151,7 +176,8 @@ class GLibTestRunner(object):
                     self._process_message(message)
 
     def _read_from_stderr(self, fd):
-        chunks = []
+        chunks = self._stderr_chunks
+        self._stderr_chunks = []
         read_set = [fd]
         while True:
             try:
@@ -265,14 +291,15 @@ class GLibTestRunner(object):
         if not self._results:
             sys.stdout.write('TEST: %s...\n' % self._test_binary)
             sys.stdout.flush()
-        p = subprocess.Popen(command, stderr=subprocess.PIPE, env=env, pass_fds=[pipe_w])
+        p = subprocess.Popen(command, stderr=subprocess.PIPE, env=env, pass_fds=[pipe_w], **ISOLATED_SESSION_ARGS)
         self._stderr_fd = p.stderr.fileno()
+        self._stderr_chunks = []
         os.close(pipe_w)
 
         need_restart = False
 
         try:
-            self._read_from_pipe(pipe_r)
+            self._read_from_pipe(pipe_r, p)
             p.wait()
         except TestTimeout:
             self._subtest_end(0, did_timeout=True)

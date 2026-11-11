@@ -29,6 +29,10 @@
 #include "SessionState.h"
 #include "WebBackForwardListItem.h"
 #include "WebFrameProxy.h"
+#include "WebPageProxy.h"
+#include "WebPreferences.h"
+#include "WebProcessProxy.h"
+#include <WebCore/SecurityOrigin.h>
 #include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
@@ -93,6 +97,28 @@ WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemForFrameID(Fr
     return nullptr;
 }
 
+WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemForFrameItemID(BackForwardFrameItemIdentifier frameItemID)
+{
+    if (m_identifier == frameItemID)
+        return this;
+    for (auto& child : m_children) {
+        if (auto* childFrameItem = child->childItemForFrameItemID(frameItemID))
+            return childFrameItem;
+    }
+    return nullptr;
+}
+
+bool WebBackForwardListFrameItem::containsItemSequenceNumber(int64_t itemSequenceNumber) const
+{
+    if (m_frameState->itemSequenceNumber == itemSequenceNumber)
+        return true;
+    for (auto& child : m_children) {
+        if (child->containsItemSequenceNumber(itemSequenceNumber))
+            return true;
+    }
+    return false;
+}
+
 WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemAtIndex(uint64_t index)
 {
     if (index >= m_children.size())
@@ -133,15 +159,24 @@ size_t WebBackForwardListFrameItem::insertionIndexForChild(std::optional<WebCore
 {
     RefPtr frame = WebFrameProxy::webFrame(frameID);
     RefPtr parentFrame = frame ? frame->parentFrame() : nullptr;
-    auto siblingIndex = frame ? frame->indexInFrameTreeSiblings() : std::nullopt;
-    if (!parentFrame || !siblingIndex)
+    if (!parentFrame)
+        return m_children.size();
+
+    auto& siblingFrames = parentFrame->childFrames();
+    auto iterator = siblingFrames.find(frame.get());
+    if (iterator == siblingFrames.end()) {
+        ASSERT_NOT_REACHED("This frame should be in its parent's child frames");
+        return m_children.size();
+    }
+
+    HashSet<WebCore::FrameIdentifier> laterSiblingFrameIDs;
+    for (++iterator; iterator != siblingFrames.end(); ++iterator)
+        laterSiblingFrameIDs.add((*iterator)->frameID());
+    if (laterSiblingFrameIDs.isEmpty())
         return m_children.size();
 
     for (size_t i = 0; i < m_children.size(); ++i) {
-        RefPtr siblingFrame = WebFrameProxy::webFrame(m_children[i]->frameID());
-        if (!siblingFrame || siblingFrame->parentFrame() != parentFrame)
-            continue;
-        if (auto index = siblingFrame->indexInFrameTreeSiblings(); index && *index > *siblingIndex)
+        if (auto childFrameID = m_children[i]->frameID(); childFrameID && laterSiblingFrameIDs.contains(*childFrameID))
             return i;
     }
     return m_children.size();
@@ -192,6 +227,37 @@ Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildren()
     Ref frameState = copyFrameState();
     for (auto& child : borrow(m_children))
         frameState->children.append(child->copyFrameStateWithChildren());
+    return frameState;
+}
+
+Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateForReplacingDocument(const URL& url)
+{
+    if (SecurityOrigin::create(URL { m_frameState->urlString })->isSameOriginAs(SecurityOrigin::create(url)))
+        return copyFrameState();
+    Ref frameState = FrameState::create();
+    frameState->itemID = m_frameState->itemID;
+    frameState->frameItemID = m_frameState->frameItemID;
+    frameState->frameID = m_frameState->frameID;
+    // These describe the entry rather than its document, so HistoryItem::reset() keeps them.
+    frameState->wasCreatedByJSWithoutUserInteraction = m_frameState->wasCreatedByJSWithoutUserInteraction;
+    frameState->wasRestoredFromSession = m_frameState->wasRestoredFromSession;
+    return frameState;
+}
+
+// When the UI process drives back/forward loads it sends each frame its own state, so other processes only need identifiers.
+Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildrenForProcess(WebPageProxy& page, WebProcessProxy& process)
+{
+    if (!protect(page.preferences())->shouldUseUIProcessForBackForwardItemLoading())
+        return copyFrameStateWithChildren();
+
+    // A root item's frameID is optional (entries restored from session state have none) and only follows the main frame
+    // once a swap commits, so a lookup by ID could miss the page's own main frame. Ask the page for it instead.
+    RefPtr frame = m_parent ? WebFrameProxy::webFrame(frameID()) : page.mainFrame();
+    bool processHostsFrame = frame && frame->page() == &page && (&frame->process() == &process || &frame->provisionalLoadProcess() == &process);
+
+    Ref frameState = processHostsFrame ? copyFrameState() : m_frameState->copyIdentifiersOnly();
+    for (auto& child : borrow(m_children))
+        frameState->children.append(child->copyFrameStateWithChildrenForProcess(page, process));
     return frameState;
 }
 

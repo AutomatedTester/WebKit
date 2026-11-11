@@ -27,6 +27,7 @@
 #include "config.h"
 #include "JSDOMGlobalObject.h"
 
+#include "CrossOriginMode.h"
 #include "DOMConstructors.h"
 #include "DeprecatedGlobalSettings.h"
 #include "DocumentInlines.h"
@@ -56,6 +57,7 @@
 #include "LocalDOMWindow.h"
 #include "RejectedPromiseTracker.h"
 #include "ScriptController.h"
+#include "ScriptExecutionContext.h"
 #include "ScriptModuleLoader.h"
 #include "StructuredClone.h"
 #include "TrustedType.h"
@@ -340,6 +342,9 @@ SUPPRESS_ASAN void JSDOMGlobalObject::addBuiltinGlobals(VM& vm)
         JSDOMGlobalObject::GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
     addStaticGlobals(staticGlobals);
+
+    if (ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated)
+        exposeSharedArrayBuffer();
 }
 
 void JSDOMGlobalObject::finishCreation(VM& vm)
@@ -412,7 +417,9 @@ bool JSDOMGlobalObject::canCompileStrings(JSGlobalObject* globalObject, Compilat
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto& thisObject = *downcast<JSDOMGlobalObject>(globalObject);
-    CheckedPtr scriptExecutionContext = thisObject.scriptExecutionContext();
+    RefPtr scriptExecutionContext = thisObject.scriptExecutionContext();
+    if (!scriptExecutionContext) [[unlikely]]
+        return false;
 
     auto result = canCompile(*scriptExecutionContext, compilationType, codeString, args);
 
@@ -466,14 +473,18 @@ void JSDOMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSDOMGlobalObject);
 
-void JSDOMGlobalObject::addJSHandle(JSHandleIdentifier identifier, JSObject& object)
+JSHandleIdentifier JSDOMGlobalObject::addJSHandle(JSObject& object)
 {
     Locker locker { m_gcLock };
     auto& vm = this->vm();
+    auto identifier = m_jsHandleIdentifiers.ensure(&object, [] {
+        return JSHandleIdentifier { WebProcessJSHandleIdentifier::generate(), Process::identifier() };
+    }).iterator->value;
     auto result = m_jsHandles.ensure(identifier, [&] {
         return JSHandleSlot { WriteBarrier<JSObject> { vm, this, &object }, 0 };
     });
     ++result.iterator->value.refCount;
+    return identifier;
 }
 
 void JSDOMGlobalObject::refJSHandle(JSHandleIdentifier identifier)
@@ -493,6 +504,7 @@ bool JSDOMGlobalObject::derefJSHandle(JSHandleIdentifier identifier)
         return false;
     if (--it->value.refCount)
         return false;
+    m_jsHandleIdentifiers.remove(it->value.object.get());
     m_jsHandles.remove(it);
     return true;
 }
@@ -824,7 +836,7 @@ static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalO
                 : m_skipFirstFrame(skipFirstFrame)
             { }
 
-            IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
+            NODELETE IterationStatus operator()(StackVisitor& visitor) const
             {
                 if (m_skipFirstFrame) {
                     if (!m_hasSkippedFirstFrame) {
@@ -846,7 +858,7 @@ static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalO
                 return IterationStatus::Done;
             }
 
-            JSC::JSGlobalObject* LEGACY_NODELETE globalObject() const { return m_globalObject; }
+            NODELETE JSC::JSGlobalObject* globalObject() const { return m_globalObject; }
 
         private:
             bool m_skipFirstFrame { false };

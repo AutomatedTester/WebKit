@@ -58,6 +58,9 @@
 #include "StyledElement.h"
 #include "UserAgentStyle.h"
 #if ENABLE(VIDEO)
+#include "ElementAncestorIteratorInlines.h"
+#include "TextTrack.h"
+#include "TextTrackCue.h"
 #include "UserAgentParts.h"
 #endif
 #include <ranges>
@@ -99,12 +102,14 @@ struct MatchRequest {
     const RuleSet& ruleSet;
     ScopeOrdinal styleScopeOrdinal;
     bool matchingPartPseudoElementRules { false };
+    bool orderAfterUnscopedRules { false };
 };
 
 ElementRuleCollector::ElementRuleCollector(const Element& element, const ScopeRuleSets& ruleSets, SelectorMatchingState* selectorMatchingState, SelectorChecker::Mode mode)
     : m_element(element)
     , m_authorStyle(ruleSets.authorStyle())
     , m_userStyle(ruleSets.userStyle())
+    , m_quirkStyle(ruleSets.quirkStyle())
     , m_userAgentMediaQueryStyle(ruleSets.userAgentMediaQueryStyle())
     , m_dynamicViewTransitionsStyle(ruleSets.dynamicViewTransitionsStyle())
     , m_selectorMatchingState(selectorMatchingState)
@@ -178,12 +183,26 @@ void ElementRuleCollector::collectMatchingRules(DeclarationOrigin origin)
         collectMatchingRules(matchRequest);
         if (isFirstMatchModeAndHasMatchedAnyRules())
             return;
+#if ENABLE(VIDEO)
+        matchWebVTTEmbeddedStyleRules();
+        if (isFirstMatchModeAndHasMatchedAnyRules())
+            return;
+#endif
         break;
     }
 
     case DeclarationOrigin::User:
         if (m_userStyle) {
             MatchRequest matchRequest(*m_userStyle);
+            collectMatchingRules(matchRequest);
+            if (isFirstMatchModeAndHasMatchedAnyRules())
+                return;
+        }
+        break;
+
+    case DeclarationOrigin::Quirk:
+        if (m_quirkStyle) {
+            MatchRequest matchRequest(*m_quirkStyle);
             collectMatchingRules(matchRequest);
             if (isFirstMatchModeAndHasMatchedAnyRules())
                 return;
@@ -293,6 +312,7 @@ Vector<MatchedProperties>& ElementRuleCollector::declarationsForOrigin(Declarati
     case DeclarationOrigin::UserAgent: return m_result->userAgentDeclarations;
     case DeclarationOrigin::User: return m_result->userDeclarations;
     case DeclarationOrigin::Author: return m_result->authorDeclarations;
+    case DeclarationOrigin::Quirk: return m_result->quirkDeclarations;
     }
     ASSERT_NOT_REACHED();
     return m_result->authorDeclarations;
@@ -373,6 +393,51 @@ void ElementRuleCollector::matchUserAgentPartRules(DeclarationOrigin origin)
     MatchRequest hostRequest { *hostRules, ScopeOrdinal::ContainingHost };
     collectMatchingUserAgentPartRules(hostRequest);
 }
+
+#if ENABLE(VIDEO)
+void ElementRuleCollector::matchWebVTTEmbeddedStyleRules()
+{
+    bool mayMatchWebVTTRules = element().isInUserAgentShadowTree()
+        && (element().isWebVTTElement()
+        || element().userAgentPart() == UserAgentParts::cue()
+        || element().userAgentPart() == UserAgentParts::internalCueBackground());
+
+    if (!mayMatchWebVTTRules)
+        return;
+
+    RefPtr embeddedStyle = [&] -> const Style::RuleSet* {
+        RefPtr cueBox = lineageOfType<TextTrackCueBox>(element()).first();
+        if (!cueBox)
+            return nullptr;
+
+        RefPtr cue = cueBox->getCue();
+        if (!cue)
+            return nullptr;
+
+        RefPtr track = cue->track();
+        if (!track)
+            return nullptr;
+
+        return track->embeddedStyleRuleSet();
+    }();
+
+    if (!embeddedStyle)
+        return;
+
+    // WebVTT - <https://w3c.github.io/webvtt/#obtaining-css-boxes>
+    // 7.3. Obtaining CSS Boxes
+    // * For the purpose of determining the cascade of the declarations in STYLE blocks of a WebVTT
+    //   file, the relative order of appearance of the style sheets must be the same order as they
+    //   were added to the collection, and the order of appearance of the collection must be after
+    //   any style sheets that apply to the associated video element’s document.
+    // NOTE: The STYLE blocks of a track only apply to the cues of that track. Match them in the same
+    // scope as the ::cue rules of the page, and order them after the rules of the page when everything
+    // else is equal.
+    MatchRequest embeddedStyleRequest { *embeddedStyle, ScopeOrdinal::ContainingHost };
+    embeddedStyleRequest.orderAfterUnscopedRules = true;
+    collectMatchingUserAgentPartRules(embeddedStyleRequest);
+}
+#endif
 
 void ElementRuleCollector::matchHostPseudoClassRules(DeclarationOrigin origin)
 {
@@ -503,6 +568,18 @@ void ElementRuleCollector::matchUserRules()
     collectMatchingRules(DeclarationOrigin::User);
 
     sortAndTransferMatchedRules(DeclarationOrigin::User);
+}
+
+void ElementRuleCollector::matchQuirkRules()
+{
+    if (!m_quirkStyle)
+        return;
+
+    clearMatchedRules();
+
+    collectMatchingRules(DeclarationOrigin::Quirk);
+
+    sortAndTransferMatchedRules(DeclarationOrigin::Quirk);
 }
 
 void ElementRuleCollector::matchUARules()
@@ -675,7 +752,17 @@ void ElementRuleCollector::collectMatchingRulesForListSlow(const RuleSet::RuleDa
 
         auto addRuleIfMatches = [&] (const ScopingRootWithDistance* scopingRootWithDistance = nullptr) {
             unsigned specificity;
-            auto distance = scopingRootWithDistance ? scopingRootWithDistance->distance : std::numeric_limits<unsigned>::max();
+            auto distance = [&] {
+                // compareRules() orders rules with a smaller scoping root distance after rules with
+                // a larger one, and unscoped rules have the largest distance. Give the rules that
+                // must come after unscoped rules a distance just below it, so that ordering them
+                // doesn't need another comparison in compareRules().
+                if (scopingRootWithDistance)
+                    return scopingRootWithDistance->distance;
+                if (matchRequest.orderAfterUnscopedRules)
+                    return std::numeric_limits<unsigned>::max() - 1;
+                return std::numeric_limits<unsigned>::max();
+            }();
             if (ruleMatches(ruleData, specificity, matchRequest.styleScopeOrdinal, scopingRootWithDistance))
                 addMatchedRule(ruleData, specificity, distance, matchRequest);
         };
@@ -898,7 +985,7 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
     return { true, WTF::move(scopingRoots) };
 }
 
-static inline bool LEGACY_NODELETE compareRules(MatchedRule r1, MatchedRule r2)
+NODELETE static inline bool compareRules(MatchedRule r1, MatchedRule r2)
 {
     // For normal properties the earlier scope wins. This may be reversed by !important which is handled when resolving cascade.
     if (r1.styleScopeOrdinal != r2.styleScopeOrdinal)
@@ -968,6 +1055,8 @@ void ElementRuleCollector::matchAllRules(bool matchAuthorAndUserStyles, bool inc
 
         // Rules from the host scopes override inline style.
         transferMatchedRules(DeclarationOrigin::Author);
+
+        matchQuirkRules();
     }
 }
 

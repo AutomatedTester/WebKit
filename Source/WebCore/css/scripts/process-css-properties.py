@@ -610,6 +610,7 @@ class StylePropertyCodeGenProperties:
         Schema.Entry("computed-style-setter-custom", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-exported", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-inline", allowed_types=[bool], default_value=True),
+        Schema.Entry("computed-style-setter-did-set-function", allowed_types=[str]),
         Schema.Entry("computed-style-setter-requires-did-set", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter-returns-if-changed", allowed_types=[bool], default_value=False),
         Schema.Entry("computed-style-setter", allowed_types=[str]),
@@ -6287,6 +6288,8 @@ class ComputedStylePropertyFunctionSignature(object):
 
     def generate_function_declaration(self, *, to):
         function_specifiers = []
+        if self.function_nodelete:
+            function_specifiers.append('NODELETE')
         if self.function_static:
             function_specifiers.append('static')
         if self.function_constexpr:
@@ -6298,7 +6301,6 @@ class ComputedStylePropertyFunctionSignature(object):
         to.write(
               f"{''.join(map(lambda x: x + ' ', function_specifiers))}"
             + f"{self.function_return_type} "
-            + f"{'LEGACY_NODELETE ' if self.function_nodelete else ''}"
             + f"{self.function_name}"
             + f"({', '.join(map(lambda x: x.value_for_function_declaration, self.function_arguments))})"
             + f"{''.join(map(lambda x: ' ' + x, self.function_qualifiers))};"
@@ -6514,6 +6516,9 @@ class ComputedStylePropertyPrincipleSetter(ComputedStyleFunctionBase):
     def generate_function_definition(self, *, to):
         if self.property.codegen_properties.computed_style_setter_requires_did_set:
             did_set_expression = f"didSet{self.property.codegen_properties.computed_style_name_for_methods}()"
+        elif self.property.codegen_properties.computed_style_setter_did_set_function:
+            # A ComputedStyleProperties member called after the value changes.
+            did_set_expression = f"{self.property.codegen_properties.computed_style_setter_did_set_function}()"
         else:
             did_set_expression = None
 
@@ -7438,17 +7443,20 @@ class ColorPropertyTraitsVisitedLinkColorGetter(ColorPropertyTraitsFunctionBase)
         to.newline()
 
 
-class ColorPropertyTraitsColorResolvingCurrentColorGetter(ColorPropertyTraitsFunctionBase):
+class ColorPropertyTraitsResolveColorGetter(ColorPropertyTraitsFunctionBase):
     def __init__(self, property):
         super().__init__(
             property,
             ComputedStylePropertyFunctionSignature(
                 function_scope=f"ColorPropertyTraits<PropertyNameConstant<{property.id}>>",
-                function_name=f"colorResolvingCurrentColor",
+                function_name=f"resolveColor",
                 function_static=True,
                 function_inline=True,
                 function_return_type='WebCore::Color',
-                function_arguments=[ComputedStylePropertyFunctionSignature.Argument(type='const ComputedStyleProperties&', name='style')],
+                function_arguments=[
+                    ComputedStylePropertyFunctionSignature.Argument(type='const ComputedStyleProperties&', name='style'),
+                    ComputedStylePropertyFunctionSignature.Argument(type='StyleColorOptionsPurpose', name='purpose')
+                ],
                 function_qualifiers=[]
             )
         )
@@ -7465,17 +7473,20 @@ class ColorPropertyTraitsColorResolvingCurrentColorGetter(ColorPropertyTraitsFun
         raise Exception(f"'{self.signature.function_scope}::{self.signature.function_name}' always requires a custom definition")
 
 
-class ColorPropertyTraitsVisitedLinkColorResolvingCurrentColorGetter(ColorPropertyTraitsFunctionBase):
+class ColorPropertyTraitsResolveVisitedLinkColorGetter(ColorPropertyTraitsFunctionBase):
     def __init__(self, property):
         super().__init__(
             property,
             ComputedStylePropertyFunctionSignature(
                 function_scope=f"ColorPropertyTraits<PropertyNameConstant<{property.id}>>",
-                function_name=f"visitedLinkColorResolvingCurrentColor",
+                function_name=f"resolveVisitedLinkColor",
                 function_static=True,
                 function_inline=True,
                 function_return_type='WebCore::Color',
-                function_arguments=[ComputedStylePropertyFunctionSignature.Argument(type='const ComputedStyleProperties&', name='style')],
+                function_arguments=[
+                    ComputedStylePropertyFunctionSignature.Argument(type='const ComputedStyleProperties&', name='style'),
+                    ComputedStylePropertyFunctionSignature.Argument(type='StyleColorOptionsPurpose', name='purpose')
+                ],
                 function_qualifiers=[]
             )
         )
@@ -7881,8 +7892,8 @@ class ColorPropertyTraitsGenerator(object):
 
         self.color_getter = ColorPropertyTraitsColorGetter(property)
         self.visited_link_color_getter = ColorPropertyTraitsVisitedLinkColorGetter(property)
-        self.color_resolving_current_color_getter = ColorPropertyTraitsColorResolvingCurrentColorGetter(property)
-        self.visited_link_color_resolving_current_color_getter = ColorPropertyTraitsVisitedLinkColorResolvingCurrentColorGetter(property)
+        self.resolve_color_getter = ColorPropertyTraitsResolveColorGetter(property)
+        self.resolve_visited_link_color_getter = ColorPropertyTraitsResolveVisitedLinkColorGetter(property)
         self.excludes_visited_link_color_getter = ColorPropertyTraitsExcludesVisitedLinkColorGetter(property)
 
     @property
@@ -7890,8 +7901,8 @@ class ColorPropertyTraitsGenerator(object):
         return ComputedStylePropertyFunctionSet([
             self.color_getter,
             self.visited_link_color_getter,
-            self.color_resolving_current_color_getter,
-            self.visited_link_color_resolving_current_color_getter,
+            self.resolve_color_getter,
+            self.resolve_visited_link_color_getter,
             self.excludes_visited_link_color_getter,
         ])
 
@@ -7900,8 +7911,8 @@ class ColorPropertyTraitsGenerator(object):
         return ComputedStylePropertyFunctionSet([
             self.color_getter,
             self.visited_link_color_getter,
-            self.color_resolving_current_color_getter,
-            self.visited_link_color_resolving_current_color_getter,
+            self.resolve_color_getter,
+            self.resolve_visited_link_color_getter,
             self.excludes_visited_link_color_getter,
         ])
 
@@ -8462,7 +8473,7 @@ class GenerateUsedStyle:
                 writer.write(f"protected:")
 
                 with writer.indent():
-                    writer.write(f"UsedStyleProperties(const RenderElement& renderer LIFETIME_BOUND, const Style::ComputedStyle& computedStyle LIFETIME_BOUND)")
+                    writer.write(f"UsedStyleProperties(const RenderObject& renderer LIFETIME_BOUND, const Style::ComputedStyle& computedStyle LIFETIME_BOUND)")
                     with writer.indent():
                         writer.write(f": m_renderer(renderer)")
                         writer.write(f", m_computedStyle(computedStyle)")
@@ -8476,7 +8487,7 @@ class GenerateUsedStyle:
                     writer.newline()
 
                     writer.write(f"// const: a UsedStyle view never rebinds its members, so they can be read without a stack-local guard.")
-                    writer.write(f"const CheckedRef<const RenderElement> m_renderer;")
+                    writer.write(f"const CheckedRef<const RenderObject> m_renderer;")
                     writer.write(f"// The renderer's style, or one of its pseudo-element styles.")
                     writer.write(f"const CheckedRef<const Style::ComputedStyle> m_computedStyle;")
                 writer.write(f"}};")

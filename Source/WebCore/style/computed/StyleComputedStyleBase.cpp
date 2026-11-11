@@ -246,7 +246,7 @@ const FontMetrics& ComputedStyleBase::metricsOfPrimaryFont() const
     return m_inheritedData->fontData->fontCascade.metricsOfPrimaryFont();
 }
 
-std::pair<FontOrientation, NonCJKGlyphOrientation> ComputedStyleBase::fontAndGlyphOrientation()
+std::pair<FontOrientation, NonCJKGlyphOrientation> ComputedStyleBase::fontAndGlyphOrientation() const
 {
     if (!writingMode().isVerticalTypographic())
         return { FontOrientation::Horizontal, NonCJKGlyphOrientation::Mixed };
@@ -437,6 +437,31 @@ void ComputedStyleBase::updateUsedCounterSetDirectives()
 
 // MARK: - Flags Diffing
 
+bool ComputedStyleBase::computeHasZeroEffectiveBorderWidths() const
+{
+    auto& border = m_nonInheritedData->surroundData->border;
+    return UsedBorderWidthsAccessor<BoxSide::Top>::get(border).isZero()
+        && UsedBorderWidthsAccessor<BoxSide::Right>::get(border).isZero()
+        && UsedBorderWidthsAccessor<BoxSide::Bottom>::get(border).isZero()
+        && UsedBorderWidthsAccessor<BoxSide::Left>::get(border).isZero();
+}
+
+bool ComputedStyleBase::computeHasZeroPadding() const
+{
+    auto& padding = m_nonInheritedData->surroundData->padding;
+    return padding.top().isKnownZero() && padding.right().isKnownZero() && padding.bottom().isKnownZero() && padding.left().isKnownZero();
+}
+
+void ComputedStyleBase::updateHasZeroEffectiveBorderWidths()
+{
+    m_nonInheritedFlags.hasZeroEffectiveBorderWidths = computeHasZeroEffectiveBorderWidths();
+}
+
+void ComputedStyleBase::updateHasZeroPadding()
+{
+    m_nonInheritedFlags.hasZeroPadding = computeHasZeroPadding();
+}
+
 #if !LOG_DISABLED
 void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const NonInheritedFlags& other) const
 {
@@ -460,7 +485,10 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
     LOG_IF_DIFFERENT_WITH_FROM_RAW(TextDecorationLine, textDecorationLine);
 
     LOG_IF_DIFFERENT(hasExplicitlyInheritedProperties);
+    LOG_IF_DIFFERENT(hasAuthorHighlightColors);
     LOG_IF_DIFFERENT(disallowsFastPathInheritance);
+    LOG_IF_DIFFERENT(hasZeroEffectiveBorderWidths);
+    LOG_IF_DIFFERENT(hasZeroPadding);
 
     LOG_IF_DIFFERENT(firstChildState);
     LOG_IF_DIFFERENT(lastChildState);

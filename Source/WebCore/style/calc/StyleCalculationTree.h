@@ -216,21 +216,21 @@ struct Children {
     Children& operator=(Vector<Child>&&);
     ~Children();
 
-    iterator begin() LIFETIME_BOUND;
-    iterator end() LIFETIME_BOUND;
-    reverse_iterator rbegin() LIFETIME_BOUND;
-    reverse_iterator rend() LIFETIME_BOUND;
+    NODELETE iterator begin() LIFETIME_BOUND;
+    NODELETE iterator end() LIFETIME_BOUND;
+    NODELETE reverse_iterator rbegin() LIFETIME_BOUND;
+    NODELETE reverse_iterator rend() LIFETIME_BOUND;
 
-    const_iterator begin() const LIFETIME_BOUND;
-    const_iterator end() const LIFETIME_BOUND;
-    const_reverse_iterator rbegin() const LIFETIME_BOUND;
-    const_reverse_iterator rend() const LIFETIME_BOUND;
+    NODELETE const_iterator begin() const LIFETIME_BOUND;
+    NODELETE const_iterator end() const LIFETIME_BOUND;
+    NODELETE const_reverse_iterator rbegin() const LIFETIME_BOUND;
+    NODELETE const_reverse_iterator rend() const LIFETIME_BOUND;
 
-    bool isEmpty() const;
-    size_t size() const;
+    NODELETE bool isEmpty() const;
+    NODELETE size_t size() const;
 
-    Child& operator[](size_t i) LIFETIME_BOUND;
-    const Child& operator[](size_t i) const LIFETIME_BOUND;
+    NODELETE Child& operator[](size_t i) LIFETIME_BOUND;
+    NODELETE const Child& operator[](size_t i) const LIFETIME_BOUND;
 
     bool operator==(const Children&) const = default;
 };
@@ -589,9 +589,9 @@ template<typename Op> Child makeChild(Op&& op)
 
 // Convenience constructors
 
-Child number(double value);
-Child percentage(double value);
-Child dimension(double value);
+NODELETE Child number(double value);
+NODELETE Child percentage(double value);
+NODELETE Child dimension(double value);
 Child add(Child&& a, Child&& b);
 Child multiply(Child&& a, Child&& b);
 Child subtract(Child&& a, Child&& b);

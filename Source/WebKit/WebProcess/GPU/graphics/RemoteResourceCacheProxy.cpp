@@ -60,7 +60,14 @@ static std::optional<CreateShareableBitmapResult> createShareableBitmapForNative
 
     // If we failed to create ShareableBitmap or PlatformImage, fall back to image-draw method.
     if (!platformImage) {
-        bitmap = ShareableBitmap::createFromImageDraw(image, fallbackColorSpace);
+        auto colorSpace = fallbackColorSpace;
+#if USE(CG) && ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+        // ShareableBitmap would use 16-bit float extended sRGB for images in other color models
+        // (e.g. gray or CMYK).
+        if (!colorSpace.asRGBModelMayBeExtended() && CGImageGetBitsPerComponent(image.platformImage().get()) <= 8)
+            colorSpace = ColorSpace::DisplayP3();
+#endif
+        bitmap = ShareableBitmap::createFromImageDraw(image, colorSpace);
         if (bitmap)
             platformImage = bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::Yes);
 
@@ -108,6 +115,19 @@ RemoteGradientIdentifier RemoteResourceCacheProxy::recordGradientUse(Gradient& g
     if (result.isNewEntry) {
         gradient.addObserver(m_resourceObserverWeakFactory.createWeakPtr(static_cast<RenderingResourceObserver&>(*this)).releaseNonNull());
         m_remoteRenderingBackendProxy->cacheGradient(gradient, identifier);
+    }
+    return identifier;
+}
+
+RemoteMeshGradientIdentifier RemoteResourceCacheProxy::recordMeshGradientUse(MeshGradient& gradient)
+{
+    auto result = m_meshGradients.ensure(&gradient, [] {
+        return RemoteMeshGradientIdentifier::generate();
+    });
+    auto identifier = result.iterator->value;
+    if (result.isNewEntry) {
+        gradient.addObserver(m_resourceObserverWeakFactory.createWeakPtr(static_cast<RenderingResourceObserver&>(*this)).releaseNonNull());
+        m_remoteRenderingBackendProxy->cacheMeshGradient(gradient, identifier);
     }
     return identifier;
 }
@@ -276,6 +296,13 @@ void RemoteResourceCacheProxy::willDestroyGradient(const Gradient& gradient)
     m_remoteRenderingBackendProxy->releaseGradient(*identifier);
 }
 
+void RemoteResourceCacheProxy::willDestroyMeshGradient(const MeshGradient& gradient)
+{
+    auto identifier = m_meshGradients.take(&gradient);
+    RELEASE_ASSERT(identifier);
+    m_remoteRenderingBackendProxy->releaseMeshGradient(*identifier);
+}
+
 void RemoteResourceCacheProxy::willDestroyPathImpl(const PathImpl& path)
 {
     auto identifier = m_paths.take(&path);
@@ -368,6 +395,7 @@ void RemoteResourceCacheProxy::releaseMemory()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_meshGradients.clear();
     m_paths.clear();
     m_displayLists.clear();
     releaseFonts();
@@ -379,6 +407,7 @@ void RemoteResourceCacheProxy::disconnect()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_meshGradients.clear();
     m_paths.clear();
     m_displayLists.clear();
     releaseFonts();

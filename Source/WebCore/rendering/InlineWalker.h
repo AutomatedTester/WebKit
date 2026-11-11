@@ -26,13 +26,13 @@
 
 #include "RenderBlockFlow.h"
 #include "RenderDescendantIterator.h"
-#include "RenderInline.h"
 
 namespace WebCore {
 
+// Walks the inline formatting context content under the root, descending only into inline boxes.
 class InlineWalker {
 public:
-    InlineWalker(const RenderBlockFlow& root, RenderObject* from = nullptr)
+    InlineWalker(const RenderElement& root, RenderObject* from = nullptr)
         : m_iterator(root, from ? from : root.firstChild())
     {
     }

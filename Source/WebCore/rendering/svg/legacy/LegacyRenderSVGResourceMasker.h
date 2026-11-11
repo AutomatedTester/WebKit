@@ -22,6 +22,7 @@
 
 #include "ImageBuffer.h"
 #include "LegacyRenderSVGResourceContainer.h"
+#include "NativeImage.h"
 #include "SVGUnitTypes.h"
 
 #include <wtf/EnumeratedArray.h>
@@ -32,9 +33,11 @@ namespace WebCore {
 class GraphicsContext;
 class SVGMaskElement;
 
+struct ImageDrawDescriptor;
+
 struct MaskerData {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MaskerData);
-    RefPtr<ImageBuffer> maskImage;
+    RefPtr<NativeImage> maskImage;
 };
 
 class LegacyRenderSVGResourceMasker final : public LegacyRenderSVGResourceContainer {
@@ -50,7 +53,7 @@ public:
     void removeClientFromCache(RenderElement&) override;
     OptionSet<ApplyResult> applyResource(RenderElement&, const Style::ComputedStyle&, GraphicsContext*&, OptionSet<RenderSVGResourceMode>) override;
     bool drawContentIntoContext(GraphicsContext&, const FloatRect& objectBoundingBox);
-    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions);
+    bool drawContentIntoContext(GraphicsContext&, const FloatRect& destinationRect, const FloatRect& sourceRect, const ImageDrawDescriptor&);
     FloatRect resourceBoundingBox(const RenderObject&, RepaintRectCalculation) override;
 
     inline SVGUnitTypes::SVGUnitType maskUnits() const;
@@ -63,7 +66,7 @@ private:
 
     ASCIILiteral renderName() const override { return "RenderSVGResourceMasker"_s; }
 
-    bool drawContentIntoMaskImage(MaskerData*, const ColorSpace&, RenderObject*);
+    bool drawContentIntoMaskImage(ImageBuffer&, const ColorSpace&, RenderObject*);
     void calculateMaskContentRepaintRect(RepaintRectCalculation);
 
     EnumeratedArray<RepaintRectCalculation, FloatRect, RepaintRectCalculation::Accurate> m_maskContentBoundaries;

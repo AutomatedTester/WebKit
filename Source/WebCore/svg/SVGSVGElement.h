@@ -30,6 +30,7 @@
 namespace WebCore {
 
 struct DOMMatrix2DInit;
+struct NaturalDimensions;
 class RenderElement;
 class SMILTimeContainer;
 class SVGAngle;
@@ -61,12 +62,12 @@ public: // DOM
 
     void deselectAll();
 
-    static Ref<SVGNumber> createSVGNumber();
+    NODELETE static Ref<SVGNumber> createSVGNumber();
     static Ref<SVGLength> createSVGLength();
-    static Ref<SVGAngle> createSVGAngle();
-    static Ref<SVGPoint> createSVGPoint();
-    static Ref<SVGMatrix> createSVGMatrix();
-    static Ref<SVGRect> createSVGRect();
+    NODELETE static Ref<SVGAngle> createSVGAngle();
+    NODELETE static Ref<SVGPoint> createSVGPoint();
+    NODELETE static Ref<SVGMatrix> createSVGMatrix();
+    NODELETE static Ref<SVGRect> createSVGRect();
     static Ref<SVGTransform> createSVGTransform();
     static Ref<SVGTransform> createSVGTransformFromMatrix(DOMMatrix2DInit&&);
 
@@ -75,7 +76,7 @@ public: // DOM
     void pauseAnimations();
     void unpauseAnimations();
     bool resumePausedAnimationsIfNeeded(const IntRect&);
-    bool LEGACY_NODELETE animationsPaused() const;
+    NODELETE bool animationsPaused() const;
     float getCurrentTime() const;
     void setCurrentTime(float);
     
@@ -109,6 +110,9 @@ public:
 
     bool hasIntrinsicDimensions() const;
 
+    // https://drafts.csswg.org/css-images-3/#natural-dimensions
+    NaturalDimensions naturalDimensions() const;
+
     FloatSize currentViewportSizeExcludingZoom() const;
     void invalidateCachedViewportSizes() const
     {
@@ -121,7 +125,7 @@ public:
     FloatRect currentViewBoxRect() const;
     bool hasSynthesizedViewBoxForSVGImage() const;
 
-    bool viewBoxDisablesPainting() const;
+    NODELETE bool viewBoxDisablesPainting() const;
 
     AffineTransform viewBoxToViewTransform(float viewWidth, float viewHeight) const;
     bool hasTransformRelatedAttributes() const final;
@@ -165,7 +169,7 @@ private:
     FloatSize computeCurrentViewportSizeExcludingZoom() const;
 
     RefPtr<SVGViewElement> findViewAnchor(StringView fragmentIdentifier) const;
-    SVGSVGElement* LEGACY_NODELETE findRootAnchor(const SVGViewElement*) const;
+    NODELETE SVGSVGElement* findRootAnchor(const SVGViewElement*) const;
     SVGSVGElement* findRootAnchor(StringView) const;
 
     const Ref<SMILTimeContainer> m_timeContainer;

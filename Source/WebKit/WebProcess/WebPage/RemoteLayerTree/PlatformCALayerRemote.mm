@@ -282,23 +282,8 @@ void PlatformCALayerRemote::ensureBackingStore()
     ASSERT(owner());
     ASSERT(m_properties.backingStoreAttached);
 
-    bool needsNewBackingStore = [&] {
-        if (!m_context)
-            return false;
-
-        CheckedPtr store = m_properties.backingStoreOrProperties.store.get();
-        if (!store)
-            return true;
-
-        // A layer pulled out of a pool may have existing backing store which we mustn't reuse if it lives in the wrong process.
-        if (store->processModel() != RemoteLayerBackingStore::processModelForLayer(*this))
-            return true;
-
-        return false;
-    }();
-
-    if (needsNewBackingStore)
-        m_properties.backingStoreOrProperties.store = RemoteLayerBackingStore::createForLayer(*this);
+    if (m_context && !m_properties.backingStoreOrProperties.store)
+        m_properties.backingStoreOrProperties.store = makeUnique<RemoteLayerBackingStore>(*this);
 
     updateBackingStore();
 }
@@ -554,7 +539,7 @@ RefPtr<PlatformCAAnimation> PlatformCALayerRemote::animationForKey(const String&
     return m_animations.get(key);
 }
 
-static inline bool LEGACY_NODELETE isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
+NODELETE static inline bool isEquivalentLayer(const PlatformCALayer* layer, const std::optional<PlatformLayerIdentifier>& layerID)
 {
     auto newLayerID = layer ? std::optional { layer->layerID() } : std::nullopt;
     return layerID == newLayerID;
@@ -1019,6 +1004,12 @@ void PlatformCALayerRemote::setShadowPath(const WebCore::Path& path)
 
     m_properties.shadowPath = path;
     m_properties.notePropertiesChanged(LayerChange::ShadowPathChanged);
+}
+
+void PlatformCALayerRemote::setHidesFromScreenCapture(bool hides)
+{
+    m_properties.hidesFromScreenCapture = hides;
+    m_properties.notePropertiesChanged(LayerChange::HidesFromScreenCaptureChanged);
 }
 
 void PlatformCALayerRemote::setAntialiasesEdges(bool antialiases)

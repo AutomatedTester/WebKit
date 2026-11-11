@@ -143,9 +143,9 @@ static bool computeEditability(const Node& node, EditableType editableType, Node
         return true;
 
     switch (editableType) {
-    case ContentIsEditable:
+    case EditableType::Content:
         return false;
-    case HasEditableAXRole:
+    case EditableType::AXRole:
         return isEditableToAccessibility(node);
     }
     ASSERT_NOT_REACHED();
@@ -159,7 +159,7 @@ bool hasEditableStyle(const Node& node, EditableType editableType)
 
 bool isEditableNode(const Node& node)
 {
-    return computeEditability(node, ContentIsEditable, Node::ShouldUpdateStyle::Update);
+    return computeEditability(node, EditableType::Content, Node::ShouldUpdateStyle::Update);
 }
 
 bool isEditablePosition(const Position& position, EditableType editableType)
@@ -187,13 +187,12 @@ Element* editableRootForPosition(const Position& position, EditableType editable
         return nullptr;
 
     switch (editableType) {
-    case HasEditableAXRole:
+    case EditableType::AXRole:
         if (CheckedPtr cache = protect(node->document())->existingAXObjectCache()) {
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(cache->rootAXEditableElement(node.get()));
+            return const_cast<Element*>(cache->rootAXEditableElement(node.get()));
         }
         [[fallthrough]];
-    case ContentIsEditable:
+    case EditableType::Content:
         return node->rootEditableElement();
     }
     return nullptr;
@@ -527,8 +526,8 @@ RefPtr<Element> enclosingElementWithTag(const Position& position, const Qualifie
 RefPtr<Node> enclosingNodeOfType(const Position& position, bool (*nodeIsOfType)(const Node&), EditingBoundaryCrossingRule rule)
 {
     // FIXME: support CanSkipCrossEditingBoundary
-    ASSERT(rule == CanCrossEditingBoundary || rule == CannotCrossEditingBoundary);
-    auto root = rule == CannotCrossEditingBoundary ? highestEditableRoot(position) : nullptr;
+    ASSERT(rule == EditingBoundaryCrossingRule::CanCross || rule == EditingBoundaryCrossingRule::CannotCross);
+    auto root = rule == EditingBoundaryCrossingRule::CannotCross ? highestEditableRoot(position) : nullptr;
     for (RefPtr n = position.deprecatedNode(); n; n = n->parentNode()) {
         // Don't return a non-editable node if the input position was editable, since
         // the callers from editing will no doubt want to perform editing inside the returned node.
@@ -545,7 +544,7 @@ RefPtr<Node> enclosingNodeOfType(const Position& position, bool (*nodeIsOfType)(
 RefPtr<Node> highestEnclosingNodeOfType(const Position& position, bool (*nodeIsOfType)(const Node&), EditingBoundaryCrossingRule rule, Node* stayWithin)
 {
     RefPtr<Node> highest;
-    RefPtr root = rule == CannotCrossEditingBoundary ? highestEditableRoot(position) : nullptr;
+    RefPtr root = rule == EditingBoundaryCrossingRule::CannotCross ? highestEditableRoot(position) : nullptr;
     for (RefPtr<Node> n = position.containerNode(); n && n != stayWithin; n = n->parentNode()) {
         if (root && !n->hasEditableStyle())
             continue;
@@ -557,7 +556,7 @@ RefPtr<Node> highestEnclosingNodeOfType(const Position& position, bool (*nodeIsO
     return highest;
 }
 
-static bool LEGACY_NODELETE hasARenderedDescendant(Node* node, Node* excludedNode)
+NODELETE static bool hasARenderedDescendant(Node* node, Node* excludedNode)
 {
     for (auto* n = node->firstChild(); n;) {
         if (n == excludedNode) {
@@ -965,7 +964,7 @@ VisibleSelection selectionForParagraphIteration(const VisibleSelection& original
     // (a table is itself a paragraph).
     if (RefPtr table = isFirstPositionAfterTable(endOfSelection)) {
         if (startOfSelection.deepEquivalent().deprecatedNode()->isDescendantOf(*table))
-            newSelection = VisibleSelection(startOfSelection, endOfSelection.previous(CannotCrossEditingBoundary));
+            newSelection = VisibleSelection(startOfSelection, endOfSelection.previous(EditingBoundaryCrossingRule::CannotCross));
     }
     
     // If the start of the selection to modify is just before a table,
@@ -974,7 +973,7 @@ VisibleSelection selectionForParagraphIteration(const VisibleSelection& original
     // containing the table itself.
     if (RefPtr table = isLastPositionBeforeTable(startOfSelection)) {
         if (endOfSelection.deepEquivalent().deprecatedNode()->isDescendantOf(*table))
-            newSelection = VisibleSelection(startOfSelection.next(CannotCrossEditingBoundary), endOfSelection);
+            newSelection = VisibleSelection(startOfSelection.next(EditingBoundaryCrossingRule::CannotCross), endOfSelection);
     }
     
     return newSelection;
@@ -995,7 +994,7 @@ int indexForVisiblePosition(const VisiblePosition& visiblePosition, RefPtr<Conta
     Ref document = *position.document();
 
     bool useAccessibilityEditability = AXObjectCache::accessibilityEnabled() && document->existingAXObjectCache();
-    auto editableRoot = highestEditableRoot(position, useAccessibilityEditability ? HasEditableAXRole : ContentIsEditable);
+    auto editableRoot = highestEditableRoot(position, useAccessibilityEditability ? EditableType::AXRole : EditableType::Content);
     if (editableRoot && !document->inDesignMode())
         scope = editableRoot;
     else {
@@ -1141,7 +1140,7 @@ Position adjustedSelectionStartForStyleComputation(const VisibleSelection& selec
 }
 
 // FIXME: Should this be deprecated like deprecatedEnclosingBlockFlowElement is?
-static Element* LEGACY_NODELETE elementIfBlockFlow(Node& node)
+NODELETE static Element* elementIfBlockFlow(Node& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     if (!element)
@@ -1155,7 +1154,7 @@ bool isBlockFlowElement(const Node& node)
     return elementIfBlockFlow(const_cast<Node&>(node));
 }
 
-Element* LEGACY_NODELETE deprecatedEnclosingBlockFlowElement(Node* node)
+NODELETE Element* deprecatedEnclosingBlockFlowElement(Node* node)
 {
     if (!node)
         return nullptr;
@@ -1189,7 +1188,12 @@ RenderBlock* rendererForCaretPainting(const Node* node)
         if (caretRendersInsideNode(*node))
             return blockFlow;
     }
-    return renderer->containingBlock();
+    // Otherwise by the nearest block in its containing block chain.
+    for (SUPPRESS_UNCHECKED_LOCAL RenderBoxModelObject* containingBlock = renderer->containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
+        if (SUPPRESS_UNCHECKED_LOCAL auto* block = dynamicDowncast<RenderBlock>(*containingBlock))
+            return block;
+    }
+    return nullptr;
 }
 
 LayoutRect localCaretRectInRendererForCaretPainting(const VisiblePosition& caretPosition, RenderBlock*& caretPainter)
@@ -1229,9 +1233,8 @@ IntRect absoluteBoundsForLocalCaretRect(RenderBlock* rendererForCaretPainting, c
         return IntRect();
 
     LayoutRect localRect(rect);
-    rendererForCaretPainting->flipForWritingMode(localRect);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
+    rendererForCaretPainting->blockStartRelativeToPhysical(localRect);
+    return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
 }
 
 HashSet<Ref<HTMLImageElement>> visibleImageElementsInRangeWithNonLoadedImages(const SimpleRange& range)
@@ -1323,7 +1326,7 @@ static std::optional<BoundaryPoint> findBidiBoundary(const RenderedPosition& pos
 }
 
 enum class BoxIterationDirection : bool { SameAsLine, OppositeOfLine };
-static InlineIterator::LeafBoxIterator advanceInDirection(InlineIterator::LeafBoxIterator box, TextDirection direction, BoxIterationDirection iterationDirection)
+NODELETE static InlineIterator::LeafBoxIterator advanceInDirection(InlineIterator::LeafBoxIterator box, TextDirection direction, BoxIterationDirection iterationDirection)
 {
     bool shouldMoveRight = (iterationDirection == BoxIterationDirection::SameAsLine) == (direction == TextDirection::LTR);
     return shouldMoveRight ? box->nextLineRightwardOnLine() : box->nextLineLeftwardOnLine();
@@ -1341,7 +1344,7 @@ static void forEachRenderedBoxBetween(const RenderedPosition& first, const Rende
         return;
     }
 
-    if (first.lineBox().atEnd()) {
+    if (!first.lineBox()) {
         ASSERT_NOT_REACHED();
         return;
     }
@@ -1425,12 +1428,12 @@ static std::optional<SimpleRange> makeVisuallyContiguousIfNeeded(const SimpleRan
     auto [start, end] = positionsForRange(range);
     auto firstLineDirection = TextDirection::LTR;
     RenderedPosition renderedStart { start };
-    if (renderedStart.isNull() || renderedStart.lineBox().atEnd())
+    if (renderedStart.isNull() || !renderedStart.lineBox())
         return std::nullopt;
 
     auto lastLineDirection = TextDirection::LTR;
     RenderedPosition renderedEnd { end };
-    if (renderedEnd.isNull() || renderedEnd.lineBox().atEnd())
+    if (renderedEnd.isNull() || !renderedEnd.lineBox())
         return std::nullopt;
 
     if (renderedStart.box() == renderedEnd.box())

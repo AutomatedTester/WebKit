@@ -83,7 +83,6 @@ class IncrementalSweeper;
 class JITStubRoutine;
 class JITStubRoutineSet;
 class JSCell;
-class JSCellButterfly;
 class JSRopeString;
 class JSString;
 class JSValue;
@@ -194,6 +193,7 @@ class Heap;
     v(webAssemblyMemorySpace, webAssemblyMemoryHeapCellType, JSWebAssemblyMemory) \
     v(webAssemblyModuleSpace, webAssemblyModuleHeapCellType, JSWebAssemblyModule) \
     v(webAssemblyModuleRecordSpace, webAssemblyModuleRecordHeapCellType, WebAssemblyModuleRecord) \
+    v(webAssemblySuspendingWrapperSpace, cellHeapCellType, JSWebAssemblySuspendingWrapper) \
     v(webAssemblyTableSpace, webAssemblyTableHeapCellType, JSWebAssemblyTable) \
     v(webAssemblyTagSpace, webAssemblyTagHeapCellType, JSWebAssemblyTag) \
     v(webAssemblyStreamingContextSpace, destructibleCellHeapCellType, JSWebAssemblyStreamingContext) \
@@ -269,7 +269,6 @@ class Heap;
     v(moduleNamespaceObjectSpace, moduleNamespaceObjectHeapCellType, JSModuleNamespaceObject) \
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
-    v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
     v(scopedArgumentsTableSpace, destructibleCellHeapCellType, ScopedArgumentsTable) \
     v(setIteratorSpace, cellHeapCellType, JSSetIterator) \
@@ -321,15 +320,20 @@ enum class GrowthMode : uint8_t { Default, Aggressive };
 
 class HeapUtil;
 
+// Held by a thread while it has access to a heap. Only mutators have access, in the general sense of threads that
+// mutate the heap's objects, not just a VM's main JS thread. The collector thread and marking helpers never do. Exists
+// only for thread-safety analysis.
+class WTF_CAPABILITY("heap access") HeapAccessHolderRole { };
+
 class Heap {
     WTF_MAKE_NONCOPYABLE(Heap);
 public:
-    friend class JIT;
-    friend class DFG::SpeculativeJIT;
     static JSC::Heap* heap(const JSValue); // 0 for immediate values
     static JSC::Heap* heap(const HeapCell*);
 
     bool isMarked(const void*);
+    // In loops, pass markingVersion to avoid redundant loads
+    static bool isMarked(HeapVersion markingVersion, const void*);
     static bool testAndSetMarked(HeapVersion, const void*);
 
     static inline size_t cellSize(const void*);
@@ -374,9 +378,29 @@ public:
 
     MutatorState mutatorState() const { return m_mutatorState; }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
-    bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
+    bool needCollectionEpilogue() const { return m_worldState.load() & needCollectionEpilogueBit; }
+    // Whether this heap's world is stopped: its mutator, unless it is the conductor, and the compiler threads. Only
+    // this heap's: while the conductor stops or resumes the heaps, others may still run. "WithWorldStopped" in this
+    // class's asserts means this heap's world.
     bool worldIsStopped() const { return m_worldIsStopped; }
-    bool worldIsRunning() const { return !worldIsStopped(); }
+#if ASSERT_ENABLED
+    // Asserts that the current thread has access to the heap and that the world is running. While the world is stopped,
+    // the thread with access can act only as the conductor, not the access holder.
+    // Note that this acquires the capability shared, so it does not establish that the current thread is the only one
+    // with access; code that relies on that should call assertIsExclusiveAccessHolder() instead.
+    JS_EXPORT_PRIVATE void assertIsAccessHolder() const WTF_ASSERTS_ACQUIRED_SHARED_CAPABILITY(m_accessHolderRole);
+    // Like assertIsAccessHolder(), but also asserts that no other thread has access to the heap.
+    // Note that this acquires the capability exclusively, so code that calls this relies on being the only thread
+    // with access.
+    JS_EXPORT_PRIVATE void assertIsExclusiveAccessHolder() const WTF_ASSERTS_ACQUIRED_CAPABILITY(m_accessHolderRole);
+    JS_EXPORT_PRIVATE void assertIsExclusiveAccessHolderOrConductorWithWorldStopped() const;
+    // For asserts that thread-safety analysis cannot express.
+    inline bool currentThreadIsConductor() const;
+#else
+    ALWAYS_INLINE void assertIsAccessHolder() const WTF_ASSERTS_ACQUIRED_SHARED_CAPABILITY(m_accessHolderRole) { }
+    ALWAYS_INLINE void assertIsExclusiveAccessHolder() const WTF_ASSERTS_ACQUIRED_CAPABILITY(m_accessHolderRole) { }
+    ALWAYS_INLINE void assertIsExclusiveAccessHolderOrConductorWithWorldStopped() const { }
+#endif
 
     // We're always busy on the collection threads. On the main thread, this returns true if we're
     // helping heap.
@@ -391,10 +415,8 @@ public:
     
     bool isShuttingDown() const { return m_isShuttingDown; }
 
-    JS_EXPORT_PRIVATE void sweepSynchronously();
+    JS_EXPORT_PRIVATE void sweepSynchronously() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
 
-    bool shouldCollectHeuristic();
-    
     // Queue up a collection. Returns immediately. This will not queue a collection if a collection
     // of equal or greater strength exists. Full collections are stronger than std::nullopt collections
     // and std::nullopt collections are stronger than Eden collections. std::nullopt means that the GC can
@@ -421,7 +443,7 @@ public:
 
     void completeAllJITPlans();
 
-    void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd(bytes, std::memory_order_relaxed); }
+    void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd<MemoryOrder::Relaxed>(bytes); }
 
     // Note that:
     // 1. Use this API to report non-GC memory referenced by GC objects. Be sure to
@@ -494,7 +516,9 @@ public:
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
 
-    const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
+    void addGCAwareJITStubRoutine(GCAwareJITStubRoutine*);
+
+    void noteStringFoundOnStack(const JSString* string) { m_stringsFoundOnStack.add(string); }
     
     void addReference(JSCell*, ArrayBuffer*);
     
@@ -514,6 +538,13 @@ public:
     void addDirtyWeakGCHashTable(WeakGCHashTable*);
 
     unsigned weakBlockCount() const { return m_weakBlockCount; }
+
+    // Lets WeakSet::finalizeDeadHandles() and Weak::clearConcurrently() run off the mutator. A
+    // sweep running finalizeDeadHandles() off the mutator must finish before the next collection
+    // reaps. clearConcurrently() must run on a GC aware thread, one that stop-the-world pauses
+    // halt, so it never runs while the world is stopped, which is when marking and reaping walk the
+    // weak blocks. Never hold it across a finalizer, since clearing a handle may take it.
+    Lock& weakBlockLock() WTF_RETURNS_LOCK(m_weakBlockLock) { return m_weakBlockLock; }
 
 #if ENABLE(RESOURCE_USAGE)
     size_t blockBytesAllocated() const { return m_blockBytesAllocated; }
@@ -549,12 +580,7 @@ public:
     // Ordinarily, you should use the ReleaseHeapAccessScope to release and then reacquire heap
     // access. You should do this anytime you're about do perform a blocking operation, like waiting
     // on the ParkingLot.
-    void releaseAccess()
-    {
-        if (m_worldState.compareExchangeWeak(hasAccessBit, 0))
-            return;
-        releaseAccessSlow();
-    }
+    void releaseAccess();
     
     // This is like a super optimized way of saying:
     //
@@ -577,7 +603,7 @@ public:
     inline void stopIfNecessary();
     
     // This gives the conn to the collector.
-    void relinquishConn();
+    void relinquishConn() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
     bool mayNeedToStop() { return m_worldState.loadRelaxed() != hasAccessBit; }
 
@@ -605,9 +631,6 @@ public:
     
     Seconds totalGCTime() const { return m_totalGCTime; }
 
-    UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
-
-
     void appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(const JSString* owner, String&& string)
     {
         m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.constructAndAppend(owner, WTF::move(string));
@@ -629,27 +652,15 @@ public:
 
 private:
     friend class AllocatingScope;
-    friend class CodeBlock;
     friend class CollectingScope;
     friend class Collector;
-    friend class ConservativeRoots;
     friend class DeferGC;
     friend class DeferGCForAWhile;
-    friend class GCAwareJITStubRoutine;
-    friend class GCLogging;
-    friend class GCThread;
-    friend class HeapUtil;
-    friend class HeapVerifier;
-    friend class JITStubRoutine;
-    friend class LLIntOffsetsExtractor;
     friend class MarkStackMergingConstraint;
     friend class MarkedSpace;
-    friend class BlockDirectory;
-    friend class MarkedBlock;
     friend class RunningScope;
     friend class SlotVisitor;
     friend class SweepingScope;
-    friend class IncrementalSweeper;
     friend class VM;
     friend class WeakBlock;
     friend class WeakSet;
@@ -660,11 +671,11 @@ private:
     static constexpr size_t minExtraMemory = 256;
     
     class CFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
+        FinalizeResult finalize(Handle<Unknown>, void* context) final;
     };
 
     class LambdaFinalizerOwner final : public WeakHandleOwner {
-        void finalize(Handle<Unknown>, void* context) final;
+        FinalizeResult finalize(Handle<Unknown>, void* context) final;
     };
 
     Lock& lock() LIFETIME_BOUND { return m_lock; }
@@ -677,87 +688,96 @@ private:
 
     void checkConn(GCConductor);
 
-    void collectInMutatorThread();
+    void collectInMutatorThread() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
-    void stopThePeriphery();
-    void resumeThePeriphery();
+    void stopThePeriphery() WTF_REQUIRES_CAPABILITY(conductorRole);
+    void resumeThePeriphery() WTF_REQUIRES_CAPABILITY(conductorRole);
     
     // Returns true if the mutator is stopped, false if the mutator has the conn now.
     bool stopTheMutator();
     void resumeTheMutator();
     
     JS_EXPORT_PRIVATE void stopIfNecessarySlow();
-    bool stopIfNecessarySlow(unsigned extraStateBits);
+    void stopIfNecessarySlow(unsigned extraStateBits) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
-    template<typename Func>
-    void waitForCollector(NOESCAPE const Func&);
+    void waitForCollector(NOESCAPE const ConstInvocable<bool()> auto& isDone) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
     JS_EXPORT_PRIVATE void acquireAccessSlow();
-    JS_EXPORT_PRIVATE void releaseAccessSlow();
-    
-    bool handleNeedCollectionEpilogue(unsigned);
-    void handleNeedCollectionEpilogue();
-    
-    bool relinquishConn(unsigned);
+    JS_EXPORT_PRIVATE void releaseAccessSlow() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    void noteAccessAcquired();
+    void noteAccessReleased() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+#if ASSERT_ENABLED
+    // For asserts that accept either of two roles, which thread-safety analysis cannot express.
+    bool currentThreadIsAccessHolder() const;
+    // Whether the current thread acquired access, whether or not the world is currently stopped.
+    bool currentThreadAcquiredAccess() const;
+#endif
+
+    bool handleNeedCollectionEpilogue(unsigned) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    void handleNeedCollectionEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+
+    bool relinquishConn(unsigned) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    // Not WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole): releaseAccessSlow() calls it after releasing access.
     void finishRelinquishingConn();
     
-    void setNeedCollectionEpilogue();
+    void setNeedCollectionEpilogue() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void waitWhileNeedCollectionEpilogue();
     
-    void setMutatorWaiting();
+    void setMutatorWaiting() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     void clearMutatorWaiting();
     
-    void waitForMembershipChange(uint64_t ticket);
-    void waitForCollection(GCRequest::Ticket);
-    void waitForAllCollections();
+    void waitForMembershipChange(uint64_t ticket) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    void waitForCollection(GCRequest::Ticket) WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    void waitForAllCollections() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
-    void willStartCollection(CollectionScope);
+    void willStartCollection(CollectionScope) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     
     void gatherStackRoots(ConservativeRoots&);
     void gatherVMRoots(ConservativeRoots&);
-    void beginMarking();
+    void beginMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 #if ENABLE(WEBASSEMBLY)
-    void beginMarkingWasmCallees();
-    void releaseUnmarkedWasmCallees();
+    void beginMarkingWasmCallees() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void releaseUnmarkedWasmCallees() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 #endif
-    void visitCompilerWorklistWeakReferences();
-    void removeDeadCompilerWorklistEntries();
-    void rememberExecutingAndCompilingCodeBlocks();
-    void updateOldGenerationCellBytes(size_t bytesMarked);
-    void endMarking();
-    void verifyHeapAfterMarking();
-    void pruneDeadReferences();
-    void prepareForAllocation();
+    void removeDeadCompilerWorklistEntries() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void rememberExecutingAndCompilingCodeBlocks() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void updateOldGenerationCellBytes(size_t bytesMarked) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void endMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void verifyHeapAfterMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void pruneDeadReferences() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void prepareForAllocation() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
-    void cancelDeferredWorkIfNeeded();
-    void reapWeakHandles();
-    void reconcileWeakGCHashTables();
-    void sweepArrayBuffers();
-    void snapshotUnswept();
-    void pruneUnusedSourceProviderCaches();
-    void harvestWeakReferences();
+    void cancelDeferredWorkIfNeeded() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void reapWeakHandles() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void reconcileWeakGCHashTables() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void sweepArrayBuffers() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void snapshotUnswept() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void pruneUnusedSourceProviderCaches() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
 
     template<typename CellType, typename CellSet>
     void reconcileWeakReferencesInMarkedCells(CellSet&, CollectionScope);
 
-    void reconcileWeakReferencesAtGCEnd();
+    void reconcileWeakReferencesAtGCEnd() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
-    void deleteUnmarkedCompiledCode();
+    void deleteUnmarkedCompiledCode() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     double projectedGCRateLimitingValue(MonotonicTime);
     void updateAllocationLimits();
-    void didFinishCollection();
-    void recordCollectionTime(Seconds duration);
-    void gatherExtraHeapData(HeapProfiler&);
-    void removeDeadHeapSnapshotNodes(HeapProfiler&);
-    void runCollectionEpilogue();
-    void sweepEagerlyInEpilogue();
+    void didFinishCollection() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void recordCollectionTime(Seconds duration) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void gatherExtraHeapData(HeapProfiler&) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void removeDeadHeapSnapshotNodes(HeapProfiler&) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void runCollectionEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
+    void sweepEagerlyInEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
-    void addDetachedWeakBlock(WeakBlock*);
-    void releaseDetachedWeakBlock(WeakBlock*);
-    void returnWeakBlockToPool(WeakBlock*);
-    WeakBlock* takeWeakBlockFromPool();
-    void destroyAllPooledWeakBlocks();
+    void addDetachedWeakBlock(Locker<Lock>&, WeakBlock*) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void releaseDetachedWeakBlock(Locker<Lock>&, WeakBlock*, IsConcurrent) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void returnWeakBlockToPool(Locker<Lock>&, WeakBlock*, IsConcurrent) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void addWeakBlockToPool(Locker<Lock>&, WeakBlock*) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    WeakBlock* takeWeakBlockFromPool() WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void trimWeakBlockPool() WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void trimPooledWeakBlocksAfterMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void destroyAllPooledWeakBlocks() WTF_REQUIRES_LOCK(m_weakBlockLock);
     unsigned maxPooledWeakBlocks();
 
     inline void incrementDeferralDepth();
@@ -769,7 +789,7 @@ private:
     void forEachCodeBlockImpl(NOESCAPE const ScopedLambda<void(CodeBlock*)>&);
     void forEachCodeBlockIgnoringJITPlansImpl(const AbstractLocker& codeBlockSetLocker, NOESCAPE const ScopedLambda<void(CodeBlock*)>&);
     
-    void setMutatorShouldBeFenced(bool value);
+    void setMutatorShouldBeFenced(bool value) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     
     Vector<std::unique_ptr<MarkingConstraint>> createCoreConstraints();
 
@@ -789,7 +809,7 @@ private:
     void dumpHeapStatisticsAtVMDestruction();
     void lastChanceToFinalize();
 
-    bool shouldSweepSynchronously();
+    bool shouldSweepSynchronously() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
 
 
     Lock m_lock;
@@ -874,9 +894,10 @@ private:
     Seconds m_lastEdenGCLength { 10_ms };
 #endif
 
-    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
-    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks;
-    unsigned m_pooledWeakBlockCount { 0 };
+    Lock m_weakBlockLock;
+    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks WTF_GUARDED_BY_LOCK(m_weakBlockLock);
+    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks WTF_GUARDED_BY_LOCK(m_weakBlockLock);
+    unsigned m_pooledWeakBlockCount WTF_GUARDED_BY_LOCK(m_weakBlockLock) { 0 };
     unsigned m_weakBlockCount { 0 };
 
 #if ASSERT_ENABLED
@@ -891,7 +912,7 @@ private:
     // Since this list is walked once to deref all the strings
     // We don't need fast access.
     SegmentedVector<std::pair<const JSString*, String>, 256, 10, SegmentedVectorGrowthPolicy::Doubling> m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope;
-   UncheckedKeyHashSet<const JSString*> m_discoveredAccessedStringsFromGCOwnedDataScope;
+    UncheckedKeyHashSet<const JSString*> m_stringsFoundOnStack;
     
     RefPtr<GCActivityCallback> m_fullActivityCallback;
     RefPtr<GCActivityCallback> m_edenActivityCallback;
@@ -939,6 +960,13 @@ private:
     static constexpr unsigned needCollectionEpilogueBit = 1u << 3u;
     static constexpr unsigned mutatorWaitingBit = 1u << 4u; // Allows the mutator to use this as a condition variable.
     Atomic<unsigned> m_worldState;
+    NO_UNIQUE_ADDRESS HeapAccessHolderRole m_accessHolderRole;
+#if ASSERT_ENABLED
+    // For assertIsAccessHolder(): the thread that acquired access, or 0.
+    Atomic<uint32_t> m_accessHolderThreadUID { 0 };
+    // For assertIsExclusiveAccessHolder(): how many threads have access.
+    Atomic<unsigned> m_accessHolderCount { 0 };
+#endif
     bool m_worldIsStopped { false };
 
     bool m_mutatorDidRun { true };

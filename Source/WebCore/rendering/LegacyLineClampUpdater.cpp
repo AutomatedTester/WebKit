@@ -68,18 +68,17 @@ static CheckedPtr<RenderBlockFlow> blockContainerForLastFormattedLine(RenderBloc
     if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(enclosingBlockContainer); blockFlow && blockFlow->childrenInline()) {
         // The lines tell us where the last formatted line is: either it is one of this container's own lines, or it is inside the block level box sitting on the last line.
         auto blockLevelBoxOnLastFormattedLine = [&] -> CheckedPtr<RenderBlock> {
-            for (auto lineBox = InlineIterator::lastLineBoxFor(*blockFlow); lineBox; --lineBox) {
-                if (!lineBox->hasContentfulInFlowBox()) {
+            for (auto& lineBox : InlineIterator::lineBoxesFor(*blockFlow) | std::views::reverse) {
+                if (!lineBox.hasContentfulInFlowBox()) {
                     // Out-of-flow content could initiate a line with no inline content.
                     continue;
                 }
-                if (!lineBox->hasBlockContent()) {
+                if (!lineBox.hasBlockContent()) {
                     // The last formatted line is one of this inline formatting context's own lines.
                     return { };
                 }
-                auto blockBox = lineBox->blockLevelBox();
-                // FIXME: Remove suppression once rdar://189998365 is fixed.
-                SUPPRESS_MEMORY_UNSAFE_CAST return blockBox ? dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockBox->renderer())) : nullptr;
+                auto blockBox = lineBox.blockLevelBox();
+                return blockBox ? dynamicDowncast<RenderBlock>(const_cast<RenderObject&>(blockBox->renderer())) : nullptr;
             }
             return { };
         };
@@ -107,7 +106,7 @@ std::optional<LegacyLineClampUpdater::ClampedContent> LegacyLineClampUpdater::cl
 
             // Let line-clamp logic run but make sure no clamping happens (it's needed to make sure certain features are disabled like ellipsis in inline direction).
             layoutState.setLegacyLineClamp(RenderLayoutState::LegacyLineClamp { inlineLayout->lineCount() + 1, { }, { }, { } });
-            lastRoot->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            lastRoot->setChildNeedsLayout(MarkingBehavior::OnlyThis);
             lastRoot->layoutIfNeeded();
 
             layoutState.setLegacyLineClamp(currentLineClamp);

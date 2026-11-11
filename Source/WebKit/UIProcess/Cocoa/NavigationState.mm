@@ -82,6 +82,7 @@
 #import <WebCore/SecurityOriginData.h>
 #import <WebCore/SerializedCryptoKeyWrap.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/Scope.h>
 #import <wtf/TZoneMallocInlines.h>
@@ -109,7 +110,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static WeakHashMap<WebPageProxy, WeakPtr<NavigationState>>& LEGACY_NODELETE navigationStates()
+NODELETE static WeakHashMap<WebPageProxy, WeakPtr<NavigationState>>& navigationStates()
 {
     static NeverDestroyed<WeakHashMap<WebPageProxy, WeakPtr<NavigationState>>> navigationStates;
 
@@ -467,10 +468,11 @@ static void interceptMarketplaceKitNavigation(Ref<API::NavigationAction>&& actio
         sourceFrameID = sourceFrame->handle()->frameID();
 
     auto addConsoleError = [sourceFrameID, url = action->request().url(), weakPage = WeakPtr { page }](const String& error) {
-        if (!sourceFrameID || !weakPage)
+        RefPtr page = weakPage;
+        if (!sourceFrameID || !page)
             return;
 
-        weakPage->addConsoleMessage(*sourceFrameID, MessageSource::Network, MessageLevel::Error, makeString("Can't handle MarketplaceKit link "_s, url.string(), " due to error: "_s, error));
+        page->addConsoleMessage(*sourceFrameID, MessageSource::Network, MessageLevel::Error, makeString("Can't handle MarketplaceKit link "_s, url.string(), " due to error: "_s, error));
     };
 
     RefPtr mainFrame = page.mainFrame();
@@ -768,10 +770,11 @@ void NavigationState::NavigationClient::contentRuleListNotification(WebPageProxy
     RetainPtr<NSMutableArray<NSString *>> identifiers;
     RetainPtr<NSMutableArray<NSString *>> notifications;
 
-    for (const auto& pair : results.results) {
+    Borrow borrowedResults = results.results;
+    for (const auto& pair : borrowedResults) {
         const String& listIdentifier = pair.first;
         const auto& result = pair.second;
-        for (const String& notification : result.notifications) {
+        for (const String& notification : borrow(result.notifications)) {
             if (!identifiers)
                 identifiers = adoptNS([NSMutableArray new]);
             if (!notifications)
@@ -785,7 +788,7 @@ void NavigationState::NavigationClient::contentRuleListNotification(WebPageProxy
         [static_cast<id<WKNavigationDelegatePrivate>>(navigationDelegate) _webView:protect(m_navigationState)->webView().get() URL:url.createNSURL().get() contentRuleListIdentifiers:identifiers.get() notifications:notifications.get()];
 
     if (m_navigationState->m_navigationDelegateMethods.webViewContentRuleListWithIdentifierPerformedActionForURL) {
-        for (auto&& pair : WTF::move(results.results))
+        for (auto&& pair : borrowedResults)
             [static_cast<id<WKNavigationDelegatePrivate>>(navigationDelegate) _webView:protect(m_navigationState)->webView().get() contentRuleListWithIdentifier:pair.first.createNSString().get() performedAction:protect(wrapper(API::ContentRuleListAction::create(WTF::move(pair.second)).get())).get() forURL:url.createNSURL().get()];
     }
 }
@@ -1481,7 +1484,7 @@ void NavigationState::NavigationClient::didFinishLoadForQuickLookDocumentInMainF
 #endif
 
 #if HAVE(APP_SSO)
-static SOAuthorizationLoadPolicy LEGACY_NODELETE soAuthorizationLoadPolicy(_WKSOAuthorizationLoadPolicy policy)
+NODELETE static SOAuthorizationLoadPolicy soAuthorizationLoadPolicy(_WKSOAuthorizationLoadPolicy policy)
 {
     switch (policy) {
     case _WKSOAuthorizationLoadPolicyAllow:
@@ -1493,7 +1496,7 @@ static SOAuthorizationLoadPolicy LEGACY_NODELETE soAuthorizationLoadPolicy(_WKSO
     return SOAuthorizationLoadPolicy::Allow;
 }
 
-static _WKSOAuthorizationLoadPolicy LEGACY_NODELETE wkSOAuthorizationLoadPolicy(SOAuthorizationLoadPolicy policy)
+NODELETE static _WKSOAuthorizationLoadPolicy wkSOAuthorizationLoadPolicy(SOAuthorizationLoadPolicy policy)
 {
     switch (policy) {
     case SOAuthorizationLoadPolicy::Allow:

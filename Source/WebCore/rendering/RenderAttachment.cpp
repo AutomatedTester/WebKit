@@ -33,6 +33,7 @@
 #include "FloatRoundedRect.h"
 #include "FrameSelection.h"
 #include "HTMLAttachmentElement.h"
+#include "NaturalDimensions.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
 #include "RenderObjectInlines.h"
@@ -59,7 +60,7 @@ RenderAttachment::RenderAttachment(HTMLAttachmentElement& element, Style::Comput
 
 RenderAttachment::~RenderAttachment() = default;
 
-HTMLAttachmentElement& LEGACY_NODELETE RenderAttachment::attachmentElement() const
+NODELETE HTMLAttachmentElement& RenderAttachment::attachmentElement() const
 {
     return downcast<HTMLAttachmentElement>(nodeForNonAnonymous());
 }
@@ -141,7 +142,7 @@ void RenderAttachment::layoutShadowContent(const LayoutSize& size)
         CheckedRef style = renderBox->mutableStyle();
         style->setHeight(Style::PreferredSize::Fixed { size.height() });
         style->setWidth(Style::PreferredSize::Fixed { size.width() });
-        renderBox->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderBox->setNeedsLayout(MarkingBehavior::OnlyThis);
         renderBox->layout();
     }
 }
@@ -165,6 +166,11 @@ bool RenderAttachment::paintWideLayoutAttachmentOnly(const PaintInfo& paintInfo,
         return true;
     }
     return false;
+}
+
+NaturalDimensions RenderAttachment::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

@@ -27,6 +27,7 @@
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 
 namespace JSC {
 
@@ -48,7 +49,8 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, const SourceCode&);
-    static JSBoundFunction* createRaw(VM&, JSGlobalObject*, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode&);
+    JS_EXPORT_PRIVATE static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, SourceTaintedOrigin);
+    static JSBoundFunction* createRaw(VM&, JSGlobalObject*, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, SourceTaintedOrigin);
     
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
@@ -112,17 +114,17 @@ public:
         return m_isTainted;
     }
 
-    static bool LEGACY_NODELETE canSkipNameAndLengthMaterialization(JSGlobalObject*, Structure*);
+    NODELETE static bool canSkipNameAndLengthMaterialization(JSGlobalObject*, Structure*);
 
     DECLARE_EXPORT_INFO;
 
     DECLARE_VISIT_CHILDREN;
 
 private:
-    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, const SourceCode&);
+    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, SourceTaintedOrigin);
 
     JSString* nameSlow(VM&);
-    double LEGACY_NODELETE lengthSlow(VM&);
+    NODELETE double lengthSlow(VM&);
     bool canConstructSlow();
     String nameStringWithoutGCSlow(VM&);
 

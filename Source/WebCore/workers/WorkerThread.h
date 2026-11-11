@@ -26,8 +26,10 @@
 #pragma once
 
 #include <JavaScriptCore/RuntimeFlags.h>
+#include <WebCore/CanBeCrossOriginIsolated.h>
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/FetchRequestCredentials.h>
 #include <WebCore/IsSecureContext.h>
 #include <WebCore/NetworkLoadPolicy.h>
@@ -77,6 +79,7 @@ public:
     String name;
     String inspectorIdentifier;
     String userAgent;
+    String navigatorPlatform;
     bool isOnline;
     ContentSecurityPolicyResponseHeaders contentSecurityPolicyResponseHeaders;
     bool shouldBypassMainWorldContentSecurityPolicy;
@@ -96,6 +99,8 @@ public:
     NetworkLoadPolicy networkLoadPolicy;
     IsSecureContext isSecureContext;
     bool hasUnpartitionedStorageAccess { false };
+    CanBeCrossOriginIsolated canBeCrossOriginIsolated { CanBeCrossOriginIsolated::No };
+    DocumentIsolationPolicy documentIsolationPolicy { };
 
     WorkerParameters isolatedCopy() const;
 };
@@ -110,7 +115,7 @@ public:
     WorkerReportingProxy* workerReportingProxy() const { return m_workerReportingProxy.get(); }
 
     // Number of active worker threads.
-    WEBCORE_EXPORT static unsigned LEGACY_NODELETE workerThreadCount();
+    NODELETE WEBCORE_EXPORT static unsigned workerThreadCount();
 
     JSC::RuntimeFlags runtimeFlags() const { return m_runtimeFlags; }
     bool isInStaticScriptEvaluation() const { return m_isInStaticScriptEvaluation; }
@@ -122,7 +127,7 @@ public:
     // The callback is called on the worker thread before the worker script is evaluated. It is not called
     // for a worker that was stopped before it started.
     using GlobalScopeCreatedCallback = void(WorkerGlobalScope&);
-    WEBCORE_EXPORT static void setGlobalScopeCreatedCallbackForTesting(GlobalScopeCreatedCallback*);
+    NODELETE WEBCORE_EXPORT static void setGlobalScopeCreatedCallbackForTesting(GlobalScopeCreatedCallback*);
 
 protected:
     WorkerThread(const WorkerParameters&, const ScriptBuffer& sourceCode, WorkerLoaderProxy&, WorkerDebuggerProxy&, WorkerReportingProxy&, WorkerBadgeProxy&, WorkerThreadStartMode, const SecurityOrigin& topOrigin, IDBClient::IDBConnectionProxy*, SocketProvider*, JSC::RuntimeFlags);
@@ -130,7 +135,7 @@ protected:
     // Factory method for creating a new worker context for the thread.
     virtual Ref<WorkerGlobalScope> createWorkerGlobalScope(const WorkerParameters&, Ref<SecurityOrigin>&&, Ref<SecurityOrigin>&& topOrigin) = 0;
 
-    WorkerGlobalScope* LEGACY_NODELETE globalScope();
+    NODELETE WorkerGlobalScope* globalScope();
 
     IDBClient::IDBConnectionProxy* idbConnectionProxy() { return m_idbConnectionProxy.get(); }
     SocketProvider* socketProvider() { return m_socketProvider.get(); }

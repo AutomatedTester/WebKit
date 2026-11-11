@@ -217,6 +217,14 @@ class Git(mocks.Subprocess):
                 completion=mocks.ProcessCompletion(returncode=1, elapsed=2),
             )]
 
+        diff_name_routes = [
+            mocks.Subprocess.Route(
+                self.executable, '-c', 'diff.renames=false', 'diff', *listing, '-z',
+                cwd=self.path,
+                generator=self.diff_names,
+            ) for listing in (['--name-only'], ['--name-only', '--staged'], ['--name-status', '--staged'])
+        ]
+
         super(Git, self).__init__(
             mocks.Subprocess.Route(
                 self.executable, 'symbolic-ref', '-q', 'HEAD',
@@ -344,7 +352,7 @@ nothing to commit, working tree clean
                     stdout='{}\n'.format(self.find(args[2]).hash),
                 ) if self.find(args[2]) else mocks.ProcessCompletion(returncode=128)
             ), mocks.Subprocess.Route(
-                self.executable, 'log', re.compile(r'.+'), '-1', '--no-decorate', '--date=unix',
+                self.executable, 'log', re.compile(r'.+'), '-1', '--no-decorate', '--no-abbrev-commit', '--date=unix',
                 cwd=self.path,
                 generator=lambda *args, **kwargs: mocks.ProcessCompletion(
                     returncode=0,
@@ -369,7 +377,7 @@ nothing to commit, working tree clean
                         ),
                 ) if self.find(args[2]) else mocks.ProcessCompletion(returncode=128),
             ), mocks.Subprocess.Route(
-                self.executable, 'log', '--format=fuller', '--no-decorate', '--date=unix', re.compile(r'.+'),
+                self.executable, 'log', '--format=fuller', '--no-decorate', '--no-abbrev-commit', '--date=unix', re.compile(r'.+'),
                 cwd=self.path,
                 generator=lambda *args, **kwargs: mocks.ProcessCompletion(
                     returncode=0,
@@ -393,7 +401,7 @@ nothing to commit, working tree clean
                                     commit.revision,
                                 )] if git_svn else []),
                             )
-                        ) for commit in list(self.rev_list(args[5]))
+                        ) for commit in list(self.rev_list(args[6]))
                     ])
                 )
             ),
@@ -417,6 +425,15 @@ nothing to commit, working tree clean
                         commit.hash for commit in self.commits[self.branch] if commit.identifier % 2
                     ][:int(args[2].split('=')[-1])])
                 )
+            ), mocks.Subprocess.Route(
+                self.executable, 'log', '--first-parent', '--format=%ct', re.compile(r'--since=.+'), re.compile(r'.+'),
+                cwd=self.path,
+                generator=lambda *args, **kwargs: mocks.ProcessCompletion(
+                    returncode=0,
+                    stdout=''.join([
+                        '{}\n'.format(int(commit.timestamp)) for commit in self.rev_list(args[5])
+                    ])
+                ) if self.find(args[5]) else mocks.ProcessCompletion(returncode=128),
             ), mocks.Subprocess.Route(
                 self.executable, 'log', '--oneline', re.compile(r'.+'),
                 cwd=self.path,
@@ -584,26 +601,7 @@ nothing to commit, working tree clean
                 completion=mocks.ProcessCompletion(
                     returncode=0,
                 ),
-            ), mocks.Subprocess.Route(
-                self.executable, 'diff', '--name-only',
-                cwd=self.path,
-                generator=lambda *args, **kwargs:
-                    mocks.ProcessCompletion(returncode=0, stdout='\n'.join(sorted([
-                        key for key, value in self.modified.items() if value.startswith('diff')
-                    ]))),
-            ), mocks.Subprocess.Route(
-                self.executable, 'diff', '--name-only', '--staged',
-                cwd=self.path,
-                generator=lambda *args, **kwargs:
-                    mocks.ProcessCompletion(returncode=0, stdout='\n'.join(sorted(self.staged.keys()))),
-            ), mocks.Subprocess.Route(
-                self.executable, 'diff', '--name-status', '--staged',
-                cwd=self.path,
-                generator=lambda *args, **kwargs:
-                    mocks.ProcessCompletion(returncode=0, stdout='\n'.join(sorted([
-                        '{}       {}'.format('M' if value.startswith('diff') else 'A', key) for key, value in self.staged.items()
-                    ]))),
-            ), mocks.Subprocess.Route(
+            ), *diff_name_routes, mocks.Subprocess.Route(
                 self.executable, 'diff', '--cached', '--quiet',
                 cwd=self.path,
                 generator=lambda *args, **kwargs:
@@ -871,6 +869,13 @@ nothing to commit, working tree clean
     def __exit__(self, typ, exc, tb):
         super().__exit__(typ, exc, tb)
         local.Git.executable.clear()  # Clear the memoized cache after patching
+
+    def diff_names(self, *args, **kwargs):
+        files = self.staged if '--staged' in args else {key: value for key, value in self.modified.items() if value.startswith('diff')}
+        entries = [('M' if value.startswith('diff') else 'A', key) for key, value in sorted(files.items())]
+        if '--name-status' in args:
+            return mocks.ProcessCompletion(returncode=0, stdout=''.join('{}\0{}\0'.format(*entry) for entry in entries))
+        return mocks.ProcessCompletion(returncode=0, stdout=''.join('{}\0'.format(key) for _, key in entries))
 
     @property
     def branch(self):
@@ -1356,6 +1361,7 @@ nothing to commit, working tree clean
             self.commits[to_be_moved] = self.commits[moved_to]
             self.head = self.commits[to_be_moved][-1]
             return mocks.ProcessCompletion(returncode=0)
+        # The first commit of a non-default branch is its branch point, which is already on the default branch
         self.commits[to_be_moved] += [
             Commit(
                 branch=to_be_moved, repository_id=commit.repository_id,
@@ -1363,7 +1369,7 @@ nothing to commit, working tree clean
                 identifier=commit.identifier + (commit.branch_point or 0), branch_point=None,
                 hash=commit.hash, revision=commit.revision,
                 author=commit.author, message=commit.message,
-            ) for commit in self.commits[moved_to]
+            ) for commit in self.commits[moved_to][1:]
         ]
         self.head = self.commits[to_be_moved][-1]
         return mocks.ProcessCompletion(returncode=0)
@@ -1498,8 +1504,10 @@ nothing to commit, working tree clean
             head_index = None
             if not remote:
                 commits_part = self.commits[last_commit.branch]
-            else:
+            elif '{}/{}'.format(remote, last_commit.branch) in self.remotes:
                 commits_part = self.remotes['{}/{}'.format(remote, last_commit.branch)]
+            else:  # Remote refs moved by update-ref already contain their full history
+                break
             for i in range(len(commits_part)):
                 if commits_part[i].hash == last_commit.hash:
                     head_index = i
@@ -1518,48 +1526,30 @@ nothing to commit, working tree clean
         A..B = A u B - A
         A...B = A u B - A n B
         """
-        two_dots = False
-        triple_dots = False
-        a_commit = None
-        a_remote = None
-        b_commit = None
-        b_remote = None
-        if '...' in something:
-            something = something.split('...')
-            triple_dots = True
-            a_commit = self.find(something[0])
-            b_commit = self.find(something[1])
-            if something[0] in self.remotes:
-                a_remote = something[0].replace('/{}'.format(a_commit.branch), '')
-            if something[1] in self.remotes:
-                b_remote = something[1].replace('/{}'.format(b_commit.branch), '')
-        elif '..' in something:
-            something = something.split('..')
-            two_dots = True
-            a_commit = self.find(something[0])
-            b_commit = self.find(something[1])
-            if something[0] in self.remotes:
-                a_remote = something[0].replace('/{}'.format(a_commit.branch), '')
-            if something[1] in self.remotes:
-                b_remote = something[1].replace('/{}'.format(b_commit.branch), '')
+        def resolve(ref):
+            ref = str(ref).replace('refs/remotes/', '').replace('remotes/', '')
+            commit = self.find(ref)
+            if not commit:
+                return None, []
+            # Remote refs are resolved by the branch they name, not the branch of their tip commit
+            remote, branch = ref.split('/', 1) if ref in self.remotes else (None, commit.branch)
+            commits = []
+            for candidate in self.resolve_all_commits(branch, remote=remote):
+                commits.append(candidate)
+                if candidate.hash == commit.hash:
+                    break
+            return commit, commits
+
+        two_dots = '..' in something and '...' not in something
+        triple_dots = '...' in something
+        if triple_dots:
+            a, b = something.split('...')
+        elif two_dots:
+            a, b = something.split('..')
         else:
-            a_commit = self.find(something)
-            if something in self.remotes:
-                a_remote = something.replace('/{}'.format(a_commit.branch), '')
-
-        a_commits = []
-        a_branch_commits = self.resolve_all_commits(a_commit.branch, remote=a_remote) if a_commit else []
-        for commit in a_branch_commits:
-            a_commits.append(commit)
-            if commit.hash == a_commit.hash:
-                break
-
-        b_commits = []
-        b_branch_commits = self.resolve_all_commits(b_commit.branch, remote=b_remote) if b_commit else []
-        for commit in b_branch_commits:
-            b_commits.append(commit)
-            if commit.hash == b_commit.hash:
-                break
+            a, b = something, None
+        a_commit, a_commits = resolve(a)
+        b_commit, b_commits = resolve(b) if b else (None, [])
 
         if not two_dots and not triple_dots:
             return list(reversed(a_commits))

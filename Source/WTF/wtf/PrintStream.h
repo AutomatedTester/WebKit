@@ -56,7 +56,7 @@ inline const char* boolForPrinting(const std::optional<bool>& value)
 class PrintStream {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PrintStream); WTF_MAKE_NONCOPYABLE(PrintStream);
 public:
-    WTF_EXPORT_PRIVATE PrintStream();
+    NODELETE WTF_EXPORT_PRIVATE PrintStream();
     WTF_EXPORT_PRIVATE virtual ~PrintStream();
 
     WTF_EXPORT_PRIVATE void printf(const char* format, ...) WTF_ATTRIBUTE_PRINTF(2, 3);
@@ -127,7 +127,7 @@ WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const StringImpl*);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, std::span<const char8_t>);
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, const char8_t*);
 inline void printInternal(PrintStream& out, char* value) { printInternal(out, static_cast<const char*>(value)); }
-inline void printInternal(PrintStream& out, String& value) { printInternal(out, static_cast<const String&>(value)); }
+WTF_EXPORT_PRIVATE void printInternal(PrintStream&, String&);
 inline void printInternal(PrintStream& out, StringImpl* value) { printInternal(out, static_cast<const StringImpl*>(value)); }
 
 WTF_EXPORT_PRIVATE void printInternal(PrintStream&, bool);

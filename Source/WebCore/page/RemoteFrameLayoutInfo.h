@@ -58,9 +58,10 @@ public:
     FloatRect exposedContentRectInChildView() const { return m_exposedContentRectInChildView; }
 #endif
     bool ownerHasRenderer() const { return m_ownerHasRenderer; }
+    bool ownerIsFullyClipped() const { return m_ownerIsFullyClipped; }
     const TransformationMatrix& childFrameOwnerToRootContentTransform() const { return m_childFrameOwnerToRootContentTransform; }
     const TransformationMatrix& absoluteToChildFrameOwnerLocalTransform() const { return m_absoluteToChildFrameOwnerLocalTransform; }
-    float frameScaleFactor() const { return m_frameScaleFactor; }
+    float frameOwnerZoomFactor() const { return m_frameOwnerZoomFactor; }
     LayoutPoint contentBoxLocation() const { return m_contentBoxLocation; }
     OptionSet<FrameOwnerElementAppearance> ownerElementAppearance() const { return m_ownerElementAppearance; }
 
@@ -74,9 +75,10 @@ private:
         FloatRect exposedContentRectInChildView,
 #endif
         bool ownerHasRenderer,
+        bool ownerIsFullyClipped,
         TransformationMatrix childFrameOwnerToRootContentTransform,
         TransformationMatrix absoluteToChildFrameOwnerLocalTransform,
-        float frameScaleFactor,
+        float frameOwnerZoomFactor,
         LayoutPoint contentBoxLocation,
         OptionSet<FrameOwnerElementAppearance>
     );
@@ -99,6 +101,10 @@ private:
     // Whether the frame's owner element has a renderer (e.g. not display:none).
     bool m_ownerHasRenderer;
 
+    // Whether the frame's owner element, or an ancestor of it in any ancestor frame, fully clips
+    // the frame's contents (see isFrameOwnerFullyClipped).
+    bool m_ownerIsFullyClipped;
+
     // The transformation matrix to project from the frame owner's
     // coordinate space to its RenderView's (root) coordinate space.
     // Note: this DOES NOT include the frame scale transform on the
@@ -109,10 +115,8 @@ private:
     // absolute coordinate to the child frame owner's local coordinate.
     TransformationMatrix m_absoluteToChildFrameOwnerLocalTransform;
 
-    // Scale factor of the frame with respect to its parent frame. Per
-    // Frame::frameScaleFactor, this is the accumulated CSS zoom applied
-    // to the frame element.
-    float m_frameScaleFactor;
+    // The accumulated CSS zoom applied to the frame element, without page zoom.
+    float m_frameOwnerZoomFactor;
 
     // The offset of the content box of the frame's owner element
     // from its border box.
@@ -120,6 +124,8 @@ private:
 
     OptionSet<FrameOwnerElementAppearance> m_ownerElementAppearance;
 };
+
+NODELETE WEBCORE_EXPORT bool operator==(const RemoteFrameLayoutInfo&, const RemoteFrameLayoutInfo&);
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, FrameOwnerElementAppearance);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const RemoteFrameLayoutInfo&);

@@ -34,15 +34,13 @@
 namespace WebKit {
 
 struct RemoteVideoFrameProxyProperties {
-    // The receiver owns the reference, so it must be released via either adoption to
-    // `RemoteVideoFrameProxy::create()` or via `RemoteVideoFrameProxy::releaseUnused()`.
-    WebKit::RemoteVideoFrameReference reference;
     MediaTime presentationTime;
     bool isMirrored { false };
     WebCore::VideoFrameRotation rotation { WebCore::VideoFrameRotation::None };
     WebCore::IntSize size;
     uint32_t pixelFormat { 0 };
     WebCore::PlatformVideoColorSpace colorSpace;
+    bool shouldIgnoreAlpha;
 };
 
 } // namespace WebKit

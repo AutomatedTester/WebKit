@@ -40,7 +40,6 @@ from webkitpy.common.version_name_map import VersionNameMap
 from webkitpy.port.base import Port
 from webkitpy.port.config import apple_additions, Config
 from webkitpy.port.darwin import DarwinPort
-from webkitpy.port.driver import DriverInput
 
 _log = logging.getLogger(__name__)
 
@@ -218,10 +217,9 @@ class MacPort(DarwinPort):
         env = super(MacPort, self).setup_environ_for_server(server_name)
         if server_name == self.driver_name():
             if self.get_option('leaks'):
-                env['MallocStackLogging'] = '1'
-                env['__XPC_MallocStackLogging'] = '1'
-                env['MallocScribble'] = '1'
-                env['__XPC_MallocScribble'] = '1'
+                for name in ['MallocStackLogging', 'MallocScribble', 'SYSTEM_HEAP_USE_DEFAULT_ZONE']:
+                    env[name] = '1'
+                    env['__XPC_' + name] = '1'
             if self.get_option('guard_malloc'):
                 self._append_value_colon_separated(env, 'DYLD_INSERT_LIBRARIES', '/usr/lib/libgmalloc.dylib')
                 self._append_value_colon_separated(env, '__XPC_DYLD_INSERT_LIBRARIES', '/usr/lib/libgmalloc.dylib')
@@ -396,12 +394,8 @@ class MacPort(DarwinPort):
         super(MacPort, self).setup_test_run(device_type)
         # Warm up only when multiple workers will spawn concurrently (webkit.org/b/242106):
         # with one worker the first real test does the same first-run binary verification.
-        # Also skipped under --no-timeout so `lldb --wait-for --attach-name ...` doesn't
-        # latch onto the warmup process.
-        if self.get_option('child_processes', 1) > 1 and not self.get_option('no_timeout'):
-            _log.debug('Warming up the runner ...')
-            warmup_driver = self.create_driver(0)
-            warmup_driver.run_test(DriverInput('file:///warmup-does-not-exist', 60000., None, should_run_pixel_test=False), stop_when_done=True)
+        if self.get_option('child_processes', 1) > 1:
+            self._warm_up_runner()
 
         # rdar://132098879, ensure webarchive is quarantined.
         webarchive_test_path = self.layout_tests_dir() + '/webarchive/loading/resources/quarantined_top.webarchive'
@@ -418,6 +412,24 @@ class MacCatalystPort(MacPort):
 
     def _build_driver_flags(self):
         return ['SDK_VARIANT=iosmac'] + super(MacCatalystPort, self)._build_driver_flags()
+
+    def path_to_api_test(self, program_name):
+        # The CMake build makes TestWebKitAPI a Mac Catalyst app; the Xcode build makes it a tool.
+        tool = super(MacCatalystPort, self).path_to_api_test(program_name)
+        app_executable = self._build_path(program_name + '.app', 'Contents', 'MacOS', program_name)
+        if not self._filesystem.exists(tool) and self._filesystem.exists(app_executable):
+            return app_executable
+        return tool
+
+    # LayoutTestHelper does nothing for PLATFORM(IOS_FAMILY), which includes Mac Catalyst.
+    def start_helper(self, pixel_tests=False, prefer_integrated_gpu=False):
+        return True
+
+    def start_helper_async(self, pixel_tests=False, prefer_integrated_gpu=False):
+        return True
+
+    def wait_for_helper_ready(self):
+        return True
 
     def configuration_for_upload(self, host=None):
         configuration = super(MacCatalystPort, self).configuration_for_upload(host=host)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderView.h"
 #include "StyleBorderImage.h"
@@ -50,7 +49,7 @@
 namespace WebCore {
 
 InlineBoxPainter::InlineBoxPainter(const LayoutIntegration::InlineContent& inlineContent, const InlineDisplay::Box& box, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : InlineBoxPainter(*InlineIterator::inlineBoxFor(inlineContent, box), paintInfo, paintOffset)
+    : InlineBoxPainter(InlineIterator::inlineBoxFor(inlineContent, box), paintInfo, paintOffset)
 {
 }
 
@@ -59,7 +58,7 @@ InlineBoxPainter::InlineBoxPainter(const InlineIterator::InlineBox& inlineBox, P
     , m_paintInfo(paintInfo)
     , m_paintOffset(paintOffset)
     , m_renderer(m_inlineBox.renderer())
-    , m_isFirstLineBox(m_inlineBox.lineBox()->isFirst())
+    , m_isFirstLineBox(m_inlineBox.lineBox().isFirst())
     , m_isRootInlineBox(m_inlineBox.isRootInlineBox())
     , m_isHorizontal(m_inlineBox.isHorizontal())
 {
@@ -73,8 +72,8 @@ void InlineBoxPainter::paint()
         if (renderer().usedStyle().visibility() != UsedVisibility::Visible || !renderer().hasOutline() || m_isRootInlineBox)
             return;
 
-        auto& inlineFlow = downcast<RenderInline>(renderer());
-        m_paintInfo.outlineObjects->add(inlineFlow);
+        ASSERT(renderer().isInlineBox());
+        m_paintInfo.outlineObjects->add(renderer());
 
         return;
     }
@@ -87,7 +86,7 @@ void InlineBoxPainter::paint()
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     if (m_paintInfo.phase == PaintPhase::AXCustomColorCollectBackgrounds) {
         if (!m_isRootInlineBox && renderer().hasVisibleBoxDecorations()) {
-            auto localRect = LayoutRect { m_inlineBox.visualRect() };
+            auto localRect = LayoutRect { m_inlineBox.physicalRect() };
             auto paintRect = LayoutRect { m_paintOffset + localRect.location(), localRect.size() };
             m_paintInfo.axCustomColorBackdropContext()->recordBackdrop(renderer(), FloatRect { paintRect }, m_paintInfo.paintBehavior);
         }
@@ -99,10 +98,10 @@ void InlineBoxPainter::paint()
 #endif
 
     if (m_paintInfo.phase == PaintPhase::Accessibility) {
-        if (auto* renderInline = dynamicDowncast<RenderInline>(m_renderer)) {
-            auto linesBoundingBox = enclosingIntRect(renderInline->visualOverflowRect());
+        if (m_renderer.isInlineBox()) {
+            auto linesBoundingBox = enclosingIntRect(m_renderer.visualOverflowRect());
             linesBoundingBox.moveBy(roundedIntPoint(m_paintOffset));
-            m_paintInfo.accessibilityRegionContext()->takeBounds(dynamicDowncast<RenderInline>(m_renderer), WTF::move(linesBoundingBox));
+            m_paintInfo.accessibilityRegionContext()->takeBoundsForInlineBox(m_renderer, WTF::move(linesBoundingBox));
         }
         return;
     }
@@ -169,7 +168,7 @@ void InlineBoxPainter::paintMask()
         return;
 
     // Move x/y to our coordinates.
-    auto localRect = LayoutRect { m_inlineBox.visualRect() };
+    auto localRect = LayoutRect { m_inlineBox.physicalRect() };
     LayoutPoint adjustedPaintOffset = m_paintOffset + localRect.location();
 
     auto& maskBorder = renderer().style().maskBorder();
@@ -235,7 +234,7 @@ void InlineBoxPainter::paintDecorations()
         return;
 
     // Move x/y to our coordinates.
-    auto localRect = LayoutRect { m_inlineBox.visualRect() };
+    auto localRect = LayoutRect { m_inlineBox.physicalRect() };
     LayoutPoint adjustedPaintoffset = m_paintOffset + localRect.location();
     GraphicsContext& context = m_paintInfo.context();
     LayoutRect paintRect = LayoutRect(adjustedPaintoffset, localRect.size());
@@ -265,7 +264,7 @@ void InlineBoxPainter::paintDecorations()
 
     BorderPainter borderPainter { renderer(), m_paintInfo };
 
-    if (!hasBorderImage || !m_inlineBox.isSplit()) {
+    if (!hasBorderImage || !m_inlineBox.isSplit() || renderer().style().boxDecorationBreak() == BoxDecorationBreak::Clone) {
         auto closedEdges = m_inlineBox.closedEdges();
         borderPainter.paintBorder(paintRect, usedStyle(), BleedAvoidance::None, closedEdges);
         return;
@@ -300,7 +299,7 @@ template<typename Layer> void InlineBoxPainter::paintFillLayer(const Color& colo
 
     if (renderer().style().boxDecorationBreak() == BoxDecorationBreak::Clone) {
         GraphicsContextStateSaver stateSaver(m_paintInfo.context());
-        m_paintInfo.context().clip({ rect.location(), m_inlineBox.visualRectIgnoringBlockDirection().size() });
+        m_paintInfo.context().clip({ rect.location(), m_inlineBox.blockStartRelativePhysicalRect().size() });
         backgroundPainter.paintFillLayer(color, fillLayer, rect, BleedAvoidance::None, m_inlineBox, { }, op);
         return;
     }
@@ -329,8 +328,8 @@ template<typename Layer> void InlineBoxPainter::paintFillLayer(const Color& colo
     LayoutRect backgroundImageStrip {
         rect.x() - (isHorizontal() ? logicalOffsetOnLine : 0_lu),
         rect.y() - (isHorizontal() ? 0_lu : logicalOffsetOnLine),
-        isHorizontal() ? totalLogicalWidth : LayoutUnit(m_inlineBox.visualRectIgnoringBlockDirection().width()),
-        isHorizontal() ? LayoutUnit(m_inlineBox.visualRectIgnoringBlockDirection().height()) : totalLogicalWidth
+        isHorizontal() ? totalLogicalWidth : LayoutUnit(m_inlineBox.blockStartRelativePhysicalRect().width()),
+        isHorizontal() ? LayoutUnit(m_inlineBox.blockStartRelativePhysicalRect().height()) : totalLogicalWidth
     };
 
     GraphicsContextStateSaver stateSaver(m_paintInfo.context());

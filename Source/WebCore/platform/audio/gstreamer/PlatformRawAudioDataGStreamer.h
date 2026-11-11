@@ -21,7 +21,7 @@
 
 #include "PlatformRawAudioData.h"
 
-#if ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#if USE(GSTREAMER)
 
 #include "GRefPtrGStreamer.h"
 #include <gst/audio/audio.h>
@@ -41,6 +41,7 @@ public:
     size_t numberOfFrames() const final;
     std::optional<uint64_t> duration() const final;
     int64_t timestamp() const final;
+    MediaChannelLayout channelLayout() const final;
 
     size_t memoryCost() const final;
 
@@ -65,4 +66,4 @@ SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::PlatformRawAudioDataGStreamer)
 static bool isType(const WebCore::PlatformRawAudioData& data) { return data.platformType() == WebCore::MediaPlatformType::GStreamer; }
 SPECIALIZE_TYPE_TRAITS_END()
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(GSTREAMER)

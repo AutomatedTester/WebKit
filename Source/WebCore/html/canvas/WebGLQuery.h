@@ -37,7 +37,7 @@ namespace WebCore {
 
 class WebGLQuery final : public WebGLObject {
 public:
-    static Ref<WebGLQuery> createLost();
+    NODELETE static Ref<WebGLQuery> createLost();
     static Ref<WebGLQuery> create(WebGLRenderingContextBase&);
     virtual ~WebGLQuery();
 

@@ -152,10 +152,9 @@ auto LegacyRenderSVGResourceClipper::pathOnlyClipping(GraphicsContext& context, 
     }
 
     // Transform path by animatedLocalTransform.
-    AffineTransform oldCTM = context.getCTM();
-    context.concatCTM(animatedLocalTransform);
+    auto clipPathTransform = animatedLocalTransform;
     if (transform)
-        context.concatCTM(*transform);
+        clipPathTransform.multiply(*transform);
 
     // The SVG specification wants us to clip everything, if clip-path doesn't have a child.
     if (clipPath.isEmpty())
@@ -171,8 +170,7 @@ auto LegacyRenderSVGResourceClipper::pathOnlyClipping(GraphicsContext& context, 
             result.add(ApplyResult::ClipContainsRendererContent);
     }
 
-    context.clipPath(clipPath, clipRule);
-    context.setCTM(oldCTM);
+    context.clipTransformedPath(clipPathTransform, clipPath, clipRule);
     return result;
 }
 
@@ -199,7 +197,7 @@ auto LegacyRenderSVGResourceClipper::applyClippingToContext(GraphicsContext& con
     if (resourceWasApplied(clipResult)) {
         auto it = m_clipperMap.find(renderer);
         if (it != m_clipperMap.end())
-            it->value->imageBuffer = nullptr;
+            it->value->image = nullptr;
 
         return clipResult;
     }
@@ -210,11 +208,11 @@ auto LegacyRenderSVGResourceClipper::applyClippingToContext(GraphicsContext& con
 
     if (clipperData.invalidate(computeInputs(context, renderer, objectBoundingBox, clippedContentBounds, usedZoom))) {
         // FIXME (149469): This image buffer should not be unconditionally unaccelerated. Making it match the context breaks nested clipping, though.
-        clipperData.imageBuffer = context.createScaledImageBuffer(clippedContentBounds, clipperData.inputs.scale, ColorSpace::SRGB(), RenderingMode::Unaccelerated); // FIXME
-        if (!clipperData.imageBuffer)
+        RefPtr maskImageBuffer = context.createScaledImageBuffer(clippedContentBounds, clipperData.inputs.scale, ColorSpace::SRGB(), RenderingMode::Unaccelerated); // FIXME
+        if (!maskImageBuffer)
             return { };
 
-        GraphicsContext& maskContext = protect(clipperData.imageBuffer)->context();
+        GraphicsContext& maskContext = maskImageBuffer->context();
         maskContext.concatCTM(animatedLocalTransform);
 
         // clipPath can also be clipped by another clipPath.
@@ -227,19 +225,21 @@ auto LegacyRenderSVGResourceClipper::applyClippingToContext(GraphicsContext& con
             if (!clipper->applyClippingToContext(maskContext, *this, objectBoundingBox, clippedContentBounds, usedZoom))
                 return { };
 
-            succeeded = drawContentIntoMaskImage(Ref { *clipperData.imageBuffer }, objectBoundingBox, usedZoom);
+            succeeded = drawContentIntoMaskImage(*maskImageBuffer, objectBoundingBox, usedZoom);
             // The context restore applies the clipping on non-CG platforms.
         } else
-            succeeded = drawContentIntoMaskImage(Ref { *clipperData.imageBuffer }, objectBoundingBox, usedZoom);
+            succeeded = drawContentIntoMaskImage(*maskImageBuffer, objectBoundingBox, usedZoom);
 
-        if (!succeeded)
+        if (succeeded)
+            clipperData.image = ImageBuffer::sinkIntoNativeImage(WTF::move(maskImageBuffer));
+        else
             clipperData = { };
     }
 
-    if (!clipperData.imageBuffer)
+    if (!clipperData.image)
         return { };
 
-    SVGRenderingContext::clipToImageBuffer(context, clippedContentBounds, clipperData.inputs.scale, clipperData.imageBuffer, true);
+    SVGRenderingContext::clipToNativeImage(context, clippedContentBounds, clipperData.inputs.scale, clipperData.image, true);
     return { ApplyResult::ResourceApplied };
 }
 

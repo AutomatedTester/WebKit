@@ -217,7 +217,7 @@ NSString *NSAccessibilityEnhancedUserInterfaceAttribute = @"AXEnhancedUserInterf
 
 @end
 
-WebCore::EditableLinkBehavior LEGACY_NODELETE core(WebKitEditableLinkBehavior editableLinkBehavior)
+NODELETE WebCore::EditableLinkBehavior core(WebKitEditableLinkBehavior editableLinkBehavior)
 {
     using namespace WebCore;
     switch (editableLinkBehavior) {
@@ -236,7 +236,7 @@ WebCore::EditableLinkBehavior LEGACY_NODELETE core(WebKitEditableLinkBehavior ed
     return EditableLinkBehavior::Default;
 }
 
-WebCore::TextDirectionSubmenuInclusionBehavior LEGACY_NODELETE core(WebTextDirectionSubmenuInclusionBehavior behavior)
+NODELETE WebCore::TextDirectionSubmenuInclusionBehavior core(WebTextDirectionSubmenuInclusionBehavior behavior)
 {
     using namespace WebCore;
     switch (behavior) {
@@ -257,15 +257,13 @@ Vector<Vector<String>> vectorForDictationPhrasesArray(NSArray *dictationPhrases)
 {
     Vector<Vector<String>> result;
 
-    for (id dictationPhrase in dictationPhrases) {
-        if (![dictationPhrase isKindOfClass:[NSArray class]])
-            continue;
-        result.append(Vector<String>());
-        for (id interpretation : (NSArray *)dictationPhrase) {
-            if (![interpretation isKindOfClass:[NSString class]])
-                continue;
-            result.last().append((NSString *)interpretation);
-        }
+    for (RetainPtr phrase : makeVector<RetainPtr<NSArray>>(dictationPhrases)) {
+        result.append(makeVector(phrase.get(), [](id interpretation) -> std::optional<String> {
+            RetainPtr string = dynamic_objc_cast<NSString>(interpretation);
+            if (!string)
+                return std::nullopt;
+            return String { string.get() };
+        }));
     }
     
     return result;
@@ -379,7 +377,7 @@ WebView *getWebView(WebFrame *webFrame)
 }
 
 #if PLATFORM(IOS_FAMILY)
-static NSURL *createUniqueWebDataURL();
+static RetainPtr<NSURL> createUniqueWebDataURL();
 
 + (void)_createMainFrameWithSimpleHTMLDocumentWithPage:(WebCore::Page*)page frameView:(WebFrameView *)frameView style:(NSString *)style
 {
@@ -392,7 +390,7 @@ static NSURL *createUniqueWebDataURL();
     frame->_private->coreFrame = localMainFrame.get();
     downcast<WebFrameLoaderClient>(localMainFrame->loader().client()).setWebFrame(*frame.get());
 
-    protect(frame.get()->_private->coreFrame.get())->initWithSimpleHTMLDocument(style, createUniqueWebDataURL());
+    protect(frame.get()->_private->coreFrame.get())->initWithSimpleHTMLDocument(style, createUniqueWebDataURL().get());
 }
 #endif
 
@@ -869,7 +867,7 @@ static NSURL *createUniqueWebDataURL();
     if (!paragraphStart)
         return std::nullopt;
 
-    auto scopeEnd = makeBoundaryPointAfterNodeContents(paragraphStart->container->treeScope().rootNode());
+    auto scopeEnd = makeBoundaryPointAfterNodeContents(protect(paragraphStart->container->treeScope().rootNode()));
     return WebCore::resolveCharacterRange({ WTF::move(*paragraphStart), WTF::move(scopeEnd) }, range);
 }
 
@@ -915,7 +913,7 @@ static NSURL *createUniqueWebDataURL();
 
     NSEnumerator *nodeEnum = [nodes objectEnumerator];
     Vector<RefPtr<WebCore::Node>> nodesVector;
-    DOMNode *node;
+    RetainPtr<DOMNode> node;
     while ((node = [nodeEnum nextObject]))
         nodesVector.append(core(node));
 
@@ -991,7 +989,7 @@ static NSURL *createUniqueWebDataURL();
     // FIXME: These are fake modifier keys here, but they should be real ones instead.
     WebCore::PlatformMouseEvent event(WebCore::IntPoint(windowLoc), WebCore::IntPoint(WebCore::globalPoint(windowLoc, [protect(view->platformWidget()) window])),
         WebCore::MouseButton::Left, WebCore::PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), WebCore::ForceAtClick, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::UserDriven);
-    _private->coreFrame->eventHandler().dragSourceEndedAt(event, coreDragOperationMask(dragOperationMask));
+    protect(_private->coreFrame->eventHandler())->dragSourceEndedAt(event, coreDragOperationMask(dragOperationMask));
 }
 #endif // ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
 
@@ -1085,7 +1083,7 @@ static NSURL *createUniqueWebDataURL();
     return NO;
 }
 
-static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadType frameLoadType)
+NODELETE static WebFrameLoadType toWebFrameLoadType(WebCore::FrameLoadType frameLoadType)
 {
     using namespace WebCore;
     switch (frameLoadType) {
@@ -1250,7 +1248,7 @@ static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadTyp
 
 - (void)_handleKeyEvent:(WebEvent *)event
 {
-    core(self)->eventHandler().keyEvent(event);
+    protect(core(self)->eventHandler())->keyEvent(event);
 }
 
 - (void)_selectAll
@@ -1266,7 +1264,7 @@ static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadTyp
 - (void)_restoreViewState
 {
     ASSERT(!WebThreadIsEnabled() || WebThreadIsLocked());
-    _private->coreFrame->loader().client().restoreViewState();
+    protect(_private->coreFrame->loader().client())->restoreViewState();
 }
 
 - (void)_saveViewState
@@ -1389,7 +1387,7 @@ static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadTyp
 
 - (void)setIsActive:(BOOL)flag
 {
-    protect(core(self))->page()->focusController().setActive(flag);
+    protect(protect(core(self))->page()->focusController())->setActive(flag);
 }
 
 - (void)setSelectionChangeCallbacksDisabled:(BOOL)flag
@@ -1851,7 +1849,7 @@ static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadTyp
 - (void)sendScrollEvent
 {
     ASSERT(WebThreadIsLockedOrDisabled());
-    _private->coreFrame->eventHandler().scheduleScrollEvent();
+    protect(_private->coreFrame->eventHandler())->scheduleScrollEvent();
 }
 
 - (void)_userScrolled
@@ -1890,8 +1888,7 @@ static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadTyp
 
 - (void)_replaceSelectionWithWebArchive:(WebArchive *)webArchive selectReplacement:(BOOL)selectReplacement smartReplace:(BOOL)smartReplace
 {
-    NSArray* subresources = [webArchive subresources];
-    for (WebResource* subresource in subresources) {
+    for (RetainPtr subresource : makeVector<RetainPtr<WebResource>>([webArchive subresources])) {
         if (![[self dataSource] subresourceForURL:[subresource URL]])
             [[self dataSource] addSubresource:subresource];
     }
@@ -2308,7 +2305,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     auto coreFrame = _private->coreFrame;
     if (!coreFrame)
         return;
-    coreFrame->loader().client().dispatchDidReceiveTitle({ title, WebCore::TextDirection::LTR });
+    protect(coreFrame->loader().client())->dispatchDidReceiveTitle({ title, WebCore::TextDirection::LTR });
 }
 
 #endif // PLATFORM(IOS_FAMILY)
@@ -2338,7 +2335,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!coreFrame)
         return nil;
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::IgnoreClipping, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-    return adoptNS([[WebElementDictionary alloc] initWithHitTestResult:coreFrame->eventHandler().hitTestResultAtPoint(WebCore::IntPoint(point), hitType)]).autorelease();
+    return adoptNS([[WebElementDictionary alloc] initWithHitTestResult:protect(coreFrame->eventHandler())->hitTestResultAtPoint(WebCore::IntPoint(point), hitType)]).autorelease();
 }
 
 - (NSURL *)_unreachableURL
@@ -2459,7 +2456,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)loadRequest:(NSURLRequest *)request
 {
-    auto coreFrame = _private->coreFrame;
+    RefPtr coreFrame = _private->coreFrame.get();
     if (!coreFrame)
         return;
 
@@ -2473,10 +2470,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!resourceRequest.url().isValid() && !resourceRequest.url().isEmpty())
         resourceRequest.setURL([NSURL URLWithString:[@"file:" stringByAppendingString:[[request URL] absoluteString]]]);
 
-    coreFrame->loader().load(WebCore::FrameLoadRequest(*coreFrame, WTF::move(resourceRequest)));
+    protect(coreFrame->loader())->load(WebCore::FrameLoadRequest(*coreFrame, WTF::move(resourceRequest)));
 }
 
-static NSURL *createUniqueWebDataURL()
+static RetainPtr<NSURL> createUniqueWebDataURL()
 {
     auto UUIDRef = adoptCF(CFUUIDCreate(kCFAllocatorDefault));
     auto UUIDString = adoptCF(CFUUIDCreateString(kCFAllocatorDefault, UUIDRef.get()));
@@ -2503,7 +2500,8 @@ static NSURL *createUniqueWebDataURL()
     if (WebCore::shouldUseQuickLookForMIMEType(MIMEType)) {
         RetainPtr quickLookURL = responseURL ? responseURL : absoluteBaseURL;
         if (auto request = WebCore::registerQLPreviewConverterIfNeeded(quickLookURL.get(), MIMEType, data)) {
-            _private->coreFrame->loader().load(WebCore::FrameLoadRequest(*_private->coreFrame, request.get()));
+            RefPtr coreFrame = _private->coreFrame.get();
+            protect(coreFrame->loader())->load(WebCore::FrameLoadRequest(*coreFrame, request.get()));
             return;
         }
     }
@@ -2511,10 +2509,11 @@ static NSURL *createUniqueWebDataURL()
 
     WebCore::ResourceRequest request(absoluteBaseURL.get());
 
-    WebCore::ResourceResponse response(responseURL.get(), MIMEType, [data length], encodingName);
+    auto response = WebCore::ResourceResponse::responseForMIMEType(responseURL.get(), MIMEType, [data length], encodingName);
     WebCore::SubstituteData substituteData(WebCore::SharedBuffer::create(data), [unreachableURL absoluteURL], WTF::move(response), WebCore::SubstituteData::SessionHistoryVisibility::Hidden);
 
-    _private->coreFrame->loader().load(WebCore::FrameLoadRequest(*_private->coreFrame, WTF::move(request), WTF::move(substituteData)));
+    RefPtr coreFrame = _private->coreFrame.get();
+    protect(coreFrame->loader())->load(WebCore::FrameLoadRequest(*coreFrame, WTF::move(request), WTF::move(substituteData)));
 }
 
 - (void)loadData:(NSData *)data MIMEType:(NSString *)MIMEType textEncodingName:(NSString *)encodingName baseURL:(NSURL *)baseURL
@@ -2549,24 +2548,24 @@ static NSURL *createUniqueWebDataURL()
 - (void)loadArchive:(WebArchive *)archive
 {
     if (RefPtr coreArchive = [archive _coreLegacyWebArchive])
-        _private->coreFrame->loader().loadArchive(*coreArchive);
+        protect(_private->coreFrame->loader())->loadArchive(*coreArchive);
 }
 
 - (void)stopLoading
 {
     if (!_private->coreFrame)
         return;
-    _private->coreFrame->loader().stopForUserCancel();
+    protect(_private->coreFrame->loader())->stopForUserCancel();
 }
 
 - (void)reload
 {
-    _private->coreFrame->loader().reload({ });
+    protect(_private->coreFrame->loader())->reload({ });
 }
 
 - (void)reloadFromOrigin
 {
-    _private->coreFrame->loader().reload(WebCore::ReloadOption::FromOrigin);
+    protect(_private->coreFrame->loader())->reload(WebCore::ReloadOption::FromOrigin);
 }
 
 - (WebFrame *)findFrameNamed:(NSString *)name

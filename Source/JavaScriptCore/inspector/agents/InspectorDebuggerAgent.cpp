@@ -54,6 +54,7 @@
 #include "VMInlines.h"
 #include "Weak.h"
 #include <wtf/Box.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/JSONValues.h>
 #include <wtf/Stopwatch.h>
@@ -78,16 +79,11 @@ static String objectGroupForBreakpointAction(JSC::BreakpointActionID id)
     return makeString("breakpoint-action-"_s, id);
 }
 
-static bool isWebKitInjectedScript(const String& sourceURL)
-{
-    return sourceURL.startsWith("__InjectedScript_"_s) && sourceURL.endsWith(".js"_s);
-}
-
-static JSC::Debugger::BlackboxRange LEGACY_NODELETE blackboxRange(const JSC::Debugger::Script& script)
+NODELETE static JSC::Debugger::BlackboxRange blackboxRange(const JSC::Debugger::Script& script)
 {
     return {
         { OrdinalNumber::fromZeroBasedInt(script.startLine), OrdinalNumber::fromZeroBasedInt(script.startColumn) },
-        { OrdinalNumber::fromZeroBasedInt(script.endLine), OrdinalNumber::fromZeroBasedInt(script.endColumn) },
+        { OrdinalNumber::fromZeroBasedInt(script.endLine), OrdinalNumber::fromZeroBasedInt(script.endColumn + 1) },
     };
 }
 
@@ -694,17 +690,17 @@ static String functionName(JSC::InternalFunction& internalFunction)
     return internalFunction.name();
 }
 
-static String LEGACY_NODELETE functionName(JSC::NativeExecutable& nativeExecutable)
+NODELETE static String functionName(JSC::NativeExecutable& nativeExecutable)
 {
     return nativeExecutable.name();
 }
 
-static String LEGACY_NODELETE functionName(JSC::FunctionExecutable& functionExecutable)
+NODELETE static String functionName(JSC::FunctionExecutable& functionExecutable)
 {
     return functionExecutable.ecmaName().string();
 }
 
-static String LEGACY_NODELETE functionName(JSC::CodeBlock& codeBlock)
+NODELETE static String functionName(JSC::CodeBlock& codeBlock)
 {
     if (auto* functionExecutable = dynamicDowncast<JSC::FunctionExecutable>(codeBlock.ownerExecutable()))
         return functionName(*functionExecutable);
@@ -712,7 +708,7 @@ static String LEGACY_NODELETE functionName(JSC::CodeBlock& codeBlock)
     return nullString();
 }
 
-static String LEGACY_NODELETE functionName(JSC::CallFrame* callFrame)
+NODELETE static String functionName(JSC::CallFrame* callFrame)
 {
     if (callFrame->isNativeCalleeFrame())
         return nullString();
@@ -730,75 +726,65 @@ static String LEGACY_NODELETE functionName(JSC::CallFrame* callFrame)
 
 #if ENABLE(JIT)
 
-struct ReplacedThunk {
-    ~ReplacedThunk()
+struct ReplacedNativeExecutable {
+    ~ReplacedNativeExecutable()
     {
         if (!nativeExecutable)
             return;
 
-        auto restoreThunks = [&] (JSC::CodeSpecializationKind kind) {
-            RELEASE_ASSERT(nativeExecutable->hasJITCodeFor(kind));
-
-            auto jitCode = nativeExecutable->generatedJITCodeFor(kind);
-            if (!jitCode->canSwapCodeRefForDebugger())
-                return;
-
-            JSC::JITCode::CodeRef<JSC::JSEntryPtrTag> oldJITCodeRef;
-            CodePtr<JSC::JSEntryPtrTag> oldWithArityCheckThunk;
+        auto restoreJITCode = [&](JSC::CodeSpecializationKind kind) {
+            RefPtr<JSC::JITCode> originalJITCode;
             CodePtr<JSC::JSEntryPtrTag> oldArityJITCodeRef;
             switch (kind) {
             case JSC::CodeSpecializationKind::CodeForCall:
-                oldJITCodeRef = WTF::move(callThunk);
-                oldWithArityCheckThunk = WTF::move(callWithArityCheckThunk);
-                oldArityJITCodeRef = WTF::move(callArityThunk);
+                originalJITCode = WTF::move(callJITCode);
+                oldArityJITCodeRef = WTF::move(callArityJITCode);
                 break;
 
             case JSC::CodeSpecializationKind::CodeForConstruct:
-                oldJITCodeRef = WTF::move(constructThunk);
-                oldWithArityCheckThunk = WTF::move(constructWithArityCheckThunk);
-                oldArityJITCodeRef = WTF::move(constructArityThunk);
+                originalJITCode = WTF::move(constructJITCode);
+                oldArityJITCodeRef = WTF::move(constructArityJITCode);
                 break;
             }
 
-            jitCode->swapCodeRefForDebugger(WTF::move(oldJITCodeRef));
-            if (jitCode->canSwapCodePtrWithArityCheckForDebugger())
-                jitCode->swapCodePtrWithArityCheckForDebugger(WTF::move(oldWithArityCheckThunk));
+            if (!originalJITCode)
+                return;
+
+            nativeExecutable->swapGeneratedJITCodeForDebugger(kind, WTF::move(originalJITCode));
             nativeExecutable->swapGeneratedJITCodeWithArityCheckForDebugger(kind, oldArityJITCodeRef);
         };
 
-        restoreThunks(JSC::CodeSpecializationKind::CodeForCall);
-        restoreThunks(JSC::CodeSpecializationKind::CodeForConstruct);
+        restoreJITCode(JSC::CodeSpecializationKind::CodeForCall);
+        restoreJITCode(JSC::CodeSpecializationKind::CodeForConstruct);
     }
 
     JSC::Weak<JSC::NativeExecutable> nativeExecutable;
 
-    JSC::JITCode::CodeRef<JSC::JSEntryPtrTag> callThunk;
-    CodePtr<JSC::JSEntryPtrTag> callWithArityCheckThunk;
-    CodePtr<JSC::JSEntryPtrTag> callArityThunk;
+    RefPtr<JSC::JITCode> callJITCode;
+    CodePtr<JSC::JSEntryPtrTag> callArityJITCode;
 
-    JSC::JITCode::CodeRef<JSC::JSEntryPtrTag> constructThunk;
-    CodePtr<JSC::JSEntryPtrTag> constructWithArityCheckThunk;
-    CodePtr<JSC::JSEntryPtrTag> constructArityThunk;
+    RefPtr<JSC::JITCode> constructJITCode;
+    CodePtr<JSC::JSEntryPtrTag> constructArityJITCode;
 
     size_t matchCount { 0 };
 
-    friend inline bool operator==(const Box<ReplacedThunk>& a, const Box<ReplacedThunk>& b)
+    friend inline bool operator==(const Box<ReplacedNativeExecutable>& a, const Box<ReplacedNativeExecutable>& b)
     {
         return a && b && a->nativeExecutable.get() == b->nativeExecutable.get();
     }
 
-    friend inline bool operator==(const Box<ReplacedThunk>& a, const JSC::NativeExecutable* b)
+    friend inline bool operator==(const Box<ReplacedNativeExecutable>& a, const JSC::NativeExecutable* b)
     {
         return a && a->nativeExecutable.get() == b;
     }
 };
 
-static Lock s_replacedThunksLock;
-static Vector<Box<ReplacedThunk>>& LEGACY_NODELETE replacedThunks() WTF_REQUIRES_LOCK(s_replacedThunksLock)
+static Lock s_replacedNativeExecutablesLock;
+NODELETE static Vector<Box<ReplacedNativeExecutable>>& replacedNativeExecutables() WTF_REQUIRES_LOCK(s_replacedNativeExecutablesLock)
 {
-    ASSERT(s_replacedThunksLock.isHeld());
-    static NeverDestroyed<Vector<Box<ReplacedThunk>>> replacedThunks;
-    return replacedThunks;
+    ASSERT(s_replacedNativeExecutablesLock.isHeld());
+    static NeverDestroyed<Vector<Box<ReplacedNativeExecutable>>> replacedNativeExecutables;
+    return replacedNativeExecutables;
 }
 
 struct ReplacedInternalFunction {
@@ -831,7 +817,7 @@ struct ReplacedInternalFunction {
 };
 
 static Lock s_replacedInternalFunctionsLock;
-static Vector<Box<ReplacedInternalFunction>>& LEGACY_NODELETE replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
+NODELETE static Vector<Box<ReplacedInternalFunction>>& replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
 {
     ASSERT(s_replacedInternalFunctionsLock.isHeld());
     static NeverDestroyed<Vector<Box<ReplacedInternalFunction>>> replacedInternalFunctions;
@@ -933,14 +919,14 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::addSymbolicBreakpoint(cons
 
         JSC::MarkedVector<JSC::NativeExecutable*> newNativeExecutables;
         {
-            Locker locker { s_replacedThunksLock };
-            auto& existingReplacedThunks = replacedThunks();
+            Locker locker { s_replacedNativeExecutablesLock };
+            auto& existingReplacedNativeExecutables = replacedNativeExecutables();
 
             for (auto* nativeExecutable : WTF::move(foundNativeExecutables)) {
-                if (auto existingIndex = existingReplacedThunks.find(nativeExecutable); existingIndex == notFound)
+                if (auto existingIndex = existingReplacedNativeExecutables.find(nativeExecutable); existingIndex == notFound)
                     newNativeExecutables.append(nativeExecutable);
                 else if (symbolicBreakpoint.matches(functionName(*nativeExecutable)))
-                    ++existingReplacedThunks[existingIndex]->matchCount;
+                    ++existingReplacedNativeExecutables[existingIndex]->matchCount;
             }
         }
         for (auto* nativeExecutable : WTF::move(newNativeExecutables))
@@ -992,18 +978,18 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::removeSymbolicBreakpoint(c
 
 #if ENABLE(JIT)
     {
-        Locker locker { s_replacedThunksLock };
+        Locker locker { s_replacedNativeExecutablesLock };
 
-        replacedThunks().removeAllMatching([&] (auto& replacedThunk) {
-            if (!replacedThunk->nativeExecutable)
+        replacedNativeExecutables().removeAllMatching([&](auto& replacedNativeExecutable) {
+            if (!replacedNativeExecutable->nativeExecutable)
                 return true;
 
-            if (&replacedThunk->nativeExecutable->vm() != &m_debugger.vm())
+            if (&replacedNativeExecutable->nativeExecutable->vm() != &m_debugger.vm())
                 return false;
 
-            if (symbolicBreakpoint.matches(functionName(*replacedThunk->nativeExecutable))) {
-                ASSERT(replacedThunk->matchCount);
-                if (!--replacedThunk->matchCount)
+            if (symbolicBreakpoint.matches(functionName(*replacedNativeExecutable->nativeExecutable))) {
+                ASSERT(replacedNativeExecutable->matchCount);
+                if (!--replacedNativeExecutable->matchCount)
                     return true;
             }
 
@@ -1475,7 +1461,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setShouldBlackboxURL(const
     if (optionalIsRegex)
         blackboxedScript.isRegex = *optionalIsRegex;
 
-    if (blackboxedScript.caseSensitive && !blackboxedScript.isRegex && isWebKitInjectedScript(blackboxedScript.url))
+    if (blackboxedScript.caseSensitive && !blackboxedScript.isRegex && JSC::Debugger::isWebKitInjectedScript(blackboxedScript.url))
         return makeUnexpected("Blackboxing of internal scripts is controlled by 'Debugger.setPauseForInternalScripts'"_s);
 
     m_blackboxedScripts.removeAll(blackboxedScript);
@@ -1533,7 +1519,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setShouldBlackboxURL(const
     }
 
     for (auto& [sourceID, script] : m_scripts) {
-        if (isWebKitInjectedScript(script.sourceURL))
+        if (JSC::Debugger::isWebKitInjectedScript(script.sourceURL))
             continue;
 
         setBlackboxConfiguration(sourceID, script);
@@ -1550,7 +1536,7 @@ void InspectorDebuggerAgent::setBlackboxConfiguration(JSC::SourceID sourceID, co
 
     JSC::Debugger::BlackboxConfiguration blackboxConfiguration;
 
-    if (!m_pauseForInternalScripts && isWebKitInjectedScript(script.sourceURL)) {
+    if (!m_pauseForInternalScripts && script.isInternalScript) {
         auto& blackboxFlags = blackboxConfiguration.ensure(blackboxRange(script), [] {
             return JSC::Debugger::BlackboxFlags();
         }).iterator->value;
@@ -1623,7 +1609,7 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::setPauseForInternalScripts
     m_pauseForInternalScripts = shouldPause;
 
     for (auto& [sourceID, script] : m_scripts) {
-        if (!isWebKitInjectedScript(script.sourceURL))
+        if (!script.isInternalScript)
             continue;
 
         setBlackboxConfiguration(sourceID, script);
@@ -1657,23 +1643,23 @@ void InspectorDebuggerAgent::didCreateNativeExecutable(JSC::NativeExecutable& na
     if (!matchCount)
         return;
 
-    Locker locker { s_replacedThunksLock };
+    Locker locker { s_replacedNativeExecutablesLock };
 
-    auto existingIndex = replacedThunks().find(&nativeExecutable);
+    auto existingIndex = replacedNativeExecutables().find(&nativeExecutable);
     if (existingIndex != notFound) {
-        replacedThunks()[existingIndex]->matchCount += matchCount;
+        replacedNativeExecutables()[existingIndex]->matchCount += matchCount;
         return;
     }
 
-    auto replacedThunk = Box<ReplacedThunk>::create();
-    replacedThunk->nativeExecutable = &nativeExecutable;
-    replacedThunk->matchCount = matchCount;
+    auto replacedNativeExecutable = Box<ReplacedNativeExecutable>::create();
+    replacedNativeExecutable->nativeExecutable = &nativeExecutable;
+    replacedNativeExecutable->matchCount = matchCount;
 
-    auto createJITCodeRef = [&] (CodePtr<JSC::JITThunkPtrTag> thunk) {
+    auto createJITCodeRef = [&](CodePtr<JSC::JITThunkPtrTag> thunk) {
         return JSC::JITCode::CodeRef<JSC::JSEntryPtrTag>::createSelfManagedCodeRef(thunk.retagged<JSC::JSEntryPtrTag>());
     };
 
-    auto replaceThunks = [&] (JSC::CodeSpecializationKind kind) {
+    auto replaceJITCode = [&](JSC::CodeSpecializationKind kind) {
         RELEASE_ASSERT(nativeExecutable.hasJITCodeFor(kind));
 
         auto jitCode = nativeExecutable.generatedJITCodeFor(kind);
@@ -1693,51 +1679,41 @@ void InspectorDebuggerAgent::didCreateNativeExecutable(JSC::NativeExecutable& na
 
         RELEASE_ASSERT(nativeExecutable.generatedJITCodeWithArityCheckFor(kind) == jitCode->addressForCall(JSC::ArityCheckMode::MustCheckArity));
 
-        auto oldJITCodeRef = jitCode->swapCodeRefForDebugger(createJITCodeRef(thunk));
-
-        CodePtr<JSC::JSEntryPtrTag> oldWithArityCheckThunk;
-        if (jitCode->canSwapCodePtrWithArityCheckForDebugger())
-            oldWithArityCheckThunk = jitCode->swapCodePtrWithArityCheckForDebugger(thunk.retagged<JSC::JSEntryPtrTag>());
-
-        auto oldArityJITCodeRef = nativeExecutable.swapGeneratedJITCodeWithArityCheckForDebugger(kind, jitCode->addressForCall(JSC::ArityCheckMode::MustCheckArity));
+        RefPtr<JSC::JITCode> replacementJITCode;
+        if (auto* signature = jitCode->signature())
+            replacementJITCode = adoptRef(*new JSC::NativeDOMJITCode(createJITCodeRef(thunk), JSC::JITType::HostCallThunk, jitCode->intrinsic(), signature));
+        else
+            replacementJITCode = adoptRef(*new JSC::NativeJITCode(createJITCodeRef(thunk), JSC::JITType::HostCallThunk, jitCode->intrinsic()));
+        auto originalJITCode = nativeExecutable.swapGeneratedJITCodeForDebugger(kind, WTF::move(replacementJITCode));
+        auto oldArityJITCodeRef = nativeExecutable.swapGeneratedJITCodeWithArityCheckForDebugger(kind, thunk.retagged<JSC::JSEntryPtrTag>());
 
         switch (kind) {
         case JSC::CodeSpecializationKind::CodeForCall:
-            ASSERT(!replacedThunk->callThunk);
-            replacedThunk->callThunk = WTF::move(oldJITCodeRef);
+            ASSERT(!replacedNativeExecutable->callJITCode);
+            replacedNativeExecutable->callJITCode = WTF::move(originalJITCode);
 
-            ASSERT(!replacedThunk->callWithArityCheckThunk);
-            replacedThunk->callWithArityCheckThunk = WTF::move(oldWithArityCheckThunk);
-
-            ASSERT(!replacedThunk->callArityThunk);
-            replacedThunk->callArityThunk = WTF::move(oldArityJITCodeRef);
-
-            RELEASE_ASSERT(jitCode->canSwapCodePtrWithArityCheckForDebugger() || replacedThunk->callThunk.code() == createJITCodeRef(vm.jitStubs->ctiNativeCall(vm)).code());
+            ASSERT(!replacedNativeExecutable->callArityJITCode);
+            replacedNativeExecutable->callArityJITCode = WTF::move(oldArityJITCodeRef);
             break;
 
         case JSC::CodeSpecializationKind::CodeForConstruct:
-            ASSERT(!replacedThunk->constructThunk);
-            replacedThunk->constructThunk = WTF::move(oldJITCodeRef);
+            ASSERT(!replacedNativeExecutable->constructJITCode);
+            replacedNativeExecutable->constructJITCode = WTF::move(originalJITCode);
 
-            ASSERT(!replacedThunk->constructWithArityCheckThunk);
-            replacedThunk->constructWithArityCheckThunk = WTF::move(oldWithArityCheckThunk);
-
-            ASSERT(!replacedThunk->constructArityThunk);
-            replacedThunk->constructArityThunk = WTF::move(oldArityJITCodeRef);
-
-            RELEASE_ASSERT(jitCode->canSwapCodePtrWithArityCheckForDebugger() || replacedThunk->constructThunk.code() == createJITCodeRef(vm.jitStubs->ctiNativeConstruct(vm)).code());
+            ASSERT(!replacedNativeExecutable->constructArityJITCode);
+            replacedNativeExecutable->constructArityJITCode = WTF::move(oldArityJITCodeRef);
             break;
         }
 
         return true;
     };
 
-    bool didReplaceCallThunks = replaceThunks(JSC::CodeSpecializationKind::CodeForCall);
-    bool didReplaceConstructThunks = replaceThunks(JSC::CodeSpecializationKind::CodeForConstruct);
-    if (!didReplaceCallThunks && !didReplaceConstructThunks)
+    bool didReplaceCallJITCode = replaceJITCode(JSC::CodeSpecializationKind::CodeForCall);
+    bool didReplaceConstructJITCode = replaceJITCode(JSC::CodeSpecializationKind::CodeForConstruct);
+    if (!didReplaceCallJITCode && !didReplaceConstructJITCode)
         return;
 
-    replacedThunks().append(WTF::move(replacedThunk));
+    replacedNativeExecutables().append(WTF::move(replacedNativeExecutable));
 #else
     UNUSED_PARAM(nativeExecutable);
 #endif
@@ -1876,11 +1852,11 @@ void InspectorDebuggerAgent::didParseSource(JSC::JSGlobalObject* globalObject, J
     if (scriptTypeForScript(script) == Protocol::Debugger::ScriptType::WebAssembly)
         return;
 
+    setBlackboxConfiguration(sourceID, script);
+
     String scriptURLForBreakpoints = hasSourceURL ? script.sourceURL : script.url;
     if (scriptURLForBreakpoints.isEmpty())
         return;
-
-    setBlackboxConfiguration(sourceID, script);
 
     for (auto& protocolBreakpoint : m_protocolBreakpointForProtocolBreakpointID.values()) {
         if (!protocolBreakpoint.matchesScriptURL(scriptURLForBreakpoints))
@@ -2049,8 +2025,10 @@ void InspectorDebuggerAgent::didPause(JSC::JSGlobalObject* globalObject, JSC::De
         m_continueToLocationDebuggerBreakpoint = nullptr;
     }
 
-    auto& stopwatch = protect(injectedScriptManager().inspectorEnvironment())->executionStopwatch();
-    if (stopwatch.isActive()) {
+    // A shared stopwatch keeps running, because other processes do not pause together with this one.
+    CheckedRef environment = injectedScriptManager().inspectorEnvironment();
+    auto& stopwatch = environment->executionStopwatch();
+    if (stopwatch.isActive() && !environment->executionStopwatchIsSharedAcrossProcesses()) {
         stopwatch.stop();
         m_didPauseStopwatch = true;
     }
@@ -2097,7 +2075,9 @@ void InspectorDebuggerAgent::didContinue()
 {
     if (m_didPauseStopwatch) {
         m_didPauseStopwatch = false;
-        protect(injectedScriptManager().inspectorEnvironment())->executionStopwatch().start();
+        CheckedRef environment = injectedScriptManager().inspectorEnvironment();
+        ASSERT(!environment->executionStopwatchIsSharedAcrossProcesses());
+        environment->executionStopwatch().start();
     }
 
     m_pausedGlobalObject = nullptr;
@@ -2139,19 +2119,19 @@ void InspectorDebuggerAgent::clearInspectorBreakpointState()
 
 #if ENABLE(JIT)
     {
-        Locker locker { s_replacedThunksLock };
+        Locker locker { s_replacedNativeExecutablesLock };
 
-        replacedThunks().removeAllMatching([&] (auto& replacedThunk) {
-            if (!replacedThunk->nativeExecutable)
+        replacedNativeExecutables().removeAllMatching([&](auto& replacedNativeExecutable) {
+            if (!replacedNativeExecutable->nativeExecutable)
                 return true;
 
-            if (&replacedThunk->nativeExecutable->vm() != &m_debugger.vm())
+            if (&replacedNativeExecutable->nativeExecutable->vm() != &m_debugger.vm())
                 return false;
 
             for (auto& symbolicBreakpoint : m_symbolicBreakpoints) {
-                if (symbolicBreakpoint.matches(functionName(*replacedThunk->nativeExecutable))) {
-                    ASSERT(replacedThunk->matchCount);
-                    if (!--replacedThunk->matchCount)
+                if (symbolicBreakpoint.matches(functionName(*replacedNativeExecutable->nativeExecutable))) {
+                    ASSERT(replacedNativeExecutable->matchCount);
+                    if (!--replacedNativeExecutable->matchCount)
                         return true;
                 }
             }
@@ -2185,6 +2165,7 @@ void InspectorDebuggerAgent::clearInspectorBreakpointState()
 
     m_symbolicBreakpoints.clear();
 
+    cancelPauseAtNextOpportunity();
     clearDebuggerBreakpointState();
 }
 
@@ -2202,14 +2183,20 @@ void InspectorDebuggerAgent::clearDebuggerBreakpointState()
     m_debuggerBreakpointsForProtocolBreakpointID.clear();
     m_nextDebuggerBreakpointID = JSC::noBreakpointID + 1;
     m_continueToLocationDebuggerBreakpoint = nullptr;
-    clearPauseDetails();
-    m_javaScriptPauseScheduled = false;
     m_hasExceptionValue = false;
 
+    // JSC keeps the pause when the global object is replaced, but can drop it without telling the agent, such as at the end of a program.
+    m_javaScriptPauseScheduled = m_javaScriptPauseScheduled && m_debugger.isPauseAtNextOpportunityScheduled();
+
     if (isPaused()) {
+        // Continuing also cancels a scheduled pause.
+        m_javaScriptPauseScheduled = false;
         m_debugger.continueProgram();
         m_frontendDispatcher->resumed();
     }
+
+    if (!m_javaScriptPauseScheduled)
+        clearPauseDetails();
 }
 
 void InspectorDebuggerAgent::didClearGlobalObject()

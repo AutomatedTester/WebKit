@@ -34,7 +34,6 @@
 #include "PaintInfoInlines.h"
 #include "RenderBox.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextBoxPainter.h"
@@ -59,6 +58,9 @@ void InlineContentPainter::paintEllipsis(size_t lineIndex)
     if ((m_paintInfo.phase != PaintPhase::Foreground && m_paintInfo.phase != PaintPhase::TextClip) || root().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
+    if (!m_paintInfo.shouldPaintWithinRoot(root()))
+        return;
+
     auto lineBox = InlineIterator::LineBox { m_inlineContent, lineIndex };
     if (!lineBox.hasEllipsis())
         return;
@@ -69,7 +71,7 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
 {
     auto hasDamage = [&](auto& box) {
         auto rect = enclosingLayoutRect(box.inkOverflow());
-        root().flipForWritingMode(rect);
+        root().blockStartRelativeToPhysical(rect);
         // FIXME: This should test for intersection but horizontal ink overflow is miscomputed in a few cases (like with negative letter-spacing).
         return m_damageRect.maxY() > rect.y() && m_damageRect.y() < rect.maxY();
     };
@@ -122,6 +124,12 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
         if (!hasVisibleDamage)
             return;
 
+        if (CheckedPtr subtreePaintRoot = m_paintInfo.subtreePaintRoot) {
+            CheckedPtr renderer = box.layoutBox().rendererForIntegration();
+            if (renderer != subtreePaintRoot && !renderer->isDescendantOf(subtreePaintRoot))
+                return;
+        }
+
         TextBoxPainter { m_inlineContent, box, box.style(), m_paintInfo, m_paintOffset }.paint();
         return;
     }
@@ -129,15 +137,14 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
     if (CheckedPtr renderer = dynamicDowncast<RenderBox>(box.layoutBox().rendererForIntegration()); renderer) {
         if (m_paintInfo.shouldPaintWithinRoot(*renderer)) {
             // FIXME: Painting should not require a non-const renderer.
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST CheckedRef paintRenderer = const_cast<RenderBox&>(*renderer);
-            auto flippedOffset = flippedContentOffsetIfNeeded(*renderer);
+            CheckedRef paintRenderer = const_cast<RenderBox&>(*renderer);
+            auto childPaintOffset = paintOffsetForChild(*renderer);
             if (box.isBlockLevelBox()) {
                 // Blocks-in-inline.
                 auto paintInfoForChild = m_root.paintInfoForBlockChildren(m_paintInfo);
-                paintRenderer->paint(paintInfoForChild, flippedOffset);
+                paintRenderer->paint(paintInfoForChild, childPaintOffset);
             } else
-                paintRenderer->paintAsInlineBlock(m_paintInfo, flippedOffset);
+                paintRenderer->paintAsInlineBlock(m_paintInfo, childPaintOffset);
         }
     }
 }
@@ -196,14 +203,14 @@ void InlineContentPainter::paint()
     paintLineEndingEllipsisIfApplicable({ });
 
     OutlinePainter outlinePainter { m_paintInfo };
-    for (CheckedRef renderInline : m_outlineObjects)
-        outlinePainter.paintOutline(renderInline, m_paintOffset);
+    for (CheckedRef inlineBox : m_outlineObjects)
+        outlinePainter.paintOutline(inlineBox, m_paintOffset);
 }
 
-LayoutPoint InlineContentPainter::flippedContentOffsetIfNeeded(const RenderBox& childRenderer) const
+LayoutPoint InlineContentPainter::paintOffsetForChild(const RenderBox& childRenderer) const
 {
     if (root().writingMode().isBlockFlipped())
-        return root().flipForWritingModeForChild(childRenderer, m_paintOffset);
+        return root().blockStartRelativeToPhysicalForChild(childRenderer, m_paintOffset);
     return m_paintOffset;
 }
 
@@ -213,7 +220,7 @@ const RenderBlock& InlineContentPainter::root() const
 }
 
 LayerPaintScope::LayerPaintScope(const RenderBoxModelObject* inlineBoxWithLayer)
-    : m_inlineBoxWithLayer(inlineBoxWithLayer ? inlineBoxWithLayer->layoutBox() : nullptr)
+    : m_inlineBoxWithLayer(inlineBoxWithLayer ? &inlineBoxWithLayer->layoutBox() : nullptr)
 {
 }
 

@@ -52,19 +52,15 @@
 #import <wtf/text/MakeString.h>
 #import <wtf/text/TextStream.h>
 
-#if __has_include(<WebKitAdditions/DyldCallbackAdditions.h>)
-#import <WebKitAdditions/DyldCallbackAdditions.h>
-#endif
-
 namespace WebKit {
 
-static Vector<String>& LEGACY_NODELETE overrideLanguagesFromBootstrap()
+NODELETE static Vector<String>& overrideLanguagesFromBootstrap()
 {
     static NeverDestroyed<Vector<String>> languages;
     return languages;
 }
 
-static void LEGACY_NODELETE stageOverrideLanguagesForMainThread(Vector<String>&& languages)
+NODELETE static void stageOverrideLanguagesForMainThread(Vector<String>&& languages)
 {
     RELEASE_ASSERT(overrideLanguagesFromBootstrap().isEmpty());
     overrideLanguagesFromBootstrap().swap(languages);
@@ -192,10 +188,6 @@ void XPCServiceEventHandler(xpc_connection_t peer)
                 stageOverrideLanguagesForMainThread(WTF::move(newLanguages));
             } else
                 LOG(Language, "Bootstrap message does not contain OverrideLanguages");
-
-#if __has_include(<WebKitAdditions/DyldCallbackAdditions.h>) && PLATFORM(IOS)
-            register_for_dlsym_callbacks();
-#endif
 
 #if PLATFORM(IOS_FAMILY)
             if (RetainPtr containerEnvironmentVariables = xpc_dictionary_get_value(event, "ContainerEnvironmentVariables")) {

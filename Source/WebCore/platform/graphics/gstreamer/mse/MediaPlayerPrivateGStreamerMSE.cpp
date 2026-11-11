@@ -324,15 +324,7 @@ bool MediaPlayerPrivateGStreamerMSE::doSeek(const SeekTarget& target, float rate
         if (player && !hasVideo() && m_audioSink) {
             gboolean audioSinkPerformsAsyncStateChanges = true;
 
-            GRefPtr<GstElement> sink = m_audioSink;
-            while (GST_IS_BIN(sink.get())) {
-                GUniquePtr<GstIterator> iter(gst_bin_iterate_sinks(GST_BIN_CAST(sink.get())));
-                GValue value = G_VALUE_INIT;
-                auto result = gst_iterator_next(iter.get(), &value);
-                ASSERT_UNUSED(result, result == GST_ITERATOR_OK);
-                sink = GST_ELEMENT(g_value_get_object(&value));
-                g_value_unset(&value);
-            }
+            auto sink = gstElementFindInnermostSink(m_audioSink.get());
             if (gstObjectHasProperty(sink.get(), "async"))
                 g_object_get(sink.get(), "async", &audioSinkPerformsAsyncStateChanges, nullptr);
             if (!audioSinkPerformsAsyncStateChanges) {
@@ -425,6 +417,9 @@ void MediaPlayerPrivateGStreamerMSE::mediaSourceHasRetrievedAllData()
 void MediaPlayerPrivateGStreamerMSE::didPreroll()
 {
     ASSERT(GST_STATE(m_pipeline.get()) >= GST_STATE_PAUSED);
+
+    updateVideoSinkStatistics();
+
     // There are three circumstances in which a preroll can occur:
     // a) At the begining of playback. This is the point where we propagate >=HaveCurrentData to the player.
     // b) At the end of a seek. We emit the "seeked" event as well.
@@ -456,7 +451,11 @@ void MediaPlayerPrivateGStreamerMSE::didPreroll()
 
 void MediaPlayerPrivateGStreamerMSE::didEnd()
 {
+    bool wasSeeking = m_isSeeking;
     MediaPlayerPrivateGStreamer::didEnd();
+    // A seek sent just before EOS, or the loop seek sent from within didEnd(), still needs this pipeline.
+    if (wasSeeking || m_isSeeking)
+        return;
     tearDown(false);
 }
 
@@ -563,11 +562,8 @@ void MediaPlayerPrivateGStreamerMSE::startSource(const Vector<RefPtr<MediaSource
 
 void MediaPlayerPrivateGStreamerMSE::emitStreams(const Vector<RefPtr<MediaSourceTrackGStreamer>>& tracks)
 {
-    Vector<RefPtr<MediaSourceTrackGStreamer>> uniqueTracks;
-    Vector<RefPtr<MediaSourceTrackGStreamer>> playbackTracks;
-
-    uniqueTracks.reserveInitialCapacity(tracks.size());
-    playbackTracks.reserveInitialCapacity(tracks.size());
+    Vector<RefPtr<MediaSourceTrackGStreamer>> uniqueTracks(ReserveCapacityTag { }, tracks.size());
+    Vector<RefPtr<MediaSourceTrackGStreamer>> playbackTracks(ReserveCapacityTag { }, tracks.size());
 
     for (const auto& track : tracks) {
         if (!uniqueTracks.containsIf([&track](const auto& current) { return track->id() == current->id(); })) {
@@ -600,7 +596,23 @@ void MediaPlayerPrivateGStreamerMSE::rebuildPipeline()
 
     GST_DEBUG("Re-building the pipeline");
     m_isEndReached = false;
+
+    {
+        DataMutexLocker<VideoSinkStats> videoSinkStats { m_videoSinkStatsDataMutex };
+        GST_DEBUG("Disabling videosink stats resetting on load()");
+        videoSinkStats->isResetAllowed = false;
+    }
+
+    // This isn't a regular load(). In this specific case, the stats shouldn't be reset, since we're
+    // technically still playing the same video from the perspective of the webpage.
     MediaPlayerPrivateGStreamer::load(m_url.string());
+
+    {
+        DataMutexLocker<VideoSinkStats> videoSinkStats { m_videoSinkStatsDataMutex };
+        GST_DEBUG("Reenabling videosink stats resetting on load()");
+        videoSinkStats->isResetAllowed = true;
+    }
+
     changePipelineState(GST_STATE_PAUSED);
 }
 

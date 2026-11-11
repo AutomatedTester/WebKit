@@ -66,7 +66,7 @@ class FloatRect;
 class GraphicsContext;
 
 // Note: currently this class is not usable from multiple threads due to mutating interface.
-class Gradient final : public ThreadSafeRefCounted<Gradient>, public CanMakeThreadSafeCheckedPtr<NativeImage> {
+class Gradient final : public ThreadSafeRefCounted<Gradient>, public CanMakeThreadSafeCheckedPtr<Gradient> {
     WTF_MAKE_TZONE_ALLOCATED(Gradient);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Gradient);
 public:
@@ -93,7 +93,7 @@ public:
     // isTransient may affect backend rendering implementation caching decisions.
     // Transient instances may be assumed to be drawn only few times or seldomly and as such the backend
     // may not persist caches related to the instance.
-    WEBCORE_EXPORT static Ref<Gradient> create(Data&&, ColorInterpolationMethod, GradientSpreadMethod = GradientSpreadMethod::Pad, GradientColorStops&& = { }, bool isTransient = true);
+    NODELETE WEBCORE_EXPORT static Ref<Gradient> create(Data&&, ColorInterpolationMethod, GradientSpreadMethod = GradientSpreadMethod::Pad, GradientColorStops&& = { }, bool isTransient = true);
     WEBCORE_EXPORT ~Gradient();
 
     const Data& data() const { return m_data; }
@@ -108,8 +108,6 @@ public:
 
     void fill(GraphicsContext&, const FloatRect&);
     void adjustParametersForTiledDrawing(FloatSize&, FloatRect&, const FloatSize& spacing);
-
-    unsigned hash() const;
 
 #if USE(CAIRO)
     RefPtr<cairo_pattern_t> createPattern(float globalAlpha, const AffineTransform&);
@@ -138,7 +136,6 @@ private:
     ColorInterpolationMethod m_colorInterpolationMethod;
     GradientSpreadMethod m_spreadMethod;
     GradientColorStops m_stops;
-    mutable unsigned m_cachedHash { 0 };
 
 #if USE(CG)
     std::optional<GradientRendererCG> m_platformRenderer;

@@ -1,4 +1,4 @@
-<!DOCTYPE html><!-- webkit-test-runner [ HTMLEnhancedSelectMultipleAndListBoxEnabled=true IsAccessibilityIsolatedTreeEnabled=true ] -->
+<!DOCTYPE html><!-- webkit-test-runner [ IsAccessibilityIsolatedTreeEnabled=true ] -->
 <html>
 <head>
 <script src="../../../resources/accessibility-helper.js"></script>
@@ -52,6 +52,12 @@ if (window.accessibilityController) {
         output += await expectAsync("items(axNative)", `'${listBoxItems}'`);
         window.axBase = await waitForElementById("base");
         output += await expectAsync("items(axBase)", `'${listBoxItems}'`);
+
+        document.querySelector("#native legend").firstChild.data = "Seeds";
+        const legend = document.createElement("legend");
+        legend.textContent = "Berries";
+        document.querySelector("#native optgroup").prepend(legend);
+        output += await expectAsync("items(axNative)", "'AXStaticText Berries (disabled), AXStaticText Apple, AXStaticText Seeds (disabled), AXStaticText Almond, AXStaticText Gone (disabled), AXStaticText Durian (disabled)'");
 
         window.axPicker = await waitForElementById("picker");
         axPicker.press();

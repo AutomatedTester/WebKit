@@ -28,15 +28,16 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "Logging.h"
 #include "RemoteBufferProxy.h"
 #include "RemoteGPU.h"
 #include "RemoteQueueMessages.h"
 #include "StreamServerConnection.h"
 #include "WebGPUObjectHeap.h"
 #include <WebCore/SharedMemory.h>
-#include <WebCore/WebGPUBuffer.h>
-#include <WebCore/WebGPUQueue.h>
-#include <wtf/Borrow.h>
+#include <WebCore/WebGPUCppAPI.h>
+#include <WebCore/WebGPUImageCopyExternalImage.h>
+#include <WebCore/WebGPUImageCopyTextureTagged.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
@@ -46,32 +47,23 @@
 #include <WebCore/VideoFrame.h>
 #endif
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
-#include <WebGPU/WebGPU.h>
-#include <WebGPU/WebGPUExt.h>
-#endif
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_streamConnection)
 
 namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteQueue);
 
-// For transfers at or above WGPU_LARGE_BUFFER_SIZE the backend uses newBufferWithBytesNoCopy and aliases `data`'s mapping; keep it alive until the GPU has consumed the bytes. Smaller transfers are copied into a Metal buffer synchronously, so `data` can be released as soon as we return.
-static void keepAliveUntilSubmittedWorkDone(WebCore::WebGPU::Queue& backing, RefPtr<WebCore::SharedMemory>&& data)
+// Transfers of at least WebGPU::largeBufferSize bytes may alias `data`'s mapping; keep it alive until the GPU has consumed the bytes. Smaller transfers are copied, so `data` can be released as soon as we return.
+static void keepAliveUntilSubmittedWorkDone(::WebGPU::Queue& backing, RefPtr<WebCore::SharedMemory>&& data)
 {
-#if HAVE(WEBGPU_IMPLEMENTATION)
-    if (!data || data->size() < WGPU_LARGE_BUFFER_SIZE)
+    if (!data || data->size() < ::WebGPU::largeBufferSize)
         return;
     backing.onSubmittedWorkDone([data = WTF::move(data)]() mutable {
         data = nullptr;
     });
-#else
-    // Only the Metal backend aliases the caller's storage, and it is the only WebGPU implementation.
-    UNUSED_PARAM(backing);
-    UNUSED_PARAM(data);
-#endif
 }
 
-RemoteQueue::RemoteQueue([[maybe_unused]] GPUConnectionToWebProcess& gpuConnectionToWebProcess, WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+RemoteQueue::RemoteQueue([[maybe_unused]] GPUConnectionToWebProcess& gpuConnectionToWebProcess, ::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     : m_backing(queue)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
@@ -102,8 +94,7 @@ void RemoteQueue::stopListeningForIPC()
 
 void RemoteQueue::submit(Vector<WebGPUIdentifier>&& commandBuffers)
 {
-    Vector<Ref<WebCore::WebGPU::CommandBuffer>> convertedCommandBuffers;
-    convertedCommandBuffers.reserveInitialCapacity(commandBuffers.size());
+    Vector<Ref<::WebGPU::CommandBuffer>> convertedCommandBuffers(ReserveCapacityTag { }, commandBuffers.size());
     for (WebGPUIdentifier identifier : commandBuffers) {
         auto convertedCommandBuffer = protect(m_objectHeap)->convertCommandBufferFromBacking(identifier);
         ASSERT(convertedCommandBuffer);
@@ -123,7 +114,7 @@ void RemoteQueue::onSubmittedWorkDone(CompletionHandler<void()>&& callback)
 
 void RemoteQueue::writeBuffer(
     WebGPUIdentifier buffer,
-    WebCore::WebGPU::Size64 bufferOffset,
+    uint64_t bufferOffset,
     std::optional<WebCore::SharedMemoryHandle>&& dataHandle,
     CompletionHandler<void(bool)>&& completionHandler)
 {
@@ -136,14 +127,14 @@ void RemoteQueue::writeBuffer(
     }
 
     Ref backing = protect(m_backing);
-    backing->writeBufferNoCopy(protect(*convertedBuffer), bufferOffset, data->mutableSpan(), 0, std::nullopt);
+    backing->writeBuffer(protect(*convertedBuffer), bufferOffset, data->span());
     keepAliveUntilSubmittedWorkDone(backing, WTF::move(data));
     completionHandler(true);
 }
 
 void RemoteQueue::writeBufferWithCopy(
     WebGPUIdentifier buffer,
-    WebCore::WebGPU::Size64 bufferOffset,
+    uint64_t bufferOffset,
     Vector<uint8_t>&& data)
 {
     Ref objectHeap = m_objectHeap.get();
@@ -152,7 +143,8 @@ void RemoteQueue::writeBufferWithCopy(
     if (!convertedBuffer)
         return;
 
-    protect(m_backing)->writeBufferNoCopy(protect(*convertedBuffer), bufferOffset, borrow(data)->mutableSpan(), 0, std::nullopt);
+    MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
+    protect(m_backing)->writeBuffer(protect(*convertedBuffer), bufferOffset, data.span());
 }
 
 void RemoteQueue::writeTexture(
@@ -166,17 +158,13 @@ void RemoteQueue::writeTexture(
     Ref objectHeap = m_objectHeap.get();
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedDataLayout = objectHeap->convertFromBacking(dataLayout);
-    ASSERT(convertedDataLayout);
-    auto convertedSize = objectHeap->convertFromBacking(size);
-    ASSERT(convertedSize);
-    if (!convertedDestination || !convertedDataLayout || !convertedSize || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
+    if (!convertedDestination || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
         completionHandler(false);
         return;
     }
 
     Ref backing = protect(m_backing);
-    backing->writeTexture(*convertedDestination, data->mutableSpan(), *convertedDataLayout, *convertedSize);
+    backing->writeTexture(*convertedDestination, data->span(), dataLayout, size);
     keepAliveUntilSubmittedWorkDone(backing, WTF::move(data));
     completionHandler(true);
 }
@@ -190,14 +178,11 @@ void RemoteQueue::writeTextureWithCopy(
     Ref objectHeap = m_objectHeap.get();
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedDataLayout = objectHeap->convertFromBacking(dataLayout);
-    ASSERT(convertedDestination);
-    auto convertedSize = objectHeap->convertFromBacking(size);
-    ASSERT(convertedSize);
-    if (!convertedDestination || !convertedDestination || !convertedSize)
+    if (!convertedDestination)
         return;
 
-    protect(m_backing)->writeTexture(*convertedDestination, borrow(data)->mutableSpan(), *convertedDataLayout, *convertedSize);
+    MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
+    protect(m_backing)->writeTexture(*convertedDestination, data.span(), dataLayout, size);
 }
 
 void RemoteQueue::copyExternalImageToTexture(
@@ -218,9 +203,7 @@ void RemoteQueue::copyExternalImageToTexture(
     ASSERT(convertedSource);
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedCopySize = objectHeap->convertFromBacking(copySize);
-    ASSERT(convertedCopySize);
-    if (!convertedSource || !convertedDestination || !convertedCopySize)
+    if (!convertedSource || !convertedDestination)
         return;
 
     // ConvertFromBackingContext cannot resolve the source, because only RemoteGPU can reach the
@@ -232,7 +215,8 @@ void RemoteQueue::copyExternalImageToTexture(
         convertedSource->imageBuffer = WTF::move(sourceImageBuffer);
     }
 
-    protect(m_backing)->copyExternalImageToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
+    if (RefPtr gpu = protect(m_gpu)->backing())
+        gpu->copyExternalImageToTexture(protect(m_backing), *convertedSource, *convertedDestination, copySize);
 }
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
@@ -287,12 +271,11 @@ void RemoteQueue::copyExternalImageFromVideoFrameToTexture(
     ASSERT(convertedSource);
     auto convertedDestination = objectHeap->convertFromBacking(destination);
     ASSERT(convertedDestination);
-    auto convertedCopySize = objectHeap->convertFromBacking(copySize);
-    ASSERT(convertedCopySize);
-    if (!convertedSource || !convertedDestination || !convertedCopySize)
+    if (!convertedSource || !convertedDestination)
         return;
 
-    protect(m_backing)->copyExternalImageToTexture(*convertedSource, *convertedDestination, *convertedCopySize);
+    if (RefPtr gpu = protect(m_gpu)->backing())
+        gpu->copyExternalImageToTexture(protect(m_backing), *convertedSource, *convertedDestination, copySize);
 }
 #endif
 

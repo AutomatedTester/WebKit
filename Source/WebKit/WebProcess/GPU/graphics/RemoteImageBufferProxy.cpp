@@ -31,7 +31,6 @@
 #include "GPUConnectionToWebProcessMessages.h"
 #include "IPCEvent.h"
 #include "ImageBufferRemoteDisplayListBackend.h"
-#include "ImageBufferRemotePDFDocumentBackend.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "Logging.h"
 #include "RemoteImageBufferMessages.h"
@@ -48,7 +47,12 @@
 
 #if HAVE(IOSURFACE)
 #include "ImageBufferRemoteIOSurfaceBackend.h"
-#include "ImageBufferShareableMappedIOSurfaceBackend.h"
+#endif
+
+#if PLATFORM(COCOA)
+#include "DisplayBufferDisplayDelegate.h"
+#include <WebCore/GraphicsLayerCA.h>
+#include <WebCore/IOSurface.h>
 #endif
 
 namespace WebKit {
@@ -261,6 +265,53 @@ std::optional<ImageBufferBackendHandle> RemoteImageBufferProxy::createBackingSto
     return sharing->createBackendHandle();
 }
 
+void RemoteImageBufferProxy::prepareForDisplay()
+{
+#if PLATFORM(COCOA)
+    RefPtr displayDelegate = m_displayDelegate;
+    if (!displayDelegate) {
+        // The backend here does not hold the drawing results, so there is nothing to show yet.
+        flushDrawingContextAsync();
+        return;
+    }
+    // The GPU process copies the drawing results to a display surface, so let it see the buffered draws.
+    sendPendingDrawsIfNecessary();
+    IPC::Semaphore finishedSignal;
+    auto sendResult = sendSync(Messages::RemoteImageBuffer::PrepareForDisplay(finishedSignal));
+    MachSendRight displayBuffer;
+    if (sendResult.succeeded())
+        std::tie(displayBuffer) = sendResult.takeReply();
+    if (!displayBuffer) {
+        displayDelegate->setDisplayBuffer({ }, nullptr);
+        return;
+    }
+    Ref displayBufferFence = DisplayBufferFence::create(WTF::move(finishedSignal));
+    m_displayBufferFence = displayBufferFence.copyRef();
+    displayDelegate->setDisplayBuffer(WTF::move(displayBuffer), WTF::move(displayBufferFence));
+#else
+    flushDrawingContextAsync();
+#endif
+}
+
+#if PLATFORM(COCOA)
+RefPtr<GraphicsLayerContentsDisplayDelegate> RemoteImageBufferProxy::layerContentsDisplayDelegate()
+{
+    if (!m_displayDelegate) {
+        Ref displayDelegate = DisplayBufferDisplayDelegate::create(false, GraphicsLayerCA::defaultContentsOrientation);
+        displayDelegate->setContentsFormat(convertToContentsFormat(pixelFormat()));
+        m_displayDelegate = WTF::move(displayDelegate);
+        // The buffer may already have been prepared for display this frame.
+        prepareForDisplay();
+    }
+    return m_displayDelegate;
+}
+
+void RemoteImageBufferProxy::releaseLayerContentsDisplayDelegate()
+{
+    m_displayDelegate = nullptr;
+}
+#endif
+
 std::optional<RenderingMode> RemoteImageBufferProxy::getEffectiveRenderingModeForTesting() const
 {
     auto sendResult = sendSync(Messages::RemoteImageBuffer::GetEffectiveRenderingModeForTesting());
@@ -305,7 +356,22 @@ RefPtr<NativeImage> RemoteImageBufferProxy::createNativeImageReference() const
 
 RefPtr<NativeImage> RemoteImageBufferProxy::sinkIntoNativeImage()
 {
-    return copyNativeImage();
+    auto* backend = ImageBuffer::backend();
+    if (!backend)
+        return nullptr;
+    // Mappable buffers keep a local copy, so that readers in this process do not need to fetch the
+    // pixels and images cached in this process survive a GPU process relaunch.
+    if (backend->canMapBackingStore() || !hasOneRef())
+        return copyNativeImage();
+    RefPtr renderingBackend = m_renderingBackend;
+    if (!renderingBackend) [[unlikely]]
+        return nullptr;
+    sendPendingDrawsIfNecessary();
+    m_context.abandon();
+    Ref nativeImage = renderingBackend->sinkIntoNativeImage(*this);
+    disconnect();
+    m_renderingBackend = nullptr;
+    return nativeImage;
 }
 
 RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
@@ -318,26 +384,6 @@ RefPtr<ImageBuffer> RemoteImageBufferProxy::sinkIntoBufferForDifferentThread()
 
     copyBuffer->context().drawImageBuffer(*this, FloatPoint { }, { CompositeOperator::Copy });
     return copyBuffer;
-}
-
-RefPtr<NativeImage> RemoteImageBufferProxy::filteredNativeImage(Filter& filter)
-{
-    if (!m_renderingBackend) [[unlikely]]
-        return nullptr;
-    // FilteredNativeImage reads the buffer in the GPU process, so send any
-    // buffered line strokes into the stream first.
-    sendPendingDrawsIfNecessary();
-    auto sendResult = sendSync(Messages::RemoteImageBuffer::FilteredNativeImage(filter));
-    if (!sendResult.succeeded())
-        return nullptr;
-    auto [handle] = sendResult.takeReply();
-    if (!handle)
-        return nullptr;
-    handle->takeOwnershipOfMemory(MemoryLedger::Graphics);
-    auto bitmap = ShareableBitmap::create(WTF::move(*handle));
-    if (!bitmap)
-        return nullptr;
-    return NativeImage::create(bitmap->createPlatformImage(DontCopyBackingStore, ShouldInterpolate::No));
 }
 
 RefPtr<PixelBuffer> RemoteImageBufferProxy::getPixelBuffer(const PixelBufferFormat& destinationFormat, const IntRect& sourceRect, const ImageBufferAllocator& allocator) const
@@ -369,6 +415,10 @@ void RemoteImageBufferProxy::disconnect()
     m_context.disconnect();
     prepareForBackingStoreChange();
     m_pendingFlush = nullptr;
+#if PLATFORM(COCOA)
+    if (RefPtr displayBufferFence = std::exchange(m_displayBufferFence, nullptr))
+        displayBufferFence->forceSignal();
+#endif
     // The backend stays: it is where this buffer's properties come from, and a backing
     // store this process allocated outlives the GPU process. A handle to a GPU process
     // backing store does not, so drop it and ask again if it is needed.

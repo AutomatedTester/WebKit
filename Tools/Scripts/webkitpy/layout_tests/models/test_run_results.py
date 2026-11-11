@@ -99,6 +99,9 @@ class TestRunResults(object):
         if test_result.test_input.is_slow:
             self.slow_tests.add(test_result.test_name)
 
+    def skipped_by_disabled_keys(self):
+        return {test_name: result.skipped_by_disabled_key for test_name, result in self.results_by_name.items() if result.skipped_by_disabled_key}
+
     def change_result_to_failure(self, existing_result, new_result, existing_expected, new_expected):
         assert existing_result.test_name == new_result.test_name
         if existing_result.type is new_result.type:
@@ -184,13 +187,15 @@ class TestRunResults(object):
 
 
 class RunDetails(object):
-    def __init__(self, exit_code, summarized_results=None, initial_results=None, retry_results=None, enabled_pixel_tests_in_retry=False, skipped_all_tests=False):
+    def __init__(self, exit_code, summarized_results=None, initial_results=None, retry_results=None, enabled_pixel_tests_in_retry=False, skipped_all_tests=False, failed_uploads=None):
         self.exit_code = exit_code
         self.summarized_results = summarized_results
         self.initial_results = initial_results
         self.retry_results = retry_results
         self.enabled_pixel_tests_in_retry = enabled_pixel_tests_in_retry
         self.skipped_all_tests = skipped_all_tests
+        # The results server URL of each upload that failed.
+        self.failed_uploads = failed_uploads or []
 
 
 def _interpret_test_failures(failures):

@@ -46,6 +46,8 @@
 
 namespace WebKit {
 
+class DisplayListData;
+
 // RemoteSnapshot represents a web page rendering. Solves the problem of generating the rendering from various different WebContent processes that
 // should not have any access to data of each other.
 // Each display list receives a placeholder for their subframe display lists. The placeholders are resolved through applyFrame().
@@ -82,11 +84,12 @@ public:
     // Whether anything is waiting for it to complete.
     bool isAwaited() const;
     std::optional<RefPtr<WebCore::SharedBuffer>> drawToPDF(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
+    std::optional<DisplayListData> createDisplayListData(WebCore::FrameIdentifier rootFrameIdentifier) const;
     std::optional<WebCore::ShareableBitmap::Handle> drawToBitmap(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
 #if HAVE(IOSURFACE)
     // Rasterizes into a shareable surface, so that a rendering assembled from several sites can be
     // displayed without any of them seeing the pixels.
-    std::optional<ImageBufferBackendHandle> drawToIOSurface(const WebCore::FloatSize&, float scale, const WebCore::ColorSpace&, WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::ProcessIdentity& resourceOwner);
+    std::optional<ImageBufferBackendHandle> drawToIOSurface(const WebCore::FloatSize&, float scale, const WebCore::ColorSpace&, WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::ProcessIdentity& resourceOwner, bool useIOSurfaceWebKitBehavior);
 #endif
     [[nodiscard]] bool applyFrame(WebCore::FrameIdentifier, WebCore::GraphicsContext&) const;
 

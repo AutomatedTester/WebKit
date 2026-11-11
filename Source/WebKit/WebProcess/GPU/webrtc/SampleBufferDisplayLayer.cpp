@@ -124,7 +124,7 @@ void SampleBufferDisplayLayer::enqueueBlackFrameFrom(const VideoFrame& videoFram
 {
     auto size = videoFrame.presentationSize();
     WebCore::IntSize blackFrameSize { static_cast<int>(size.width()), static_cast<int>(size.height()) };
-    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), { }, blackFrameSize };
+    SharedVideoFrame sharedVideoFrame { videoFrame.presentationTime(), false, videoFrame.rotation(), { }, false, blackFrameSize };
     m_connection->send(Messages::RemoteSampleBufferDisplayLayer::EnqueueVideoFrame { WTF::move(sharedVideoFrame) }, identifier());
 }
 
@@ -133,7 +133,7 @@ void SampleBufferDisplayLayer::enqueueVideoFrame(VideoFrame& videoFrame)
     if (m_paused)
         return;
 
-    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame,
+    auto sharedVideoFrame = m_sharedVideoFrameWriter.write(videoFrame, m_connection,
         [this](auto& semaphore) { m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetSharedVideoFrameSemaphore { semaphore }, identifier()); },
         [this](SharedMemory::Handle&& handle) { m_connection->send(Messages::RemoteSampleBufferDisplayLayer::SetSharedVideoFrameMemory { WTF::move(handle) }, identifier()); }
     );

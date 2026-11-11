@@ -40,8 +40,6 @@
 #import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
-struct WGPUAdapterImpl {
-};
 
 namespace WebGPU::Metal {
 
@@ -49,7 +47,7 @@ class Device;
 class Instance;
 
 // https://gpuweb.github.io/gpuweb/#gpuadapter
-class Adapter final : public WebGPU::Adapter, public WGPUAdapterImpl {
+class Adapter final : public WebGPU::Adapter {
     WTF_MAKE_TZONE_ALLOCATED(Adapter);
 public:
     static Ref<Adapter> create(id<MTLDevice> device, Instance& instance, bool xrCompatible, HardwareCapabilities&& capabilities)
@@ -63,18 +61,20 @@ public:
 
     ~Adapter();
 
-    Vector<WebGPU::FeatureName> features() const;
-    const WebGPU::Limits& limits() const LIFETIME_BOUND { return m_capabilities.limits; }
-    WebGPU::AdapterInfo info();
+    Vector<WebGPU::FeatureName> features() const final;
+    const WebGPU::Limits& limits() const LIFETIME_BOUND final { return m_capabilities.limits; }
+    WebGPU::AdapterInfo info() final;
     // The C API adapter info, which has members that WebGPU::AdapterInfo does not have.
-    void getInfo(WGPUAdapterInfo&);
-    bool hasFeature(WGPUFeatureName);
-    void requestDevice(const WebGPU::DeviceDescriptor&, CompletionHandler<void(std::expected<Ref<Device>, String>&&)>&&);
+    bool hasFeature(WebGPU::FeatureName);
+    void requestDevice(const WebGPU::DeviceDescriptor&, CompletionHandler<void(RefPtr<WebGPU::Device>&&)>&&) final;
+    // requestDevice() with the reason a device could not be created, for the C API.
+    void requestDeviceOrError(const WebGPU::DeviceDescriptor&, CompletionHandler<void(std::expected<Ref<Device>, String>&&)>&&);
 
     void setLabel(String&&) final { }
     bool isValid() const final { return m_device; }
+    id<MTLDevice> device() const { return m_device; }
     void makeInvalid() { m_device = nil; }
-    bool LEGACY_NODELETE isXRCompatible() const;
+    NODELETE bool isXRCompatible() const final;
 
     RefPtr<Instance> instance() const { return m_instance.get(); }
     ThreadSafeWeakPtr<Instance> weakInstance() const { return m_instance; }

@@ -37,11 +37,16 @@ class ColorSpace;
 enum class ColorSpaceName : uint8_t;
 
 // Conversion function for typed colors.
-template<typename Output, typename Input> Output convertColor(const Input& color);
+template<typename Output, typename Input> requires (!IsPremultiplied<Output> && !IsPremultiplied<Input>) Output convertColor(const Input& color);
 
 // Conversion function for typed colors that carries forward missing component values
 // from analogous components in the input type.
-template<typename Output, typename Input> Output convertColorCarryingForwardMissing(const Input& color);
+template<typename Output, typename Input> requires (!IsPremultiplied<Output> && !IsPremultiplied<Input>) Output convertColorCarryingForwardMissing(const Input& color);
+
+// Conversion function for changing the component type of a premultiplied color, which,
+// unlike the other conversions, is safe as it only rescales the components.
+template<typename ComponentType, typename ColorType> ResolvedPremultiplied<ColorTypeWithReplacementComponent<ColorType, ComponentType>> convertComponentType(const ResolvedPremultiplied<ColorType>&);
+template<typename ComponentType, typename T> ResolvedPremultiplied<ColorComponents<ComponentType, 4>> convertComponentType(const ResolvedPremultiplied<ColorComponents<T, 4>>&);
 
 // Conversion functions for raw color components with associated color spaces.
 ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputColorSpace, ColorComponents<float, 4> inputColorComponents, ColorSpaceName outputColorSpace);
@@ -61,9 +66,26 @@ ColorComponents<float, 4> convertAndResolveColorComponents(ColorSpaceName inputC
 
 template<typename Output, typename Input, typename = void> struct ColorConversion;
 
-template<typename Output, typename Input> Output convertColor(const Input& color)
+template<typename Output, typename Input> requires (!IsPremultiplied<Output> && !IsPremultiplied<Input>) Output convertColor(const Input& color)
 {
     return ColorConversion<CanonicalColorType<Output>, CanonicalColorType<Input>>::convert(color);
+}
+
+template<typename ComponentType, typename ColorType> ResolvedPremultiplied<ColorTypeWithReplacementComponent<ColorType, ComponentType>> convertComponentType(const ResolvedPremultiplied<ColorType>& color)
+{
+    return Premultiplied { convertColor<ColorTypeWithReplacementComponent<ColorType, ComponentType>>(makeFromComponents<ColorType>(asColorComponents(color.resolved()))).resolved() };
+}
+
+template<typename ComponentType, typename T> ResolvedPremultiplied<ColorComponents<ComponentType, 4>> convertComponentType(const ResolvedPremultiplied<ColorComponents<T, 4>>& color)
+{
+    if constexpr (std::is_same_v<ComponentType, T>)
+        return color;
+    else if constexpr (std::is_same_v<ComponentType, uint8_t> && std::is_same_v<T, float>)
+        return Premultiplied { resolvedColor(color.resolved().map([](float value) -> uint8_t { return std::clamp(std::lround(value * 255.0f), 0l, 255l); })) };
+    else {
+        static_assert(std::is_same_v<ComponentType, float> && std::is_same_v<T, uint8_t>);
+        return Premultiplied { resolvedColor(color.resolved().map([](uint8_t value) -> float { return value / 255.0f; })) };
+    }
 }
 
 // MARK: Specialized converters
@@ -157,7 +179,7 @@ constexpr void tryToCarryForwardMissingForAnalogousSetComponent(ColorComponents<
 // Performs color space conversion followed by carrying forward missing components
 // from `Input` for analogous components in `Output` as described by CSS Color 4
 // § 12. Color Interpolation, https://drafts.csswg.org/css-color-4/#interpolation.
-template<typename Output, typename Input> Output convertColorCarryingForwardMissing(const Input& color)
+template<typename Output, typename Input> requires (!IsPremultiplied<Output> && !IsPremultiplied<Input>) Output convertColorCarryingForwardMissing(const Input& color)
 {
     if constexpr (std::is_same_v<Input, Output>)
         return convertColor<Output>(color);

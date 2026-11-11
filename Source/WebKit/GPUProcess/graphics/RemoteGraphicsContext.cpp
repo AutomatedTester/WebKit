@@ -40,6 +40,7 @@
 #include <WebCore/BitmapImage.h>
 #include <WebCore/FEImage.h>
 #include <WebCore/FilterResults.h>
+#include <WebCore/MeshGradient.h>
 #include <WebCore/SVGFilterRenderer.h>
 #include <wtf/URL.h>
 
@@ -315,16 +316,11 @@ void RemoteGraphicsContext::clipOutRoundedRect(const FloatRoundedRect& rect)
     context().clipOutRoundedRect(rect);
 }
 
-void RemoteGraphicsContext::clipToImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect)
+void RemoteGraphicsContext::clipToNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destinationRect)
 {
-    RefPtr clipImage = imageBuffer(imageBufferIdentifier);
-    if (!clipImage) {
-        ASSERT_NOT_REACHED();
-        // FIXME: https://bugs.webkit.org/show_bug.cgi?id=298384
-        // Switch to MESSAGE_CHECK(clipImage) when root cause is clear.
-        return;
-    }
-    context().clipToImageBuffer(*clipImage, destinationRect);
+    RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
+    MESSAGE_CHECK(image);
+    context().clipToNativeImage(*image, destinationRect);
 }
 
 void RemoteGraphicsContext::clipOutToPath(const Path& path)
@@ -344,6 +340,20 @@ void RemoteGraphicsContext::clipCachedPath(RemotePathImplIdentifier identifier, 
 
     Path path(pathImpl.releaseNonNull());
     context().clipPath(path, rule);
+}
+
+void RemoteGraphicsContext::clipTransformedPath(const AffineTransform& pathTransform, const Path& path, WindRule rule)
+{
+    context().clipTransformedPath(pathTransform, path, rule);
+}
+
+void RemoteGraphicsContext::clipTransformedCachedPath(const AffineTransform& pathTransform, RemotePathImplIdentifier identifier, WebCore::WindRule rule)
+{
+    RefPtr pathImpl = resourceCache().cachedPathImpl(identifier);
+    MESSAGE_CHECK(pathImpl);
+
+    Path path(pathImpl.releaseNonNull());
+    context().clipTransformedPath(pathTransform, path, rule);
 }
 
 void RemoteGraphicsContext::resetClip()
@@ -377,7 +387,7 @@ void RemoteGraphicsContext::drawFilteredImageBuffer(std::optional<RenderingResou
 
     if (!svgFilter || !svgFilter->hasValidRenderingResourceIdentifier()) {
 #if HAVE(IOSURFACE)
-        FilterResults results(makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner(), &m_sharedResourceCache->ioSurfacePool()));
+        FilterResults results(makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner(), &m_sharedResourceCache->ioSurfacePool(), useIOSurfaceWebKitBehavior()));
 #else
         FilterResults results(makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner()));
 #endif
@@ -393,7 +403,7 @@ void RemoteGraphicsContext::drawFilteredImageBuffer(std::optional<RenderingResou
 
     auto& results = cachedSVGFilter->ensureResults([&]() {
 #if HAVE(IOSURFACE)
-        auto allocator = makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner(), &m_sharedResourceCache->ioSurfacePool());
+        auto allocator = makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner(), &m_sharedResourceCache->ioSurfacePool(), useIOSurfaceWebKitBehavior());
 #else
         auto allocator = makeUnique<ImageBufferShareableAllocator>(m_sharedResourceCache->resourceOwner());
 #endif
@@ -412,7 +422,7 @@ void RemoteGraphicsContext::drawGlyphs(RenderingResourceIdentifier fontIdentifie
     context().drawGlyphsImmediate(*font, glyphs.span(), advances.span(), localAnchor, fontSmoothingMode);
 }
 
-void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContext::drawImageBuffer(RenderingResourceIdentifier imageBufferIdentifier, const FloatRect& destinationRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr sourceImage = imageBuffer(imageBufferIdentifier);
     MESSAGE_CHECK(sourceImage);
@@ -427,7 +437,7 @@ void RemoteGraphicsContext::drawDisplayList(RemoteDisplayListIdentifier identifi
     context().drawDisplayList(*displayList, controlFactory());
 }
 
-void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -454,14 +464,14 @@ void RemoteGraphicsContext::drawSystemImage(Ref<SystemImage>&& systemImage, cons
     context().drawSystemImage(systemImage, destinationRect);
 }
 
-void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContext::drawPatternNativeImage(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
     context().drawPattern(*image, destRect, tileRect, transform, phase, spacing, options);
 }
 
-void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContext::drawPatternImageBuffer(RenderingResourceIdentifier imageIdentifier, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& transform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions options)
 {
     RefPtr image = imageBuffer(imageIdentifier);
     MESSAGE_CHECK(image);
@@ -501,6 +511,14 @@ void RemoteGraphicsContext::drawLinesForText(const FloatPoint& point, float thic
 void RemoteGraphicsContext::drawDotsForDocumentMarker(const FloatRect& rect, const DocumentMarkerLineStyle& style)
 {
     context().drawDotsForDocumentMarker(rect, style);
+}
+
+void RemoteGraphicsContext::drawMeshGradient(RemoteMeshGradientIdentifier identifier, const FloatRect& destination)
+{
+    RefPtr gradient = resourceCache().cachedMeshGradient(identifier);
+    MESSAGE_CHECK(gradient);
+
+    context().drawMeshGradient(*gradient, destination);
 }
 
 void RemoteGraphicsContext::drawEllipse(const FloatRect& rect)
@@ -617,7 +635,7 @@ SharedVideoFrameReader& RemoteGraphicsContext::sharedVideoFrameReader()
     return *m_sharedVideoFrameReader;
 }
 
-void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
+void RemoteGraphicsContext::drawVideoFrame(SharedVideoFrame&& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
     if (auto videoFrame = sharedVideoFrameReader().read(WTF::move(frame)))
         context().drawVideoFrame(*videoFrame, destination, shouldDiscardAlpha, options);
@@ -749,6 +767,18 @@ std::optional<SharedPreferencesForWebProcess> RemoteGraphicsContext::sharedPrefe
 {
     return m_renderingBackend->sharedPreferencesForWebProcess();
 }
+
+#if HAVE(IOSURFACE)
+bool RemoteGraphicsContext::useIOSurfaceWebKitBehavior() const
+{
+#if USE(APPLE_INTERNAL_SDK)
+    auto preferences = sharedPreferencesForWebProcess();
+    return preferences && preferences->useIOSurfaceWebKitBehavior;
+#else
+    return false;
+#endif
+}
+#endif
 
 } // namespace WebKit
 

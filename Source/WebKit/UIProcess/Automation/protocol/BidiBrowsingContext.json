@@ -40,6 +40,28 @@
             ]
         },
         {
+            "id": "PrintMarginParameters",
+            "description": "The margins of a printed page, in centimeters.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextprintmarginparameters",
+            "type": "object",
+            "properties": [
+                { "name": "bottom", "type": "number", "optional": true, "description": "The bottom margin, at least 0 (default is 1)." },
+                { "name": "left", "type": "number", "optional": true, "description": "The left margin, at least 0 (default is 1)." },
+                { "name": "right", "type": "number", "optional": true, "description": "The right margin, at least 0 (default is 1)." },
+                { "name": "top", "type": "number", "optional": true, "description": "The top margin, at least 0 (default is 1)." }
+            ]
+        },
+        {
+            "id": "PrintPageParameters",
+            "description": "The size of a printed page, in centimeters.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextprintpageparameters",
+            "type": "object",
+            "properties": [
+                { "name": "height", "type": "number", "optional": true, "description": "The page height, at least 0.0352 (default is 27.94)." },
+                { "name": "width", "type": "number", "optional": true, "description": "The page width, at least 0.0352 (default is 21.59)." }
+            ]
+        },
+        {
             "id": "ClipRectangle",
             "description": "A rectangle to clip a captured screenshot to, either an element ('element') or a box in viewport coordinates ('box').",
             "spec": "https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextcliprectangle",
@@ -244,6 +266,26 @@
             ]
         },
         {
+            "name": "print",
+            "description": "Creates a paginated representation of a navigable's document, and returns it as a Base64-encoded PDF document.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-print",
+            "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/print",
+            "async": true,
+            "parameters": [
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to print." },
+                { "name": "background", "type": "boolean", "optional": true, "description": "Whether to print background images and colors (default is false)." },
+                { "name": "margin", "$ref": "BidiBrowsingContext.PrintMarginParameters", "optional": true, "description": "The page margins, in centimeters." },
+                { "name": "orientation", "type": "string", "optional": true, "description": "The page orientation: 'portrait' (default) or 'landscape'. Validated by the command implementation, as invalid values must be rejected rather than ignored." },
+                { "name": "page", "$ref": "BidiBrowsingContext.PrintPageParameters", "optional": true, "description": "The paper size, in centimeters." },
+                { "name": "pageRanges", "type": "array", "items": { "type": "any" }, "optional": true, "description": "The pages to print: page numbers, or strings of the form 'a', 'a-b', '-b' or 'a-'." },
+                { "name": "scale", "type": "number", "optional": true, "description": "The factor to zoom the content by, between 0.1 and 2 (default is 1)." },
+                { "name": "shrinkToFit", "type": "boolean", "optional": true, "description": "Whether to shrink the content to fit the page width (default is true)." }
+            ],
+            "returns": [
+                { "name": "data", "type": "string", "description": "The Base64-encoded PDF document." }
+            ]
+        },
+        {
             "name": "reload",
             "description": "Reloads a navigable.",
             "spec": "https://w3c.github.io/webdriver-bidi/#command-browsingContext-reload",
@@ -266,7 +308,7 @@
             "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/traverse_history",
             "parameters": [
                 { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext", "description": "The identifier of the browsing context to traverse history." },
-                { "name": "delta", "type": "integer", "description": "The number of steps to traverse in history. Positive values go forward, negative values go backward, and a value of zero will succeed with no action." }
+                { "name": "delta", "type": "number", "description": "The number of steps to traverse in history. Positive values go forward, negative values go backward, and a value of zero will succeed with no action. Declared as a number so that non-integer and unsafe-integer values can be rejected with invalid argument." }
             ],
             "async": true
         },
@@ -342,6 +384,17 @@
                 { "name": "navigation", "$ref": "BidiBrowsingContext.NavigationID", "nullable": true },
                 { "name": "timestamp", "type": "number", "description": "Time value in milliseconds representing the current date and time in UTC." },
                 { "name": "url", "type": "string", "description": "The URL with the fragment that was navigated to." }
+            ]
+        },
+        {
+            "name": "historyUpdated",
+            "description": "Event fired when the URL or state of a navigable's active document changes without a navigation, e.g. via pushState or replaceState.",
+            "spec": "https://w3c.github.io/webdriver-bidi/#event-browsingContext-historyUpdated",
+            "wpt": "https://github.com/web-platform-tests/wpt/tree/master/webdriver/tests/bidi/browsing_context/history_updated",
+            "parameters": [
+                { "name": "context", "$ref": "BidiBrowsingContext.BrowsingContext" },
+                { "name": "timestamp", "type": "number", "description": "Time value in milliseconds representing the current date and time in UTC." },
+                { "name": "url", "type": "string", "description": "The URL of the navigable's active document after the update." }
             ]
         },
         {

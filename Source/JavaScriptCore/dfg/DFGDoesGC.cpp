@@ -142,7 +142,6 @@ bool doesGC(Graph& graph, Node* node)
     case IsUndefinedOrNull:
     case IsBoolean:
     case IsNumber:
-    case IsBigInt:
     case NumberIsInteger:
     case IsObject:
     case IsCallable:
@@ -158,7 +157,7 @@ bool doesGC(Graph& graph, Node* node)
     case SuperSamplerBegin:
     case SuperSamplerEnd:
     case CPUIntrinsic:
-    case NormalizeMapKey: // HeapBigInt => BigInt32 conversion does not involve GC.
+    case NormalizeMapKey:
     case MapGet:
     case LoadMapValue:
     case MapIteratorNext:
@@ -267,6 +266,7 @@ bool doesGC(Graph& graph, Node* node)
     case DateGetTime:
     case DataViewGetFloat:
     case DataViewSet:
+    case TypedArraySet:
     case PutByOffset:
     case WeakMapGet:
     case MapOrSetSize:
@@ -303,6 +303,7 @@ bool doesGC(Graph& graph, Node* node)
     case CallForwardVarargs:
     case CallObjectConstructor:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CheckTierUpAndOSREnter:
     case CheckTierUpAtReturn:
     case CheckTierUpInLoop:
@@ -351,6 +352,8 @@ bool doesGC(Graph& graph, Node* node)
     case InstanceOfCustom:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case NumberToStringWithRadix:
     case NumberToStringWithValidRadixConstant:
     case ProfileType:
@@ -441,6 +444,7 @@ bool doesGC(Graph& graph, Node* node)
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewSymbol:
     case MakeRope:
     case MakeAtomString:
@@ -541,12 +545,6 @@ bool doesGC(Graph& graph, Node* node)
         return node->dataViewData().byteSize == 8;
 
     case CallNumberConstructor:
-        switch (node->child1().useKind()) {
-        case BigInt32Use:
-            return false;
-        default:
-            break;
-        }
         return true;
 
     case CallStringConstructor:
@@ -574,7 +572,6 @@ bool doesGC(Graph& graph, Node* node)
         if (node->isBinaryUseKind(Int32Use)
             || node->isBinaryUseKind(Int52RepUse)
             || node->isBinaryUseKind(DoubleRepUse)
-            || node->isBinaryUseKind(BigInt32Use)
             || node->isBinaryUseKind(HeapBigIntUse)
             || node->isBinaryUseKind(StringIdentUse)
             )
@@ -660,9 +657,6 @@ bool doesGC(Graph& graph, Node* node)
         case Int32Use:
         case SymbolUse:
         case ObjectUse:
-#if USE(BIGINT32)
-        case BigInt32Use:
-#endif
         case HeapBigIntUse:
             return false;
         default:

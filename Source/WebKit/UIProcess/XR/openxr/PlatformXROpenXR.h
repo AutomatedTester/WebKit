@@ -41,6 +41,9 @@ namespace WebKit {
 #if ENABLE(WEBXR_HIT_TEST)
 class OpenXRHitTestManager;
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+class OpenXRPlaneDetectionManager;
+#endif
 class OpenXRGraphicsBinding;
 class OpenXRInput;
 class OpenXRLayer;
@@ -59,7 +62,8 @@ public:
     void createLayerProjection(uint32_t, uint32_t, bool, CompletionHandler<void(std::optional<PlatformXR::LayerInfo>)>&&) override;
 
 #if ENABLE(WEBXR_LAYERS)
-    void createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, CreateCompositionLayerCallback&&) override;
+    void createCompositionLayer(PlatformXR::CompositionLayerType, WebCore::IntSize, PlatformXR::LayerLayout, PlatformXR::LayerUpdateMode, CreateCompositionLayerCallback&&) override;
+    void deleteLayer(WebPageProxy&, PlatformXR::LayerHandle) override;
 #endif
 
     void startSession(WebPageProxy&, WeakPtr<PlatformXRCoordinatorSessionEventClient>&&, const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, std::optional<WebCore::XRCanvasConfiguration>&&) override;
@@ -102,7 +106,7 @@ private:
     bool collectSwapchainFormatsIfNeeded();
     enum class PollResult : bool;
     PollResult pollEvents();
-    std::unique_ptr<OpenXRSwapchain> createSwapchain(uint32_t width, uint32_t height, bool alpha, uint32_t faceCount = 1) const;
+    std::unique_ptr<OpenXRSwapchain> createSwapchain(uint32_t width, uint32_t height, bool alpha, uint32_t faceCount = 1, PlatformXR::LayerUpdateMode = PlatformXR::LayerUpdateMode::Dynamic) const;
     void createReferenceSpacesIfNeeded(Box<RenderState>);
 #if ENABLE(WEBXR_HIT_TEST)
     XrSpace spaceForHitTest(const PlatformXR::NativeOriginInformation&) const;
@@ -140,6 +144,9 @@ private:
 
 #if ENABLE(WEBXR_HIT_TEST)
     std::unique_ptr<OpenXRHitTestManager> m_hitTestManager;
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    std::unique_ptr<OpenXRPlaneDetectionManager> m_planeDetectionManager;
 #endif
 };
 

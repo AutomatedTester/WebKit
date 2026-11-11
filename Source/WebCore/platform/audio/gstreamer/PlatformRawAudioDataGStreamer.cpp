@@ -20,13 +20,13 @@
 #include "config.h"
 #include "PlatformRawAudioDataGStreamer.h"
 
-#if ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#if USE(GSTREAMER)
 
 #include "AudioSampleFormat.h"
 #include "GStreamerCommon.h"
+#include "GUniquePtrGStreamer.h"
 #include "MediaSampleGStreamer.h"
 #include "SharedBuffer.h"
-#include "WebCodecsAudioDataAlgorithms.h"
 #include <wtf/glib/GUniquePtr.h>
 
 GST_DEBUG_CATEGORY(webkit_audio_data_debug);
@@ -180,6 +180,14 @@ int64_t PlatformRawAudioDataGStreamer::timestamp() const
     return timestamp;
 }
 
+// Two channels are the front left and right, and other channels are discrete.
+MediaChannelLayout PlatformRawAudioDataGStreamer::channelLayout() const
+{
+    if (numberOfChannels() == 2)
+        return { .kind = MediaChannelLayout::Kind::Positional, .mask = webAudioChannelBit(WebAudioChannel::FrontLeft) | webAudioChannelBit(WebAudioChannel::FrontRight) };
+    return { .kind = MediaChannelLayout::Kind::Discrete };
+}
+
 bool PlatformRawAudioDataGStreamer::isInterleaved() const
 {
     return GST_AUDIO_INFO_LAYOUT(&m_info) == GST_AUDIO_LAYOUT_INTERLEAVED;
@@ -296,4 +304,4 @@ void PlatformRawAudioData::copyTo(std::span<uint8_t> destination, AudioSampleFor
 
 #undef GST_CAT_DEFAULT
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(GSTREAMER)

@@ -33,6 +33,7 @@
 #include "CanvasRenderingContext2D.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "DefaultSizing.h"
 #include "Document.h"
 #include "DocumentPage.h"
 #include "DocumentView.h"
@@ -305,7 +306,7 @@ void FrameConsoleClient::timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&& 
     InspectorInstrumentation::consoleTimeStamp(frame.get(), WTF::move(arguments));
 }
 
-static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
+NODELETE static JSC::JSObject* objectArgumentAt(ScriptArguments& arguments, unsigned index)
 {
     return arguments.argumentCount() > index ? arguments.argumentAt(index).getObject() : nullptr;
 }
@@ -381,9 +382,14 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
                 if (!node->document().contains(*node)) {
                     auto snapshotImageElement = [&snapshot] (HTMLImageElement& imageElement) {
                         if (RefPtr cachedImage = imageElement.cachedImage()) {
-                            if (RefPtr image = cachedImage->image(); image && image != &Image::nullImage()) {
-                                snapshot = ImageBuffer::create(image->size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, /* scale */ 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
-                                snapshot->context().drawImage(*image, ConcreteObjectSize::fixed(image->size()), FloatPoint(0, 0));
+                            if (RefPtr image = cachedImage->image(); image && image->hasSomethingToDraw()) {
+                                auto concreteObjectSize = DefaultSizing { }.resolve(image->naturalDimensions());
+                                if (concreteObjectSize.size().isEmpty())
+                                    return;
+                                snapshot = ImageBuffer::create(concreteObjectSize.size(), RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, /* scale */ 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+                                if (!snapshot)
+                                    return;
+                                image->draw(snapshot->context(), ImageDrawDescriptor { concreteObjectSize });
                             }
                         }
                     };
@@ -476,8 +482,7 @@ void FrameConsoleClient::screenshot(JSC::JSGlobalObject* lexicalGlobalObject, Re
         }
     }
 
-    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments;
-    adjustedArguments.reserveInitialCapacity(arguments->argumentCount() + !target);
+    Vector<JSC::Strong<JSC::Unknown>> adjustedArguments(ReserveCapacityTag { }, arguments->argumentCount() + !target);
     adjustedArguments.append({ vm, target ? target : JSC::jsNontrivialString(vm, "Viewport"_s) });
     for (size_t i = (!target ? 0 : 1); i < arguments->argumentCount(); ++i)
         adjustedArguments.append({ vm, arguments->argumentAt(i) });

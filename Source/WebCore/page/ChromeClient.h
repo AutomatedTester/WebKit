@@ -22,6 +22,7 @@
 #pragma once
 
 #include <WebCore/AutoplayEvent.h>
+#include <WebCore/Color.h>
 #include <WebCore/ContactInfo.h>
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DatabaseDetails.h>
@@ -145,11 +146,12 @@ class SecurityOrigin;
 class SecurityOriginData;
 class TextIndicator;
 class ViewportConstraints;
+class WebGPUIntegration;
 class Widget;
 class WorkerClient;
 
 #if ENABLE(WEB_AUTHN)
-struct DigitalCredentialsMobileDocumentRequestData;
+struct DigitalCredentialsRequestData;
 struct MobileDocumentRequest;
 #endif
 
@@ -158,7 +160,12 @@ class GraphicsContextGL;
 struct GraphicsContextGLAttributes;
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+class ImmersiveElement;
+#endif
+
 struct AppHighlight;
+struct AXRemoteFrameSelectedTextChange;
 struct AccessibilityRemoteToken;
 struct AccessibilitySearchCriteriaIPC;
 struct ApplePayAMSUIRequest;
@@ -188,7 +195,6 @@ enum class ActivityStateForCPUSampling : uint8_t;
 enum class AXLoadingEvent : uint8_t;
 enum class AXNotification : uint8_t;
 enum class AXTextChange : uint8_t;
-enum class BroadcastFocusedElement : bool;
 enum class ContentChange : uint8_t;
 enum class DidFilterLinkDecoration : bool { No, Yes };
 enum class IsLoggedIn : uint8_t;
@@ -229,12 +235,6 @@ using SessionID = WTF::UUID;
 enum class TextSuggestionState : uint8_t;
 }
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
-namespace WebGPU {
-class GPU;
-}
-#endif
-
 class ChromeClient {
 public:
     virtual void chromeDestroyed() = 0;
@@ -250,7 +250,7 @@ public:
     virtual bool canTakeFocus(FocusDirection) const = 0;
     virtual void takeFocus(FocusDirection) = 0;
 
-    virtual void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement) = 0;
+    virtual void focusedElementChanged(Element*, LocalFrame*, FocusOptions) = 0;
     virtual void focusedFrameChanged(Frame*) = 0;
 
     // The Frame pointer provides the ChromeClient with context about which
@@ -339,11 +339,10 @@ public:
 
     virtual bool shouldUseMouseEventForSelection(const PlatformMouseEvent&) { return true; }
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    virtual FloatSize screenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize availableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideAvailableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize screenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize availableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideAvailableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
 
     virtual void dispatchDisabledAdaptationsDidChange(const OptionSet<DisabledAdaptations>&) const { }
     virtual void dispatchViewportPropertiesDidChange(const ViewportArguments&) const { }
@@ -377,7 +376,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     virtual void allowImmersiveElement(CompletionHandler<void(bool)>&& completion) const { completion(false); }
-    virtual void presentImmersiveElement(const LayerHostingContextIdentifier, CompletionHandler<void(bool)>&& completion) const { completion(false); }
+    virtual void presentImmersiveElement(ImmersiveElement&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
     virtual void dismissImmersiveElement(CompletionHandler<void()>&& completion) const { completion(); }
     virtual bool supportsImmersiveElement() const { return false; }
 #endif
@@ -475,6 +474,7 @@ public:
     virtual void focusedElementDidChangeInputMode(Element&, InputMode) { }
 #if PLATFORM(GTK) || PLATFORM(WPE)
     virtual void focusedElementDidChangeReadOnly(Element&) { }
+    virtual void focusedElementDidChangeType(Element&) { }
 #endif
     virtual void focusedSelectElementDidChangeOptions(const HTMLSelectElement&) { }
 
@@ -489,6 +489,9 @@ public:
     virtual DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const { return nullptr; }
 
     virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float, const ColorSpace&, ImageBufferFormat) const { return nullptr; }
+#if HAVE(IOSURFACE)
+    virtual bool useIOSurfaceWebKitBehavior() const { return false; }
+#endif
     WEBCORE_EXPORT virtual RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>);
     virtual RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) { return nullptr; }
 
@@ -508,7 +511,7 @@ public:
     WEBCORE_EXPORT virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const;
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    virtual RefPtr<WebGPU::GPU> createGPUForWebGPU() const { return nullptr; }
+    virtual RefPtr<WebGPUIntegration> createGPUForWebGPU() const { return nullptr; }
 #endif
     virtual RefPtr<ShapeDetection::BarcodeDetector> createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const;
     virtual void getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&&) const;
@@ -530,6 +533,7 @@ public:
     // Schedule a rendering update that coordinates with display refresh. Returns true if scheduled. (This is only used by SVGImageChromeClient.)
     virtual bool scheduleRenderingUpdate() { return false; }
     virtual void renderingUpdateFramesPerSecondChanged() { }
+    virtual void syncLocalFrameInfoToRemote() { }
 
     virtual unsigned remoteImagesCountForTesting() const { return 0; }
 
@@ -679,6 +683,8 @@ public:
     // Called by a child frame to continue a search in its parent frame.
     // The parent searches from the child frame's position in its tree.
     WEBCORE_EXPORT virtual void continueAccessibilitySearchFromChildFrame(FrameIdentifier childFrameID, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&&);
+    // Called by a cross-site frame's AXObjectCache to have the main frame's process post AXSelectedTextChanged.
+    virtual void relayAccessibilitySelectedTextChangeToMainFrame(FrameIdentifier, AXRemoteFrameSelectedTextChange&&) { }
 #endif
 
     virtual void isPlayingMediaDidChange(MediaProducerMediaStateFlags) { }
@@ -695,8 +701,8 @@ public:
 #if ENABLE(SERVICE_CONTROLS)
     virtual void handleSelectionServiceClick(FrameIdentifier, FrameSelection&, const Vector<String>&, const IntPoint&) { }
     virtual bool hasRelevantSelectionServices(bool /*isTextOnly*/) const { return false; }
-    virtual void handleImageServiceClick(FrameIdentifier, const IntPoint&, Image&, HTMLImageElement&) { }
-    virtual void handlePDFServiceClick(FrameIdentifier, const IntPoint&, HTMLAttachmentElement&) { }
+    virtual bool handleImageServiceClick(FrameIdentifier, const IntPoint&, HTMLImageElement&) { return false; }
+    virtual bool handlePDFServiceClick(FrameIdentifier, const IntPoint&, HTMLAttachmentElement&) { return false; }
 #endif
 
     virtual std::pair<URL, DidFilterLinkDecoration> applyLinkDecorationFilteringWithResult(const URL& url, LinkDecorationFilteringTrigger) const { return { url, DidFilterLinkDecoration::No }; };
@@ -860,7 +866,7 @@ public:
     WEBCORE_EXPORT virtual ~ChromeClient();
 
 protected:
-    WEBCORE_EXPORT ChromeClient();
+    NODELETE WEBCORE_EXPORT ChromeClient();
 };
 
 } // namespace WebCore

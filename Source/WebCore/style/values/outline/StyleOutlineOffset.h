@@ -61,17 +61,17 @@ template<> struct CSSValueConversion<OutlineOffset> { OutlineOffset operator()(B
 // MARK: - Blending
 
 template<> struct Blending<OutlineOffset> {
-    auto canBlend(const OutlineOffset&, const OutlineOffset&) -> bool;
+    NODELETE bool canBlend(const OutlineOffset&, const OutlineOffset&);
     auto blend(const OutlineOffset&, const OutlineOffset&, const Style::ComputedStyle&, const Style::ComputedStyle&, const Interpolation::Context&) -> OutlineOffset;
 };
 
 // MARK: - Evaluation
 
 template<> struct Evaluation<UsedOutlineOffset, float> {
-    WEBCORE_EXPORT auto operator()(const UsedOutlineOffset&, ZoomFactor, float deviceScaleFactor) -> float;
+    NODELETE WEBCORE_EXPORT float operator()(const UsedOutlineOffset&, ZoomFactor, float deviceScaleFactor);
 };
 template<> struct Evaluation<UsedOutlineOffset, LayoutUnit> {
-    auto operator()(const UsedOutlineOffset&, ZoomFactor, float deviceScaleFactor) -> LayoutUnit;
+    NODELETE LayoutUnit operator()(const UsedOutlineOffset&, ZoomFactor, float deviceScaleFactor);
 };
 
 } // namespace WebCore::Style

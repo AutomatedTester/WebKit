@@ -52,18 +52,15 @@ class RemoteVideoFrameProxy final : public WebCore::VideoFrame {
     WTF_MAKE_NONCOPYABLE(RemoteVideoFrameProxy);
 public:
     using Properties = RemoteVideoFrameProxyProperties;
-    static Properties properties(WebKit::RemoteVideoFrameReference, const WebCore::VideoFrame&);
+    static Properties properties(const WebCore::VideoFrame&);
 
-    static Ref<RemoteVideoFrameProxy> create(IPC::Connection&, RemoteVideoFrameObjectHeapProxy&, Properties&&);
-
-    // Called by the end-points that capture creation messages that are sent from GPUP but
-    // whose destinations were released in WP before message was processed.
-    static void releaseUnused(IPC::Connection&, Properties&&);
+    static Ref<RemoteVideoFrameProxy> create(IPC::Connection&, RemoteVideoFrameObjectHeapProxy&, RemoteVideoFrameReference, Properties&&);
 
     ~RemoteVideoFrameProxy() final;
 
-    RemoteVideoFrameIdentifier LEGACY_NODELETE identifier() const;
-    RemoteVideoFrameReadReference LEGACY_NODELETE newReadReference() const;
+    NODELETE RemoteVideoFrameIdentifier identifier() const;
+    // Returns std::nullopt if the frame does not belong to `connection`, so that the reference is never sent to another GPU process.
+    NODELETE std::optional<RemoteVideoFrameReadReference> newReadReference(const IPC::Connection&) const;
 
     WebCore::IntSize size() const { return m_size; }
 
@@ -71,17 +68,19 @@ public:
     WebCore::IntSize presentationSize() const final { return m_size; }
     uint32_t pixelFormat() const final;
     bool isRemoteProxy() const final { return true; }
+    bool shouldIgnoreAlpha() const final { return m_shouldIgnoreAlpha; }
 #if PLATFORM(COCOA)
     CVPixelBufferRef pixelBuffer() const final;
 #endif
 
 private:
-    RemoteVideoFrameProxy(IPC::Connection&, RemoteVideoFrameObjectHeapProxy&, Properties&&);
+    RemoteVideoFrameProxy(IPC::Connection&, RemoteVideoFrameObjectHeapProxy&, RemoteVideoFrameReference, Properties&&);
 
     enum CloneConstructor { cloneConstructor };
     RemoteVideoFrameProxy(CloneConstructor, RemoteVideoFrameProxy&);
 
     Ref<VideoFrame> clone() final;
+    void setShouldIgnoreAlpha(bool shouldIgnoreAlpha) final { m_shouldIgnoreAlpha = shouldIgnoreAlpha; }
 
     static inline Seconds defaultTimeout = 10_s;
 
@@ -90,6 +89,7 @@ private:
     std::optional<RemoteVideoFrameReferenceTracker> m_referenceTracker;
     const WebCore::IntSize m_size;
     uint32_t m_pixelFormat { 0 };
+    bool m_shouldIgnoreAlpha { false };
     // FIXME: Remove this.
     mutable RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
 #if PLATFORM(COCOA)

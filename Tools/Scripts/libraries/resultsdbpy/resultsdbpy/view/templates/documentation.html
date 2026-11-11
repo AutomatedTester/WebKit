@@ -417,6 +417,20 @@ const documentation = {
                 ],
             ),
             documentEndpoint(
+                '/api/logs/&ltsuite&gt/&lttest&gt',
+                ['GET'],
+                ['Branch', 'Configuration', 'Limit', 'Repository', 'Ref', 'UUID'],
+                [
+                    `Access the text a specific test printed in runs with a specific configuration. The 'log' a test's result carries in an upload is kept here instead of with the result. A log over 8,192 bytes is cut to fit: its widest lines are cut to the widest width at which it fits, each ending with the number of bytes it lost. If that width would be under 200 bytes, lines are cut at 200 and lines from the middle are left out, with a line counting their bytes. Each run is stored in a dictionary formatted like this:`,
+                    codeBlock('{\n' +
+                    '    "start_time": <UTC time test run started>,\n' +
+                    '    "uuid": <UUID for test run>,\n' +
+                    '    "log": <text the test printed>\n' +
+                    '}'),
+                    `These runs are organized by configuration, as the results of ${localLink(['API', '/api/results/&ltsuite&gt/&lttest&gt'], '/api/results/&ltsuite&gt/&lttest&gt')} are. Only runs which left a log are returned, by default the 10 most recent for each configuration. A run whose log is kept here has "has_log": true in its result.`,
+                ],
+            ),
+            documentEndpoint(
                 '/results-ews',
                 ['GET'],
                 ['Branch', 'Configuration', 'Limit', 'Suite', 'Time'],
@@ -520,7 +534,8 @@ const documentation = {
                     '                "end_time": <UTC time build ended>,\n' +
                     '                "queue": <url to queue a>,\n' +
                     '                "worker": <url to worker a>,\n' +
-                    '                "build": <url to build a>\n' +
+                    '                "build": <url to build a>,\n' +
+                    '                "links": [[<link name>, <link url>], ...]\n' +
                     '            }\n' +
                     '        ]\n' +
                     '    }, {\n' +
@@ -537,6 +552,7 @@ const documentation = {
                     '    }\n' +
                     ']'),
                     `where &ltconfiguration-object-a&gt and &ltconfiguration-object-b&gt are both ${localLink(['Query Parameters', 'Configuration'], 'configuration objects')}.`,
+                    `"links" lists the upload's details whose keys end in "link", other than "link" itself, as [name, url] pairs in upload order. Each name comes from its key, so "post_build_link" is "Post Build". Only http and https URLs are kept, and "links" is only present when there are any.`,
                 ],
             ),
             documentEndpoint(

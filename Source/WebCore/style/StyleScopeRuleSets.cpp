@@ -99,8 +99,15 @@ RuleSet* ScopeRuleSets::dynamicViewTransitionsStyle() const
 RuleSet* ScopeRuleSets::userStyle() const
 {
     if (m_usesSharedUserStyle)
-        return m_styleResolver.document().styleScope().resolver().ruleSets().userStyle();
+        return protect(m_styleResolver.document().styleScope())->resolver().ruleSets().userStyle();
     return m_userStyle.get();
+}
+
+RuleSet* ScopeRuleSets::quirkStyle() const
+{
+    if (m_usesSharedUserStyle)
+        return protect(m_styleResolver.document().styleScope())->resolver().ruleSets().quirkStyle();
+    return m_quirkStyle.get();
 }
 
 RuleSet* ScopeRuleSets::styleForDeclarationOrigin(DeclarationOrigin origin)
@@ -111,6 +118,9 @@ RuleSet* ScopeRuleSets::styleForDeclarationOrigin(DeclarationOrigin origin)
 
     case DeclarationOrigin::User:
         return userStyle();
+
+    case DeclarationOrigin::Quirk:
+        return quirkStyle();
 
     case DeclarationOrigin::UserAgent:
         return userAgentMediaQueryStyle();
@@ -149,6 +159,15 @@ void ScopeRuleSets::initializeUserStyle()
 
     if (userStyle->ruleCount() > 0 || userStyle->pageRules().size() > 0)
         m_userStyle = WTF::move(userStyle);
+
+    // Quirk style sheets are author-level sheets, but they are cascaded in their own origin above all others.
+    auto quirkStyle = RuleSet::create();
+    RuleSetBuilder quirkBuilder(quirkStyle, mediaQueryEvaluator, &m_styleResolver);
+    for (auto& sheet : extensionStyleSheets->quirkStyleSheets())
+        quirkBuilder.addRulesFromSheet(protect(sheet->contents()));
+
+    if (quirkStyle->ruleCount() > 0)
+        m_quirkStyle = WTF::move(quirkStyle);
 }
 
 void ScopeRuleSets::collectRulesFromUserStyleSheets(const Vector<Ref<CSSStyleSheet>>& userSheets, RuleSet& userStyle, const MQ::MediaQueryEvaluator& mediaQueryEvaluator)
@@ -177,6 +196,8 @@ bool ScopeRuleSets::hasViewportDependentMediaQueries() const
         return true;
     if (m_userStyle && m_userStyle->hasViewportDependentMediaQueries())
         return true;
+    if (m_quirkStyle && m_quirkStyle->hasViewportDependentMediaQueries())
+        return true;
     if (m_userAgentMediaQueryStyle && m_userAgentMediaQueryStyle->hasViewportDependentMediaQueries())
         return true;
 
@@ -189,6 +210,8 @@ bool ScopeRuleSets::hasContainerQueries() const
         return true;
     if (m_userStyle && m_userStyle->hasContainerQueries())
         return true;
+    if (m_quirkStyle && m_quirkStyle->hasContainerQueries())
+        return true;
     if (m_userAgentMediaQueryStyle && m_userAgentMediaQueryStyle->hasContainerQueries())
         return true;
 
@@ -200,6 +223,8 @@ bool ScopeRuleSets::hasScopeRules() const
     if (m_authorStyle->hasScopeRules())
         return true;
     if (m_userStyle && m_userStyle->hasScopeRules())
+        return true;
+    if (m_quirkStyle && m_quirkStyle->hasScopeRules())
         return true;
     if (m_userAgentMediaQueryStyle && m_userAgentMediaQueryStyle->hasScopeRules())
         return true;
@@ -235,6 +260,7 @@ std::optional<DynamicMediaQueryEvaluationChanges> ScopeRuleSets::evaluateDynamic
 
     evaluate(&authorStyle());
     evaluate(userStyle());
+    evaluate(quirkStyle());
     evaluate(userAgentMediaQueryStyle());
 
     return evaluationChanges;
@@ -281,6 +307,8 @@ void ScopeRuleSets::collectFeatures() const
         m_features.add(m_authorStyle->features());
     if (RefPtr userStyle = this->userStyle())
         m_features.add(userStyle->features());
+    if (RefPtr quirkStyle = this->quirkStyle())
+        m_features.add(quirkStyle->features());
 
     m_idInvalidationRuleSets.clear();
     m_classInvalidationRuleSets.clear();
@@ -302,7 +330,7 @@ struct HasArgumentSiblingInfo {
     bool hasPositionalPseudo { false }; // :nth-child(), :first-child, ... (sibling-relative)
     bool hasNonLogicalPseudo { false }; // any non-logical pseudo-class (positional, stateful, etc.)
 
-    OptionSet<HasArgumentProperty> properties() const
+    NODELETE OptionSet<HasArgumentProperty> properties() const
     {
         OptionSet<HasArgumentProperty> result;
         if (hasSiblingCombinator || hasPositionalPseudo)
@@ -313,7 +341,7 @@ struct HasArgumentSiblingInfo {
     }
 };
 
-static void scanHasArgument(const CSSSelector& complexSelector, HasArgumentSiblingInfo& info)
+NODELETE static void scanHasArgument(const CSSSelector& complexSelector, HasArgumentSiblingInfo& info)
 {
     for (const CSSSelector* simpleSelector = &complexSelector; simpleSelector; simpleSelector = simpleSelector->precedingInComplexSelector()) {
         auto relation = simpleSelector->relation();
@@ -331,11 +359,12 @@ static void scanHasArgument(const CSSSelector& complexSelector, HasArgumentSibli
     }
 }
 
-static OptionSet<HasArgumentProperty> hasArgumentProperties(const CSSSelectorList& argument)
+NODELETE static OptionSet<HasArgumentProperty> hasArgumentProperties(const CSSSelector* argument)
 {
+    if (!argument)
+        return { };
     HasArgumentSiblingInfo info;
-    for (const auto& complexSelector : argument)
-        scanHasArgument(complexSelector, info);
+    scanHasArgument(*argument, info);
     return info.properties();
 }
 
@@ -344,32 +373,37 @@ static Vector<InvalidationRuleSet> buildInvalidationRuleSets(const RuleFeatureVe
     struct RuleSetKey {
         MatchElement matchElement;
         IsNegation isNegation;
-        const CSSSelectorList* invalidationSelector { nullptr };
-        const CSSSelectorList* scopeSelector { nullptr };
+        const CSSSelector* invalidationSelector { nullptr };
+        const CSSSelector* scopeSelector { nullptr };
 
-        unsigned hash() const
+        NODELETE unsigned hash() const
         {
             Hasher hasher;
             add(hasher, matchElement.relation, matchElement.hasRelation, isNegation);
             if (invalidationSelector)
-                add(hasher, *invalidationSelector);
+                addComplexSelector(hasher, *invalidationSelector);
             if (scopeSelector)
-                add(hasher, *scopeSelector);
+                addComplexSelector(hasher, *scopeSelector);
             return hasher.hash();
         }
         bool operator==(const RuleSetKey& other) const
         {
+            auto equalSelectors = [](const CSSSelector* a, const CSSSelector* b) {
+                if (!a || !b)
+                    return a == b;
+                return complexSelectorsEqual(*a, *b);
+            };
             return matchElement == other.matchElement
                 && isNegation == other.isNegation
-                && arePointingToEqualData(invalidationSelector, other.invalidationSelector)
-                && arePointingToEqualData(scopeSelector, other.scopeSelector);
+                && equalSelectors(invalidationSelector, other.invalidationSelector)
+                && equalSelectors(scopeSelector, other.scopeSelector);
         }
     };
 
     HashMap<GenericHashKey<RuleSetKey>, RefPtr<RuleSet>> ruleSetMap;
 
     for (auto& feature : features) {
-        auto key = GenericHashKey<RuleSetKey> { { feature.matchElement, feature.isNegation, &feature.invalidationSelector, &feature.scopeSelector } };
+        auto key = GenericHashKey<RuleSetKey> { { feature.matchElement, feature.isNegation, feature.invalidationSelector(), feature.scopeSelector() } };
 
         auto& ruleSet = ruleSetMap.ensure(key, [] {
             return RuleSet::create();
@@ -382,22 +416,22 @@ static Vector<InvalidationRuleSet> buildInvalidationRuleSets(const RuleFeatureVe
         auto& key = entry.key.key();
         entry.value->shrinkToFit();
         auto invalidationSelector = [&] {
-            if (!key.invalidationSelector->isEmpty() && !key.scopeSelector->isEmpty())
-                return CSSSelectorParser::makeHasArgumentWithScope(key.invalidationSelector->first(), key.scopeSelector->first());
-            if (!key.invalidationSelector->isEmpty())
-                return CSSSelectorList { *key.invalidationSelector };
+            if (key.invalidationSelector && key.scopeSelector)
+                return CSSSelectorParser::makeHasArgumentWithScope(*key.invalidationSelector, *key.scopeSelector);
+            if (key.invalidationSelector)
+                return CSSSelectorList::makeCopyingComplexSelector(*key.invalidationSelector);
             return CSSSelectorList { };
         }();
         // Null scopeSelector means scope-breaking; otherwise wrap a copy so it outlives this cache.
         RefPtr<const RefCountedCSSSelectorList> scopeSelector;
-        if (!key.scopeSelector->isEmpty())
-            scopeSelector = RefCountedCSSSelectorList::create(CSSSelectorList { *key.scopeSelector });
+        if (key.scopeSelector)
+            scopeSelector = RefCountedCSSSelectorList::create(CSSSelectorList::makeCopyingComplexSelector(*key.scopeSelector));
         return InvalidationRuleSet {
             WTF::move(entry.value),
             WTF::move(invalidationSelector),
             key.matchElement,
             key.isNegation,
-            hasArgumentProperties(*key.invalidationSelector),
+            hasArgumentProperties(key.invalidationSelector),
             WTF::move(scopeSelector)
         };
     });
@@ -459,6 +493,7 @@ const HashSet<AtomString>& ScopeRuleSets::customPropertyNamesInStyleContainerQue
 
         collectPropertyNames(&authorStyle());
         collectPropertyNames(userStyle());
+        collectPropertyNames(quirkStyle());
 
         m_customPropertyNamesInStyleContainerQueries = propertyNames;
     }
@@ -490,6 +525,9 @@ bool ScopeRuleSets::hasMatchingUserOrAuthorStyle(NOESCAPE const WTF::Function<bo
         return true;
 
     if (RefPtr userStyle = this->userStyle(); userStyle && predicate(*userStyle))
+        return true;
+
+    if (RefPtr quirkStyle = this->quirkStyle(); quirkStyle && predicate(*quirkStyle))
         return true;
 
     return false;

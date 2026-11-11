@@ -17,7 +17,6 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/Modules/ShapeDetection"
     "${WEBCORE_DIR}/Modules/ShapeDetection/Interfaces"
     "${WEBCORE_DIR}/Modules/WebGPU"
-    "${WEBCORE_DIR}/Modules/WebGPU/InternalAPI"
     "${WEBCORE_DIR}/Modules/WebGPU/Implementation"
     "${WEBCORE_DIR}/Modules/airplay"
     "${WEBCORE_DIR}/Modules/applepay"
@@ -63,7 +62,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/Modules/permissions"
     "${WEBCORE_DIR}/Modules/pictureinpicture"
     "${WEBCORE_DIR}/Modules/plugins"
-    "${WEBCORE_DIR}/Modules/proofofpossession"
+    "${WEBCORE_DIR}/Modules/phonenumberpossession"
     "${WEBCORE_DIR}/Modules/push-api"
     "${WEBCORE_DIR}/Modules/remoteplayback"
     "${WEBCORE_DIR}/Modules/reporting"
@@ -169,6 +168,10 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/loader/archive/mhtml"
     "${WEBCORE_DIR}/loader/cache"
     "${WEBCORE_DIR}/loader/icon"
+    "${WEBCORE_DIR}/loader/images"
+    "${WEBCORE_DIR}/loader/images/bitmap"
+    "${WEBCORE_DIR}/loader/images/sizing"
+    "${WEBCORE_DIR}/loader/images/svg"
     "${WEBCORE_DIR}/mathml"
     "${WEBCORE_DIR}/page"
     "${WEBCORE_DIR}/page/csp"
@@ -204,7 +207,6 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/platform/xr"
     "${WEBCORE_DIR}/plugins"
     "${WEBCORE_DIR}/rendering"
-    "${WEBCORE_DIR}/rendering/line"
     "${WEBCORE_DIR}/rendering/mathml"
     "${WEBCORE_DIR}/rendering/shapes"
     "${WEBCORE_DIR}/rendering/style"
@@ -511,6 +513,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediarecorder/MediaRecorder.idl
     Modules/mediarecorder/MediaRecorderErrorEvent.idl
 
+    Modules/mediasession/CallToActionLabel.idl
     Modules/mediasession/MediaImage.idl
     Modules/mediasession/MediaMetadata.idl
     Modules/mediasession/MediaMetadataInit.idl
@@ -519,6 +522,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/mediasession/MediaSessionAction.idl
     Modules/mediasession/MediaSessionActionDetails.idl
     Modules/mediasession/MediaSessionActionHandler.idl
+    Modules/mediasession/MediaSessionActionHandlerOptions.idl
     Modules/mediasession/MediaSessionCaptionTrack.idl
     Modules/mediasession/MediaSessionCoordinator.idl
     Modules/mediasession/MediaSessionCoordinatorState.idl
@@ -682,13 +686,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/remoteplayback/RemotePlayback.idl
     Modules/remoteplayback/RemotePlaybackAvailabilityCallback.idl
 
-    Modules/reporting/DeprecationReportBody.idl
-    Modules/reporting/IntegrityPolicyViolationReportBody.idl
     Modules/reporting/Report.idl
-    Modules/reporting/ReportBody.idl
     Modules/reporting/ReportingObserver.idl
     Modules/reporting/ReportingObserverCallback.idl
-    Modules/reporting/TestReportBody.idl
 
     Modules/screen-wake-lock/WakeLock.idl
     Modules/screen-wake-lock/WakeLockSentinel.idl
@@ -769,6 +769,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webaudio/AudioProcessingEvent.idl
     Modules/webaudio/AudioProcessingEventInit.idl
     Modules/webaudio/AudioScheduledSourceNode.idl
+    Modules/webaudio/AudioSinkInfo.idl
+    Modules/webaudio/AudioSinkOptions.idl
+    Modules/webaudio/AudioSinkType.idl
     Modules/webaudio/AudioTimestamp.idl
     Modules/webaudio/AudioWorklet.idl
     Modules/webaudio/AudioWorkletGlobalScope.idl
@@ -857,6 +860,8 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webauthn/ResidentKeyRequirement.idl
     Modules/webauthn/UnknownCredentialOptions.idl
     Modules/webauthn/UserVerificationRequirement.idl
+    Modules/webauthn/WebAuthnOperationErrorCode.idl
+    Modules/webauthn/WebAuthnOperationException.idl
 
     Modules/webcodecs/AacEncoderConfig.idl
     Modules/webcodecs/AudioSampleFormat.idl
@@ -1379,6 +1384,9 @@ set(WebCore_NON_SVG_IDL_FILES
     html/canvas/CanvasDirection.idl
     html/canvas/CanvasElementImage.idl
     html/canvas/CanvasFillRule.idl
+    html/canvas/CanvasFontKerning.idl
+    html/canvas/CanvasFontStretch.idl
+    html/canvas/CanvasFontVariantCaps.idl
     html/canvas/CanvasGradient.idl
     html/canvas/CanvasLineCap.idl
     html/canvas/CanvasLineJoin.idl
@@ -1395,6 +1403,7 @@ set(WebCore_NON_SVG_IDL_FILES
     html/canvas/PaintRenderingContext2D.idl
     html/canvas/Path2D.idl
     html/canvas/PredefinedColorSpace.idl
+    html/canvas/RenderingMode.idl
     html/canvas/UpdateElementGeometryOptions.idl
 
     html/closewatcher/CloseWatcher.idl
@@ -1423,8 +1432,6 @@ set(WebCore_NON_SVG_IDL_FILES
     inspector/InspectorFrontendHost.idl
     inspector/RTCLogsCallback.idl
 
-    loader/COEPInheritenceViolationReportBody.idl
-    loader/CORPViolationReportBody.idl
 
     mathml/MathMLAnchorElement.idl
     mathml/MathMLElement.idl
@@ -1509,7 +1516,6 @@ set(WebCore_NON_SVG_IDL_FILES
     page/WindowPostMessageOptions.idl
     page/WorkerNavigator.idl
 
-    page/csp/CSPViolationReportBody.idl
 
     plugins/DOMMimeType.idl
     plugins/DOMMimeTypeArray.idl
@@ -1725,6 +1731,8 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/webxr/WebXRJointPose.idl
     Modules/webxr/WebXRJointSpace.idl
     Modules/webxr/WebXRLayer.idl
+    Modules/webxr/WebXRPlane.idl
+    Modules/webxr/WebXRPlaneSet.idl
     Modules/webxr/WebXRPose.idl
     Modules/webxr/WebXRRay.idl
     Modules/webxr/WebXRReferenceSpace.idl
@@ -1740,6 +1748,7 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/webxr/WebXRViewport.idl
     Modules/webxr/WebXRWebGLLayer.idl
     Modules/webxr/XRCompositionLayer.idl
+    Modules/webxr/XRPlaneOrientation.idl
     Modules/webxr/XRCubeLayer.idl
     Modules/webxr/XRCubeLayerInit.idl
     Modules/webxr/XRCylinderLayer.idl
@@ -2031,11 +2040,13 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     Modules/webxr/Navigator+WebXR.idl
     Modules/webxr/WebXRFrame+HandInput.idl
     Modules/webxr/WebXRFrame+HitTest.idl
+    Modules/webxr/WebXRFrame+PlaneDetection.idl
     Modules/webxr/WebXRInputSource+Gamepad.idl
     Modules/webxr/WebXRInputSource+HandInput.idl
     Modules/webxr/WebXRRenderState+Layers.idl
     Modules/webxr/WebXRSession+AR.idl
     Modules/webxr/WebXRSession+HitTest.idl
+    Modules/webxr/WebXRSession+PlaneDetection.idl
     Modules/webxr/WebXRSession+Layers.idl
 
     accessibility/AccessibilityRole.idl
@@ -2126,6 +2137,7 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     html/canvas/CanvasState.idl
     html/canvas/CanvasText.idl
     html/canvas/CanvasTextDrawingStyles.idl
+    html/canvas/CanvasTextRendering.idl
     html/canvas/CanvasTransform.idl
     html/canvas/CanvasUserInterface.idl
     html/canvas/WebGLRenderingContextBase.idl
@@ -2237,7 +2249,6 @@ set(WebCore_USER_AGENT_STYLE_SHEETS
     ${WEBCORE_DIR}/css/popover.css
     ${WEBCORE_DIR}/css/quirks.css
     ${WEBCORE_DIR}/css/selectMultipleAndListBox.css
-    ${WEBCORE_DIR}/css/selectMultipleSelectedContent.css
     ${WEBCORE_DIR}/css/svg.css
     ${WEBCORE_DIR}/css/viewTransitions.css
     ${WEBCORE_DIR}/html/shadow/attachmentElementShadow.css
@@ -2625,6 +2636,7 @@ set(WebCoreTestSupport_IDL_FILES
     testing/MockMediaDeviceRouteController.idl
     testing/MockMediaDeviceRouteURLCallback.idl
     testing/MockPageOverlay.idl
+    testing/MockPhoneNumberPossessionConfiguration.idl
     testing/MockWebAuthenticationConfiguration.idl
     testing/RequestedGPU.idl
     testing/ServiceWorkerInternals.idl
@@ -2882,6 +2894,15 @@ if (NOT USE_FRAMEWORK_BUNDLES)
     set(WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR})
 endif ()
 
+if (NOT APPLE)
+    # The WebGPU C++ API header, <WebGPU/WebGPUCpp.h>, which ports without WebGPU.framework copy to
+    # a plain include directory. WebCore headers include it, so the users of WebCore need it too.
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES ${WebGPU_PRIVATE_FRAMEWORK_HEADERS_DIR})
+    list(APPEND WebCore_INTERFACE_INCLUDE_DIRECTORIES ${WebGPU_PRIVATE_FRAMEWORK_HEADERS_DIR})
+    list(APPEND WebCore_DEPENDENCIES WebGPU_CopyCppAPIHeaders)
+    list(APPEND WebCore_INTERFACE_DEPENDENCIES WebGPU_CopyCppAPIHeaders)
+endif ()
+
 set(WebCoreTestSupport_INTERFACE_LIBRARIES WebCoreTestSupport)
 set(WebCoreTestSupport_INTERFACE_INCLUDE_DIRECTORIES
     ${WebCore_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebCoreTestSupport
@@ -3080,15 +3101,15 @@ list(APPEND WebCoreTestSupport_IDL_FILES ${WebCore_DERIVED_SOURCES_DIR}/Internal
 set(QUIRK_BEHAVIORS_TEMPLATES
     ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.cpp.erb
     ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDeclarations.h.erb
-    ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorDefinitions.h.erb
     ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.h.erb
+    ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirkBehaviorID.serialization.in.erb
     ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.cpp.erb
     ${WEBCORE_DIR}/Scripts/QuirkBehaviorsTemplates/QuirksAccessors.h.erb)
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDeclarations.cpp
        ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDeclarations.h
-       ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDefinitions.h
        ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.h
+       ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.serialization.in
        ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.cpp
        ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.h
     MAIN_DEPENDENCY ${WEBCORE_DIR}/page/QuirkBehaviors.yaml
@@ -3097,7 +3118,6 @@ add_custom_command(
     COMMAND_EXPAND_LISTS
     VERBATIM)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDeclarations.h)
-list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDefinitions.h)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.h)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.h)
 
@@ -3311,7 +3331,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/FrameTreeSyncData.serialization.in
     ${WebCore_DERIVED_SOURCES_DIR}/InspectorNativeFunctionParameters.json
 
-    Modules/WebGPU/InternalAPI/WebGPU.serialization.in
+    Modules/WebGPU/WebGPU.serialization.in
     Modules/indexeddb/IndexedDB.serialization.in
 
     page/ActivityState.serialization.in
@@ -3352,8 +3372,6 @@ if (SWIFT_REQUIRED AND APPLE)
 
     webkit_target_add_swift_options(WebCore
         "-library-level spi"
-        "-enable-experimental-feature SafeInteropWrappers"
-        "-Xfrontend -clang-header-expose-decls=has-expose-attr-or-stdlib"
     )
 
     # C++ sources that include WebCoreSwift-Generated.h.
@@ -3434,6 +3452,7 @@ if (APPLE)
         "LINKER:-allowable_client,WebKitTestRunnerInjectedBundle"
         "LINKER:-allowable_client,DumpRenderTree"
         "LINKER:-allowable_client,InjectedBundleTestWebKitAPI"
+        "LINKER:-allowable_client,TestIPC"
         "LINKER:-allowable_client,TestWebCore"
         "LINKER:-allowable_client,TestWebKitAPI"
         "LINKER:-allowable_client,TestWebKitAPIPlugIn"

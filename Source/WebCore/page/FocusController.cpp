@@ -77,13 +77,17 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
+#if PLATFORM(MAC)
+#include "ServicesOverlayController.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FocusController);
 
 using namespace HTMLNames;
 
-static HTMLElement* LEGACY_NODELETE invokerForOpenPopoverIgnoringCycles(const HTMLElement& popover)
+NODELETE static HTMLElement* invokerForOpenPopoverIgnoringCycles(const HTMLElement& popover)
 {
     if (!popover.isPopoverShowing())
         return nullptr;
@@ -98,7 +102,7 @@ static HTMLElement* LEGACY_NODELETE invokerForOpenPopoverIgnoringCycles(const HT
     return invoker;
 }
 
-static bool LEGACY_NODELETE invokerChainReachesPopover(const HTMLElement& popover, const HTMLElement& invoker)
+NODELETE static bool invokerChainReachesPopover(const HTMLElement& popover, const HTMLElement& invoker)
 {
     auto remainingSteps = popover.document().topLayerElements().size();
     for (const HTMLElement* current = &invoker; current && remainingSteps; --remainingSteps) {
@@ -120,7 +124,7 @@ static bool LEGACY_NODELETE invokerChainReachesPopover(const HTMLElement& popove
     return false;
 }
 
-static HTMLElement* LEGACY_NODELETE invokerForOpenPopover(const Node* candidatePopover)
+NODELETE static HTMLElement* invokerForOpenPopover(const Node* candidatePopover)
 {
     auto* popover = dynamicDowncast<HTMLElement>(candidatePopover);
     if (!popover)
@@ -131,7 +135,7 @@ static HTMLElement* LEGACY_NODELETE invokerForOpenPopover(const Node* candidateP
     return invoker;
 }
 
-static RefPtr<Element> LEGACY_NODELETE openPopoverForInvoker(const Node* candidateInvoker)
+NODELETE static RefPtr<Element> openPopoverForInvoker(const Node* candidateInvoker)
 {
     auto* invoker = dynamicDowncast<HTMLElement>(candidateInvoker);
     if (!invoker)
@@ -142,13 +146,13 @@ static RefPtr<Element> LEGACY_NODELETE openPopoverForInvoker(const Node* candida
     return nullptr;
 }
 
-static inline bool LEGACY_NODELETE hasCustomFocusLogic(const Element& element)
+NODELETE static inline bool hasCustomFocusLogic(const Element& element)
 {
     auto* htmlElement = dynamicDowncast<HTMLElement>(element);
     return htmlElement && htmlElement->hasCustomFocusLogic();
 }
 
-static inline bool LEGACY_NODELETE isFocusScopeOwner(const Element& element)
+NODELETE static inline bool isFocusScopeOwner(const Element& element)
 {
     if (element.shadowRoot() && !hasCustomFocusLogic(element))
         return true;
@@ -207,27 +211,27 @@ public:
     Variant<RefPtr<Element>, RefPtr<Frame>> owner() const;
     WEBCORE_EXPORT static FocusNavigationScope scopeOf(Node&);
     static FocusNavigationScope scopeOwnedByScopeOwner(Element&);
-    static FocusNavigationScope LEGACY_NODELETE scopeOwnedByIFrame(HTMLFrameOwnerElement&);
+    NODELETE static FocusNavigationScope scopeOwnedByIFrame(HTMLFrameOwnerElement&);
 
     Node* firstNodeInScope() const;
     Node* lastNodeInScope() const;
-    Node* LEGACY_NODELETE nextInScope(const Node*) const;
+    NODELETE Node* nextInScope(const Node*) const;
     Node* previousInScope(const Node*) const;
-    Node* LEGACY_NODELETE lastChildInScope(const Node&) const;
+    NODELETE Node* lastChildInScope(const Node&) const;
 
 private:
     enum class SlotKind : uint8_t { Assigned, Fallback };
 
-    Node* LEGACY_NODELETE firstChildInScope(const Node&) const;
+    NODELETE Node* firstChildInScope(const Node&) const;
 
-    Node* LEGACY_NODELETE parentInScope(const Node&) const;
+    NODELETE Node* parentInScope(const Node&) const;
 
-    Node* LEGACY_NODELETE nextSiblingInScope(const Node&) const;
-    Node* LEGACY_NODELETE previousSiblingInScope(const Node&) const;
+    NODELETE Node* nextSiblingInScope(const Node&) const;
+    NODELETE Node* previousSiblingInScope(const Node&) const;
 
-    explicit FocusNavigationScope(TreeScope&);
-    explicit FocusNavigationScope(HTMLSlotElement&, SlotKind);
-    explicit FocusNavigationScope(Element&);
+    NODELETE explicit FocusNavigationScope(TreeScope&);
+    NODELETE explicit FocusNavigationScope(HTMLSlotElement&, SlotKind);
+    NODELETE explicit FocusNavigationScope(Element&);
 
     const RefPtr<ContainerNode> m_treeScopeRootNode;
     const RefPtr<HTMLSlotElement> m_slotElement;
@@ -476,11 +480,14 @@ static inline void dispatchEventsOnWindowAndFocusedElement(Document* document, b
         }
 
         focusedElement->dispatchBlurEvent(nullptr);
+        focusedElement->dispatchFocusOutEventIfNeeded(nullptr);
     }
 
     document->dispatchWindowEvent(Event::create(focused ? eventNames().focusEvent : eventNames().blurEvent, Event::CanBubble::No, Event::IsCancelable::No));
-    if (RefPtr focusedElement = document->focusedElement(); focused && focusedElement)
+    if (RefPtr focusedElement = document->focusedElement(); focused && focusedElement) {
         focusedElement->dispatchFocusEvent(nullptr, { });
+        focusedElement->dispatchFocusInEventIfNeeded(nullptr);
+    }
 }
 
 static inline bool isFocusableElementOrScopeOwner(Element& element, const FocusEventData& focusEventData)
@@ -524,11 +531,13 @@ void FocusController::setFocusedFrame(Frame* frame, BroadcastFocusedFrame broadc
     bool shouldBroadcast = broadcast == BroadcastFocusedFrame::Yes;
     m_isChangingFocusedFrame = true;
 
+#if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
+    bool wasRemoteFrameFocused { is<RemoteFrame>(m_focusedFrame) };
+#endif
     RefPtr oldFrame { localFocusedFrame() };
     RefPtr newFrame { dynamicDowncast<LocalFrame>(frame) };
 
     m_focusedFrame = frame;
-    m_focusedFrameBeforeRemoteFocusBroadcast = (is<RemoteFrame>(frame) && !shouldBroadcast) ? oldFrame.get() : nullptr;
 
     // Now that the frame is updated, fire events and update the selection focused states of both frames.
     if (RefPtr oldFrameView = oldFrame ? oldFrame->view() : nullptr) {
@@ -549,16 +558,25 @@ void FocusController::setFocusedFrame(Frame* frame, BroadcastFocusedFrame broadc
         protect(newFrame->document())->dispatchWindowEvent(Event::create(eventNames().focusEvent, Event::CanBubble::No, Event::IsCancelable::No));
         for (Ref localFrame : inclusiveAncestorFrames<LocalFrame>(*newFrame))
             protect(localFrame->document())->updateServiceWorkerClientData();
-    } else if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(frame)) {
-        RefPtr focusedOrMainFrame = this->focusedOrMainFrame();
-        if (CheckedPtr cache = focusedOrMainFrame ? protect(focusedOrMainFrame->document())->existingAXObjectCache() : nullptr)
-            cache->onRemoteFrameGainedFocus(*remoteFrame);
-    }
+    } else if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(frame))
+        remoteFrameWillGainFocus(*remoteFrame);
+
+#if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
+    if (wasRemoteFrameFocused || is<RemoteFrame>(frame))
+        protect(m_page->servicesOverlayController())->focusMovedToOrFromRemoteFrame();
+#endif
 
     if (shouldBroadcast)
         m_page->chrome().focusedFrameChanged(frame);
 
     m_isChangingFocusedFrame = false;
+}
+
+void FocusController::remoteFrameWillGainFocus(RemoteFrame& remoteFrame)
+{
+    RefPtr localMainFrame = m_page->localMainFrame();
+    if (CheckedPtr cache = localMainFrame ? protect(localMainFrame->document())->existingAXObjectCache() : nullptr)
+        cache->onRemoteFrameGainedFocus(remoteFrame);
 }
 
 LocalFrame* FocusController::focusedOrMainFrame() const
@@ -584,7 +602,7 @@ void FocusController::setFocusedInternal()
     }
 
     if (!focusedFrame())
-        setFocusedFrame(protect(m_page->mainFrame()).ptr());
+        setFocusedFrame(protect(m_page->mainFrame()).ptr(), BroadcastFocusedFrame::No);
 
     RefPtr focusedFrame = localFocusedFrame();
     if (focusedFrame && focusedFrame->view())
@@ -677,6 +695,8 @@ FocusableElementSearchResult FocusController::findFocusableElementDescendingInto
                 // The remote frame has no focusable elements. Focus the frame itself,
                 // matching the behavior of local empty iframes (see findFocusableElementInDocumentOrderStartingWithFrame).
                 if (shouldFocusElement == ShouldFocusElement::Yes) {
+                    if (RefPtr remoteFrame = dynamicDowncast<RemoteFrame>(ownerElement->contentFrame()))
+                        page->focusController().remoteFrameWillGainFocus(*remoteFrame);
                     protect(ownerElement->document())->setFocusedElement(nullptr);
                     page->focusController().setFocusedFrame(protect(ownerElement->contentFrame()));
                 }
@@ -1129,7 +1149,8 @@ Element* FocusController::previousFocusableElementOrScopeOwner(const FocusNaviga
     RefPtr<Node> last = nullptr;
     for (RefPtr node = scope.lastNodeInScope(); node; node = scope.lastChildInScope(*node))
         last = node;
-    ASSERT(last);
+    if (!last)
+        return nullptr;
 
     // First try to find the last node in the scope that comes before start and has the same tabindex as start.
     // If start is null, find the last node in the scope with a tabindex of 0.
@@ -1207,14 +1228,10 @@ static bool shouldClearSelectionWhenChangingFocusedElement(const Page& page, Ref
     return true;
 }
 
-bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame, const FocusOptions& options, BroadcastFocusedElement broadcast)
+bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame, const FocusOptions& options)
 {
-    ASSERT(broadcast == BroadcastFocusedElement::Yes || (!element && is<RemoteFrame>(newFocusedFrame)));
-
     RefPtr newLocalFocusedFrame { dynamicDowncast<LocalFrame>(newFocusedFrame) };
     RefPtr oldFocusedFrame = localFocusedFrame();
-    if (m_focusedFrameBeforeRemoteFocusBroadcast && broadcast == BroadcastFocusedElement::No)
-        oldFocusedFrame = std::exchange(m_focusedFrameBeforeRemoteFocusBroadcast, nullptr).get();
     RefPtr oldDocument = oldFocusedFrame ? oldFocusedFrame->document() : nullptr;
     
     RefPtr oldFocusedElement = oldDocument ? oldDocument->focusedElement() : nullptr;
@@ -1229,7 +1246,7 @@ bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame
         if (newLocalFocusedFrame) {
             RefPtr newFocusedDocument = newLocalFocusedFrame->document();
             if (newFocusedDocument && newFocusedDocument != oldDocument)
-                newFocusedDocument->setFocusedElement(nullptr, broadcast);
+                newFocusedDocument->setFocusedElement(nullptr);
         }
         return true;
     }
@@ -1243,11 +1260,11 @@ bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame
 
     if (!element) {
         if (oldDocument)
-            oldDocument->setFocusedElement(nullptr, broadcast);
+            oldDocument->setFocusedElement(nullptr);
         if (newLocalFocusedFrame) {
             RefPtr newFocusedDocument = newLocalFocusedFrame->document();
             if (newFocusedDocument && newFocusedDocument != oldDocument)
-                newFocusedDocument->setFocusedElement(nullptr, broadcast);
+                newFocusedDocument->setFocusedElement(nullptr);
         }
         page->editorClient().setInputMethodState(nullptr);
         return true;
@@ -1261,7 +1278,7 @@ bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame
     }
 
     if (oldDocument && oldDocument != newDocument.ptr())
-        oldDocument->setFocusedElement(nullptr, broadcast);
+        oldDocument->setFocusedElement(nullptr);
 
     if (newLocalFocusedFrame && !newLocalFocusedFrame->page()) {
         setFocusedFrame(nullptr);
@@ -1269,7 +1286,7 @@ bool FocusController::setFocusedElement(Element* element, Frame* newFocusedFrame
     }
     setFocusedFrame(newFocusedFrame);
 
-    bool successfullyFocused = newDocument->setFocusedElement(element, options, broadcast);
+    bool successfullyFocused = newDocument->setFocusedElement(element, options);
     if (!successfullyFocused)
         return false;
 

@@ -205,7 +205,7 @@ void JSToken::dump(PrintStream& out) const
     out.print(*m_data.cooked);
 }
 
-static ALWAYS_INLINE bool LEGACY_NODELETE isPrivateFieldName(UniquedStringImpl* uid)
+NODELETE static ALWAYS_INLINE bool isPrivateFieldName(UniquedStringImpl* uid)
 {
     return uid->length() && uid->at(0) == '#';
 }
@@ -287,7 +287,7 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
     if (!sourceElements || !validEnding)
         return makeUnexpected(hasError() ? m_errorMessage : "Parser error"_s);
 
-    if (!m_lexer->isReparsingFunction() && m_seenPrivateNameUseInNonReparsingFunctionMode) {
+    if (!m_lexer->isReparsingFunction() && m_seenPrivateNameUse) {
         String errorMessage;
         scope->forEachUsedVariable([&] (UniquedStringImpl* impl) {
             if (!isPrivateFieldName(impl))
@@ -301,6 +301,15 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
         });
         if (!errorMessage.isNull())
             return makeUnexpected(errorMessage);
+    }
+
+    UniquedStringImplPtrSet usedPrivateNames;
+    if (m_seenPrivateNameUse) {
+        scope->forEachUsedVariable([&](UniquedStringImpl* impl) {
+            if (isPrivateFieldName(impl))
+                usedPrivateNames.add(impl);
+            return IterationStatus::Continue;
+        });
     }
 
     // It's essential to finalize the hoisting before computing captured variables.
@@ -350,7 +359,7 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
     }
 #endif // ASSERT_ENABLED
 
-    return ParseInnerResult { parameters, sourceElements, scope->takeFunctionDeclarations(), scope->takeDeclaredVariables(), scope->takeLexicalEnvironment(), features };
+    return ParseInnerResult { parameters, sourceElements, scope->takeFunctionDeclarations(), scope->takeDeclaredVariables(), scope->takeLexicalEnvironment(), features, usedPrivateNames.size() };
 }
 
 template <typename LexerType>
@@ -431,6 +440,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSourceEl
                     // Since strict mode is changed, restoring lexer state by calling next() may cause errors.
                     restoreSavePoint(context, *savePoint);
                     propagateError();
+                    // Drop any directives parsed so far because they will be parsed again.
+                    sourceElements = context.createSourceElements();
                     continue;
                 }
 
@@ -880,7 +891,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseVariableDecla
     TreeExpression scratch2 = 0;
     JSTextPosition scratch3;
     bool scratchBool;
-    TreeExpression variableDecls = parseVariableDeclarationList(context, scratch, scratch1, scratch2, scratch3, scratch3, scratch3, VarDeclarationContext, declarationType, exportType, scratchBool);
+    TreeExpression variableDecls = parseVariableDeclarationList(context, scratch, scratch1, scratch2, scratch3, scratch3, scratch3, VarDeclarationContext, declarationType, exportType, scratchBool, /* isLetKeywordConsumed */ false);
     propagateError();
     failIfFalse(autoSemiColon(), "Expected ';' after variable declaration");
     
@@ -932,7 +943,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseWhileStatemen
 }
 
 template <typename LexerType>
-template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDeclarationList(TreeBuilder& context, int& declarations, TreeDestructuringPattern& lastPattern, TreeExpression& lastInitializer, JSTextPosition& identStart, JSTextPosition& initStart, JSTextPosition& initEnd, VarDeclarationListContext declarationListContext, DeclarationType declarationType, ExportType exportType, bool& forLoopConstDoesNotHaveInitializer)
+template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDeclarationList(TreeBuilder& context, int& declarations, TreeDestructuringPattern& lastPattern, TreeExpression& lastInitializer, JSTextPosition& identStart, JSTextPosition& initStart, JSTextPosition& initEnd, VarDeclarationListContext declarationListContext, DeclarationType declarationType, ExportType exportType, bool& forLoopConstDoesNotHaveInitializer, bool isLetKeywordConsumed)
 {
     ASSERT(declarationType == DeclarationType::LetDeclaration || declarationType == DeclarationType::VarDeclaration || declarationType == DeclarationType::ConstDeclaration || declarationType == DeclarationType::UsingDeclaration || declarationType == DeclarationType::AwaitUsingDeclaration);
     TreeExpression head = 0;
@@ -946,7 +957,11 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
         lastPattern = TreeDestructuringPattern(0);
         lastIdent = nullptr;
         JSTokenLocation location(tokenLocation());
-        next();
+        if (isLetKeywordConsumed) {
+            location = m_lastTokenLocation;
+            isLetKeywordConsumed = false;
+        } else
+            next();
         if (!head && declarationType == DeclarationType::AwaitUsingDeclaration) {
             ASSERT(match(IDENT) && *m_token.m_data.ident == m_vm.propertyNames->usingIdentifier);
             next();
@@ -1031,7 +1046,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
             }
             failIfFalse(pattern, "Cannot parse this destructuring pattern");
             hasInitializer = match(EQUAL);
-            failIfTrue(declarationListContext == VarDeclarationContext && !hasInitializer, "Expected an initializer in destructuring variable declaration");
+            failIfTrue(!hasInitializer && (declarationListContext == VarDeclarationContext || (!match(INTOKEN) && !matchContextualKeyword(m_vm.propertyNames->of))), "Expected an initializer in destructuring variable declaration");
             lastPattern = pattern;
             if (hasInitializer) {
                 next(TreeBuilder::DontBuildStrings); // consume '='
@@ -1217,7 +1232,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseAs
     return createAssignmentElement(context, element, startPosition, lastTokenEndPosition());
 }
 
-static const char* LEGACY_NODELETE destructuringKindToVariableKindName(DestructuringKind kind)
+NODELETE static const char* destructuringKindToVariableKindName(DestructuringKind kind)
 {
     switch (kind) {
     case DestructuringKind::DestructureToLet:
@@ -1488,8 +1503,14 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
     TreeExpression decls = 0;
     TreeDestructuringPattern pattern = 0;
     bool isVarDeclaration = match(VAR);
-    bool isLetDeclaration = match(LET);
     bool isConstDeclaration = match(CONSTTOKEN);
+    bool isAsyncOf = false;
+    if (matchContextualKeyword(m_vm.propertyNames->async)) {
+        LexerState lexerState = internalSaveLexerState();
+        next();
+        isAsyncOf = matchContextualKeyword(m_vm.propertyNames->of);
+        restoreLexerState(lexerState);
+    }
     bool isUsingDeclaration = false;
     bool isAwaitUsingDeclaration = false;
     if (Options::useExplicitResourceManagement() && match(IDENT)
@@ -1529,6 +1550,17 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         restoreSavePoint(context, savePoint);
         if (isAwaitUsingDeclaration)
             currentFunctionScope()->setUsesAwait();
+    }
+    bool isLetDeclaration = match(LET);
+    bool isLetIdentifier = false;
+    if (isLetDeclaration) {
+        LexerState lexerState = internalSaveLexerState();
+        next();
+        if (!strictMode() && !matchIdentifierOrPossiblyEscapedContextualKeyword() && !match(OPENBRACE) && !match(OPENBRACKET)) {
+            restoreLexerState(lexerState);
+            isLetDeclaration = false;
+            isLetIdentifier = true;
+        }
     }
     bool isAnyUsingDeclaration = isUsingDeclaration || isAwaitUsingDeclaration;
     bool isLexicalDeclaration = isLetDeclaration || isConstDeclaration || isAnyUsingDeclaration;
@@ -1576,7 +1608,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         else
             RELEASE_ASSERT_NOT_REACHED();
         unsigned candidateCountBeforeInitializer = currentScope()->closedVariableCandidates().size();
-        decls = parseVariableDeclarationList(context, declarations, forInTarget, forInInitializer, declsStart, initStart, initEnd, ForLoopContext, declarationType, ExportType::NotExported, forLoopConstDoesNotHaveInitializer);
+        decls = parseVariableDeclarationList(context, declarations, forInTarget, forInInitializer, declsStart, initStart, initEnd, ForLoopContext, declarationType, ExportType::NotExported, forLoopConstDoesNotHaveInitializer, isLetDeclaration);
         forLoopinitializerContainsClosure = currentScope()->closedVariableCandidates().size() > candidateCountBeforeInitializer;
         m_allowsIn = true;
         propagateError();
@@ -1644,7 +1676,11 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
             restoreSavePoint(context, savePoint);
         }
         m_allowsIn = false;
-        decls = parseExpression(context);
+        if (isAsyncOf && isAwaitFor) {
+            next();
+            decls = createResolveAndUseVariable(context, &m_vm.propertyNames->async, false, declsStart, declLocation);
+        } else
+            decls = parseExpression(context);
         m_allowsIn = true;
         failIfFalse(decls, "Cannot parse for loop declarations");
         recordPauseLocation(context.breakpointLocation(decls));
@@ -1691,6 +1727,8 @@ enumerationLoop:
     JSTextPosition inLocation = tokenStartPosition();
     if (!match(INTOKEN)) {
         failIfFalse(matchContextualKeyword(m_vm.propertyNames->of), "Expected either 'in' or 'of' in enumeration syntax");
+        failIfTrue(isLetIdentifier, "The left hand side of a for-of statement cannot start with 'let'");
+        failIfTrue(isAsyncOf && !isAwaitFor, "The left hand side of a for-of statement cannot be 'async'");
         isOfEnumeration = true;
         next();
     } else {
@@ -2290,7 +2328,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFormalParameters(TreeB
 #undef failIfDuplicateIfViolation
 }
 
-static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, bool scopeNeedsSuperBinding, bool currentScopeUsesEval, InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures)
+NODELETE static ALWAYS_INLINE SuperBinding adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, bool scopeNeedsSuperBinding, bool currentScopeUsesEval, InnerArrowFunctionCodeFeatures innerArrowFunctionFeatures)
 {
     if (expectedSuperBinding == SuperBinding::NotNeeded)
         return SuperBinding::NotNeeded;
@@ -2312,7 +2350,7 @@ static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConst
     return SuperBinding::Needed;
 }
 
-static ALWAYS_INLINE SuperBinding LEGACY_NODELETE adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, Scope* functionScope)
+NODELETE static ALWAYS_INLINE SuperBinding adjustSuperBindingForBaseConstructor(ConstructorKind constructorKind, SuperBinding expectedSuperBinding, SourceParseMode parseMode, Scope* functionScope)
 {
     return adjustSuperBindingForBaseConstructor(constructorKind, expectedSuperBinding, parseMode, functionScope->needsSuperBinding(), functionScope->usesEval(), functionScope->innerArrowFunctionFeatures());
 }
@@ -2356,7 +2394,7 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
     return context.createFunctionMetadata(startLocation, tokenLocation(), functionStart, functionNameStart, parametersStart, implementationVisibility, lexicallyScopedFeatures(), constructorKind, functionSuperBinding, parameterCount, sourceParseMode(), isArrowFunctionBodyExpression);
 }
 
-static const char* LEGACY_NODELETE stringArticleForFunctionMode(SourceParseMode mode)
+NODELETE static const char* stringArticleForFunctionMode(SourceParseMode mode)
 {
     switch (mode) {
     case SourceParseMode::GetterMode:
@@ -2389,7 +2427,7 @@ static const char* LEGACY_NODELETE stringArticleForFunctionMode(SourceParseMode 
     return nullptr;
 }
     
-static const char* LEGACY_NODELETE stringForFunctionMode(SourceParseMode mode)
+NODELETE static const char* stringForFunctionMode(SourceParseMode mode)
 {
     switch (mode) {
     case SourceParseMode::GetterMode:
@@ -2729,28 +2767,20 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         functionBodyType = StandardFunctionBodyBlock;
     }
 
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=156962
-    // This loop collects the set of capture candidates that aren't
-    // part of the set of this function's declared parameters. We will
-    // figure out which parameters are captured for this function when
-    // we actually generate code for it. For now, we just propagate to
-    // our parent scopes which variables we might have closed over that
-    // belong to them. This is necessary for correctness when using
-    // the source provider cache because we can't close over a variable
-    // that we don't claim to close over. The source provider cache must
-    // know this information to properly cache this function.
-    // This might work itself out nicer if we declared a different
-    // Scope struct for the parameters (because they are indeed implemented
-    // as their own scope).
+    // Parameter expressions cannot see the body's declarations, which live in a separate environment
+    // (https://tc39.es/ecma262/#sec-functiondeclarationinstantiation). The parameters and the body
+    // share this Scope, so the parameter list's free variables must reach the parent before the
+    // body's declarations hide them, as they would hide x in `function f(a = x) { var x; }`.
+    // FIXME: Give the parameters their own Scope. Until then, a closure in a parameter expression
+    // makes a same-named body declaration look captured. https://bugs.webkit.org/show_bug.cgi?id=156962
     UniquedStringImplPtrSet nonLocalCapturesFromParameterExpressions;
     functionScope->forEachUsedVariable([&] (UniquedStringImpl* impl) {
-        if (!functionScope->hasDeclaredParameter(impl)) {
+        if (!functionScope->hasDeclaredParameter(impl))
             nonLocalCapturesFromParameterExpressions.add(impl);
-            if (TreeBuilder::NeedsFreeVariableInfo)
-                parentScope->addClosedVariableCandidateUnconditionally(impl);
-        }
         return IterationStatus::Continue;
     });
+    if (!nonLocalCapturesFromParameterExpressions.isEmpty())
+        parentScope->collectFreeVariablesFrom(functionScope.scope(), TreeBuilder::NeedsFreeVariableInfo);
 
     auto performParsingFunctionBody = [&] {
         return parseFunctionBody(context, syntaxChecker, startLocation, functionStart, functionNameStart, parametersStart, constructorKind, expectedSuperBinding, functionBodyType, functionInfo.parameterCount);
@@ -2854,8 +2884,8 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     return true;
 }
 
-static NO_RETURN_DUE_TO_CRASH FunctionMetadataNode* LEGACY_NODELETE getMetadata(ParserFunctionInfo<SyntaxChecker>&) { RELEASE_ASSERT_NOT_REACHED(); }
-static FunctionMetadataNode* LEGACY_NODELETE getMetadata(ParserFunctionInfo<ASTBuilder>& info) { return info.body; }
+NODELETE static NO_RETURN_DUE_TO_CRASH FunctionMetadataNode* getMetadata(ParserFunctionInfo<SyntaxChecker>&) { RELEASE_ASSERT_NOT_REACHED(); }
+NODELETE static FunctionMetadataNode* getMetadata(ParserFunctionInfo<ASTBuilder>& info) { return info.body; }
 
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseFunctionDeclaration(TreeBuilder& context, FunctionDeclarationType declarationType, ExportType exportType, DeclarationDefaultContext declarationDefaultContext, std::optional<int> functionConstructorParametersEndPosition)
@@ -3755,6 +3785,8 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseImportDeclaration(TreeBuilder& context)
 {
     // http://www.ecma-international.org/ecma-262/6.0/#sec-imports
+    DepthManager statementDepth(&m_statementDepth);
+    m_statementDepth++;
     ASSERT(match(IMPORT));
     JSTokenLocation importLocation(tokenLocation());
     next();
@@ -3764,12 +3796,12 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseImportDeclara
 
     if (match(STRING)) {
         // import ModuleSpecifier ;
-        // import ModuleSpecifier [no LineTerminator here] WithClause ;
+        // import ModuleSpecifier WithClause ;
         auto moduleName = parseModuleName(context);
         failIfFalse(moduleName, "Cannot parse the module name");
 
         typename TreeBuilder::ImportAttributesList attributesList = 0;
-        if (!m_lexer->hasLineTerminatorBeforeToken() && match(WITH)) {
+        if (match(WITH)) {
             next();
             attributesList = parseImportAttributes(context);
             failIfFalse(attributesList, "Unable to parse import attributes");
@@ -3838,9 +3870,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseImportDeclara
     auto moduleName = parseModuleName(context);
     failIfFalse(moduleName, "Cannot parse the module name");
 
-    // [no LineTerminator here] WithClause ;
+    // WithClause ;
     typename TreeBuilder::ImportAttributesList attributesList = 0;
-    if (!m_lexer->hasLineTerminatorBeforeToken() && match(WITH)) {
+    if (match(WITH)) {
         next();
         attributesList = parseImportAttributes(context);
         failIfFalse(attributesList, "Unable to parse import attributes");
@@ -3893,6 +3925,8 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclaration(TreeBuilder& context)
 {
     // http://www.ecma-international.org/ecma-262/6.0/#sec-exports
+    DepthManager statementDepth(&m_statementDepth);
+    m_statementDepth++;
     ASSERT(match(EXPORT_));
     JSTokenLocation exportLocation(tokenLocation());
     next();
@@ -3921,9 +3955,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
         auto moduleName = parseModuleName(context);
         failIfFalse(moduleName, "Cannot parse the 'from' clause");
 
-        // [no LineTerminator here] WithClause ;
+        // WithClause ;
         typename TreeBuilder::ImportAttributesList attributesList = 0;
-        if (!m_lexer->hasLineTerminatorBeforeToken() && match(WITH)) {
+        if (match(WITH)) {
             next();
             attributesList = parseImportAttributes(context);
             failIfFalse(attributesList, "Unable to parse import attributes");
@@ -3988,8 +4022,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
         if (isFunctionOrClassDeclaration) {
             if (startsWithFunction) {
                 ASSERT(match(FUNCTION));
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseFunctionDeclaration(context, FunctionDeclarationType::Declaration, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
             } else if (match(CLASSTOKEN)) {
                 result = parseClassDeclaration(context, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
@@ -3997,8 +4029,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
                 ASSERT(matchContextualKeyword(m_vm.propertyNames->async));
                 unsigned functionStart = m_token.m_startPosition;
                 next();
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseAsyncFunctionDeclaration(context, functionStart, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
             }
         } else {
@@ -4067,8 +4097,8 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
             moduleName = parseModuleName(context);
             failIfFalse(moduleName, "Cannot parse the 'from' clause");
 
-            // [no LineTerminator here] WithClause ;
-            if (!m_lexer->hasLineTerminatorBeforeToken() && match(WITH)) {
+            // WithClause ;
+            if (match(WITH)) {
                 next();
                 attributesList = parseImportAttributes(context);
                 failIfFalse(attributesList, "Unable to parse import attributes");
@@ -4114,12 +4144,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
             result = parseVariableDeclaration(context, DeclarationType::LetDeclaration, ExportType::Exported);
             break;
 
-        case FUNCTION: {
-            DepthManager statementDepth(&m_statementDepth);
-            m_statementDepth = 1;
+        case FUNCTION:
             result = parseFunctionDeclaration(context, FunctionDeclarationType::Declaration, ExportType::Exported);
             break;
-        }
 
         case CLASSTOKEN:
             result = parseClassDeclaration(context, ExportType::Exported);
@@ -4130,8 +4157,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
                 unsigned functionStart = m_token.m_startPosition;
                 next();
                 semanticFailIfFalse(match(FUNCTION) && !m_lexer->hasLineTerminatorBeforeToken(), "Expected 'function' keyword following 'async' keyword with no preceding line terminator");
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseAsyncFunctionDeclaration(context, functionStart, ExportType::Exported);
                 break;
             }
@@ -4509,7 +4534,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseBinaryExpres
             const Identifier* ident = m_token.m_data.ident;
             ASSERT(ident);
             currentScope()->usePrivateName(*ident);
-            m_seenPrivateNameUseInNonReparsingFunctionMode = true;
+            m_seenPrivateNameUse = true;
             next();
             semanticFailIfTrue(m_token.m_type != INTOKEN || previousOperator >= INTOKEN, "Bare private name can only be used as the left-hand side of an `in` expression");
             current = context.createPrivateIdentifierNode(location, *ident);
@@ -5654,7 +5679,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                     if (currentScope()->evalContextType() == EvalContextType::InstanceFieldEvalContext) [[unlikely]]
                         semanticFailIfFalse(currentScope()->hasPrivateName(*ident), "Cannot reference undeclared private field '", ident->impl(), "'");
                     currentScope()->usePrivateName(*ident);
-                    m_seenPrivateNameUseInNonReparsingFunctionMode = true;
+                    m_seenPrivateNameUse = true;
                     m_parserState.lastPrivateName = ident;
                     type = DotType::PrivateMember;
                     m_token.m_type = IDENT;
@@ -5707,7 +5732,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunctio
     return context.createArrowFunctionExpr(location, info);
 }
 
-static const char* LEGACY_NODELETE operatorString(bool prefix, unsigned tok)
+NODELETE static const char* operatorString(bool prefix, unsigned tok)
 {
     switch (tok) {
     case MINUSMINUS:

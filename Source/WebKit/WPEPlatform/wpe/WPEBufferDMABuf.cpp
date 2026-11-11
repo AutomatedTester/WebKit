@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WPEBufferDMABuf.h"
 
+#include "WPEBufferPrivate.h"
 #include "WPEDisplayPrivate.h"
 #include <epoxy/egl.h>
 #include <fcntl.h>
@@ -96,7 +97,7 @@ static void wpeBufferDMABufDispose(GObject* object)
     auto* priv = dmabufBuffer->priv;
     priv->pixels = nullptr;
     g_clear_pointer(&priv->bufferObject, gbm_bo_destroy);
-    if (priv->device && priv->device.has_value()) {
+    if (priv->device && priv->device.value()) {
         gbm_device_destroy(priv->device.value());
         priv->device = std::nullopt;
     }
@@ -269,6 +270,18 @@ static GBytes* wpeBufferDMABufImportToPixels(WPEBuffer* buffer, GError** error)
         return nullptr;
     }
 
+    if (mapStride != width * 4) {
+        // Copy the pixels to remove the row padding, since the returned rows must not be padded.
+        auto mappedPixels = unsafeMakeSpan(static_cast<const uint8_t*>(map), static_cast<size_t>(height) * mapStride);
+        priv->pixels = wpeBufferCopyPixelsWithoutRowPadding(mappedPixels, width, height, mapStride);
+        gbm_bo_unmap(priv->bufferObject, mapData);
+        if (!priv->pixels) {
+            g_set_error_literal(error, WPE_BUFFER_ERROR, WPE_BUFFER_ERROR_IMPORT_FAILED, "Failed to import buffer to pixels buffer: invalid map stride");
+            return nullptr;
+        }
+        return priv->pixels.get();
+    }
+
     struct BufferData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(BufferData);
         struct gbm_bo* buffer;
@@ -329,6 +342,7 @@ WPEBufferDMABuf* wpe_buffer_dma_buf_new(WPEDisplay* display, int width, int heig
 
     buffer->priv->format = format;
     buffer->priv->fds.reserveInitialCapacity(planeCount);
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     for (guint32 i = 0; i < planeCount; ++i)
         buffer->priv->fds.append(UnixFileDescriptor { fds[i], UnixFileDescriptor::Adopt });
     buffer->priv->offsets.grow(planeCount);
@@ -336,6 +350,7 @@ WPEBufferDMABuf* wpe_buffer_dma_buf_new(WPEDisplay* display, int width, int heig
     buffer->priv->strides.grow(planeCount);
     memcpy(buffer->priv->strides.mutableSpan().data(), strides, planeCount * sizeof(guint32));
     buffer->priv->modifier = modifier;
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     return buffer;
 }

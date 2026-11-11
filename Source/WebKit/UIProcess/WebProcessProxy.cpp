@@ -115,6 +115,8 @@
 #include <pal/system/Sound.h>
 #include <ranges>
 #include <stdio.h>
+#include <wtf/Borrow.h>
+#include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -422,16 +424,16 @@ void WebProcessProxy::forWebPagesWithOrigin(PAL::SessionID sessionID, const Secu
     }
 }
 
-void WebProcessProxy::addAllowedFirstPartyForCookies(const WebCore::RegistrableDomain& domain, LoadedWebArchive loadedWebArchive)
+void WebProcessProxy::addAllowedFirstPartyForCookies(const WebCore::Site& site, LoadedWebArchive loadedWebArchive)
 {
-    m_allowedFirstPartiesForCookies.second.add(domain);
+    m_allowedFirstPartiesForCookies.second.add(site);
     if (loadedWebArchive == LoadedWebArchive::Yes)
         m_allowedFirstPartiesForCookies.first = LoadedWebArchive::Yes;
 }
 
-Ref<WebProcessProxy> WebProcessProxy::create(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode, ShouldLaunchProcess shouldLaunchProcess)
+Ref<WebProcessProxy> WebProcessProxy::create(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, IsPrewarmed isPrewarmed, ProcessCrossOriginIsolation crossOriginIsolation, ShouldLaunchProcess shouldLaunchProcess)
 {
-    Ref proxy = adoptRef(*new WebProcessProxy(processPool, websiteDataStore, isPrewarmed, crossOriginMode, lockdownMode, enhancedSecurity));
+    Ref proxy = adoptRef(*new WebProcessProxy(processPool, websiteDataStore, isPrewarmed, crossOriginIsolation, lockdownMode, enhancedSecurity));
 #if PLATFORM(MAC) && USE(RUNNINGBOARD)
     // FIXME(rdar://188839922): disable jetsam boost on prewarmed processes always, not just when SI is enabled.
     if (isPrewarmed == IsPrewarmed::Yes && WebProcessPool::hasAnyProcessPoolUsedSiteIsolation())
@@ -488,7 +490,7 @@ void WebProcessProxy::reclaimProcessesIfNeeded()
 
 Ref<WebProcessProxy> WebProcessProxy::createForRemoteWorkers(RemoteWorkerType workerType, WebProcessPool& processPool, Site&& site, WebsiteDataStore& websiteDataStore, CrossOriginMode crossOriginMode, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
 {
-    Ref proxy = adoptRef(*new WebProcessProxy(processPool, &websiteDataStore, IsPrewarmed::No, crossOriginMode, lockdownMode, enhancedSecurity));
+    Ref proxy = adoptRef(*new WebProcessProxy(processPool, &websiteDataStore, IsPrewarmed::No, processCrossOriginIsolationForBrowsingContextGroup(crossOriginMode), lockdownMode, enhancedSecurity));
     proxy->m_committedSites.add(site);
     proxy->m_remoteWorkerDomains.add(site.domain());
     proxy->m_site = WTF::move(site);
@@ -501,7 +503,7 @@ Ref<WebProcessProxy> WebProcessProxy::createForRemoteWorkers(RemoteWorkerType wo
     return proxy;
 }
 
-WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
+WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, IsPrewarmed isPrewarmed, ProcessCrossOriginIsolation crossOriginIsolation, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
     : AuxiliaryProcessProxy("WebProcess"_s, processPool.shouldTakeUIBackgroundAssertion() ? ShouldTakeUIBackgroundAssertion::Yes : ShouldTakeUIBackgroundAssertion::No
     , processPool.alwaysRunsAtBackgroundPriority() ? AlwaysRunsAtBackgroundPriority::Yes : AlwaysRunsAtBackgroundPriority::No)
     , m_backgroundResponsivenessTimer(makeUniqueRef<BackgroundProcessResponsivenessTimer>(*this))
@@ -518,7 +520,7 @@ WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* 
     , m_isPrewarmed(isPrewarmed == IsPrewarmed::Yes)
     , m_lockdownMode(lockdownMode)
     , m_enhancedSecurity(enhancedSecurity)
-    , m_crossOriginMode(crossOriginMode)
+    , m_crossOriginIsolation(crossOriginIsolation)
     , m_shutdownPreventingScopeCounter([weakThis = WeakPtr { *this }](RefCounterEvent event) {
         if (RefPtr protectedThis = weakThis; protectedThis && event == RefCounterEvent::Decrement)
             protectedThis->maybeShutDown();
@@ -589,7 +591,7 @@ WebProcessProxy::~WebProcessProxy()
 #endif
 
     auto isResponsiveCallbacks = WTF::move(m_isResponsiveCallbacks);
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(false);
 
     while (m_numberOfTimesSuddenTerminationWasDisabled-- > 0)
@@ -925,7 +927,7 @@ bool WebProcessProxy::shouldSendPendingMessage(const IPC::Encoder& encoder)
                 return;
             if (sandboxExtension)
                 parameters->sandboxExtensionHandle = WTF::move(*sandboxExtension);
-            protectedThis->send(Messages::WebPage::GoToBackForwardItem(WTF::move(*parameters)), destinationID);
+            protectedThis->sendWithAsyncReply(Messages::WebPage::GoToBackForwardItem(WTF::move(*parameters)), [](FrameTraversalResult) { }, destinationID);
         };
         if (RefPtr page = WebProcessProxy::webPage(*pageID)) {
             if (RefPtr item = WebBackForwardListItem::itemForID(*frameState->itemID))
@@ -1091,7 +1093,8 @@ WebPageProxy* WebProcessProxy::webPageWithActiveXRSession()
 {
     for (WeakRef weakPage : globalPageMap().values()) {
         Ref page = weakPage.get();
-        if (page->xrSystem() && page->xrSystem()->hasActiveSession())
+        RefPtr xrSystem = page->xrSystem();
+        if (xrSystem && xrSystem->hasActiveSession())
             return weakPage.ptr();
     }
     return nullptr;
@@ -1432,7 +1435,7 @@ void WebProcessProxy::assumeReadAccessToBaseURLs(WebPageProxy& page, const Vecto
     if (!dataStore)
         return completionHandler();
     Vector<String> paths;
-    for (auto& urlString : urls) {
+    for (auto& urlString : borrow(urls)) {
         URL url { urlString };
         if (!url.protocolIsFile())
             continue;
@@ -1458,7 +1461,7 @@ void WebProcessProxy::assumeReadAccessToBaseURLs(WebPageProxy& page, const Vecto
 
         // Client loads an alternate string. This doesn't grant universal file read, but the web process is assumed
         // to have read access to this directory already.
-        for (auto& path : paths) {
+        for (auto& path : borrow(paths)) {
             weakThis->m_localPathsWithAssumedReadAccess.add(path);
             page->addPreviouslyVisitedPath(path);
         }
@@ -1480,7 +1483,7 @@ bool WebProcessProxy::hasAssumedReadAccessToURL(const URL& url) const
     auto startsWithURLPath = [&path, protectedThis = RefPtr { this }](const String& assumedAccessPath) {
         // There are no ".." components, because URL removes those.
         WEBPROCESSPROXY_RELEASE_LOG_WITH_THIS(Sandbox, protectedThis, "hasAssumedReadAccessToURL: checking if url is contained in url(%u) with assumed access", WTF::URLHash::hash(URL::fileURLWithFileSystemPath(assumedAccessPath)));
-        return path.startsWith(assumedAccessPath);
+        return FileSystem::pathIsSameOrDescendantOf(path, assumedAccessPath);
     };
 
     auto& platformPaths = platformPathsWithAssumedReadAccess();
@@ -1546,15 +1549,12 @@ bool WebProcessProxy::fullKeyboardAccessEnabled()
 {
     return false;
 }
-
-bool WebProcessProxy::shouldDisableJITCage() const
-{
-    return false;
-}
 #endif // !PLATFORM(COCOA)
 
 void WebProcessProxy::getNetworkProcessConnection(CompletionHandler<void(NetworkProcessConnectionInfo&&)>&& reply)
 {
+    MESSAGE_CHECK_COMPLETION(!m_isPrintProcess, reply({ }));
+
     RefPtr dataStore = websiteDataStore();
     if (!dataStore) {
         ASSERT_NOT_REACHED();
@@ -1599,7 +1599,7 @@ void WebProcessProxy::gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnec
 // A frame hosted in another process was painted into a snapshot here. Received by the process rather
 // than a page, because the frame may be going away along with the last of this process's frames in
 // the page, and a request that reached nothing would leave the snapshot waiting for it.
-void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rect, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
+void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier snapshotIdentifier, WebCore::RenderingMode renderingMode)
 {
     MESSAGE_CHECK(renderingMode == WebCore::RenderingMode::DisplayList || renderingMode == WebCore::RenderingMode::PDFDocument);
 
@@ -1636,7 +1636,7 @@ void WebProcessProxy::drawFrameToSnapshot(WebCore::FrameIdentifier frameID, cons
     gpuProcess->snapshotFrameWillBeDrawnByProcess(snapshotIdentifier, frameID, frameProcess->coreProcessIdentifier());
     // Also while the frame's process is waiting on this one, as it does for alert(), since this
     // process may itself be blocked waiting for the snapshot.
-    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rect, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
+    frameProcess->send(Messages::WebProcess::DrawFrameToSnapshot(frameID, rectRelativeToVisibleContent, snapshotIdentifier, renderingMode), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForUnboundedSyncReply);
 }
 
 #if HAVE(IOSURFACE)
@@ -1704,7 +1704,7 @@ void WebProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& connectionIdentifier)
 {
     bool anyPageHasModelProcessEnabled = false;
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         anyPageHasModelProcessEnabled |= page->preferences().modelElementEnabled() && page->preferences().modelProcessEnabled();
     MESSAGE_CHECK(anyPageHasModelProcessEnabled);
 
@@ -1719,7 +1719,7 @@ void WebProcessProxy::createModelProcessConnection(IPC::Connection::Handle&& con
 
 void WebProcessProxy::modelProcessDidFinishLaunching()
 {
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessDidFinishLaunching();
 }
 
@@ -1727,7 +1727,7 @@ void WebProcessProxy::modelProcessExited(ProcessTerminationReason reason)
 {
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "modelProcessExited: reason=%" PUBLIC_LOG_STRING, processTerminationReasonToString(reason).characters());
 
-    for (auto& page : m_pageMap.values())
+    for (Ref page : pages())
         page->modelProcessExited(reason);
 }
 
@@ -1815,8 +1815,6 @@ bool WebProcessProxy::dispatchMessage(IPC::Connection& connection, IPC::Decoder&
     if (messageName == Messages::WebFrameProxy::messageReceiverName()) {
         if (RefPtr frame = FrameIdentifier::isValidIdentifier(decoder.destinationID()) ? WebFrameProxy::webFrame(FrameIdentifier(decoder.destinationID())) : nullptr)
             frame->didReceiveMessage(connection, decoder);
-        else
-            WebFrameProxy::sendCancelReply(connection, decoder);
         return true;
     }
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
@@ -1877,15 +1875,20 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     // to be deleted before we can finish our work.
     Ref protectedThis { *this };
 
-    auto pages = mainPages();
+    const Vector pages = mainPages();
 
-    Vector<Ref<ProvisionalPageProxy>> provisionalPages;
-    m_provisionalPages.forEach([&] (auto& page) {
-        provisionalPages.append(page);
-    });
+    const Vector provisionalPages = [&] {
+        Vector<Ref<ProvisionalPageProxy>> provisionalPages;
+        m_provisionalPages.forEach([&](auto& page) {
+            provisionalPages.append(page);
+        });
+        return provisionalPages;
+    }();
+
+    const auto remotePages = copyToVectorOf<Ref<RemotePageProxy>>(m_remotePages);
 
     auto isResponsiveCallbacks = std::exchange(m_isResponsiveCallbacks, { });
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(false);
 
     if (isStandaloneServiceWorkerProcess())
@@ -1919,8 +1922,13 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     for (auto& page : pages)
         page->dispatchProcessDidTerminate(*this, reason);
 
-    for (Ref remotePage : m_remotePages)
+    for (auto& remotePage : remotePages) {
+        if (remotePage->isDisconnected())
+            continue;
+        if (RefPtr page = remotePage->page(); !page || page->isClosed())
+            continue;
         remotePage->processDidTerminate(*this, reason);
+    }
 }
 
 void WebProcessProxy::didReceiveInvalidMessage(IPC::Connection& connection, IPC::MessageName messageName, const Vector<uint32_t>& indexOfObjectFailingDecoding)
@@ -1951,7 +1959,7 @@ void WebProcessProxy::didBecomeUnresponsive()
         page->processDidBecomeUnresponsive(*this);
 
     bool isWebProcessResponsive = false;
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(isWebProcessResponsive);
 
     // If the web process becomes unresponsive and only runs service/shared workers, kill it ourselves since there are no native clients to do it.
@@ -2086,7 +2094,7 @@ void WebProcessProxy::addPreviouslyApprovedFileURLsFromFrameStateTree(const Fram
     URL originalURL { frameState.originalURLString };
     if (originalURL.protocolIsFile())
         addPreviouslyApprovedFileURL(originalURL);
-    for (auto& child : frameState.children)
+    for (auto& child : borrow(frameState.children))
         addPreviouslyApprovedFileURLsFromFrameStateTree(child.get());
 }
 
@@ -2183,12 +2191,17 @@ void WebProcessProxy::didDestroyUserGestureToken(PageIdentifier pageID, UserGest
 
 bool WebProcessProxy::canBeAddedToWebProcessCache() const
 {
+    if (m_isPrintProcess) {
+        WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is the print process");
+        return false;
+    }
+
     if (isRunningServiceWorkers()) {
         WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is running workers");
         return false;
     }
 
-    if (m_crossOriginMode == CrossOriginMode::Isolated) {
+    if (crossOriginMode() == CrossOriginMode::Isolated) {
         WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is cross-origin isolated");
         return false;
     }
@@ -2421,7 +2434,7 @@ RefPtr<API::Object> WebProcessProxy::transformHandlesToObjects(API::Object* obje
             }
         }
 
-        WebProcessProxy& LEGACY_NODELETE process() const { return m_webProcessProxy; }
+        NODELETE WebProcessProxy& process() const { return m_webProcessProxy; }
 
         WeakRef<WebProcessProxy> m_webProcessProxy;
     };
@@ -2907,6 +2920,9 @@ void WebProcessProxy::didCommitMainFrameLoad(const URL& url)
 
 void WebProcessProxy::updateSiteForMainFrameNavigation(const URL& url)
 {
+    if (firstPartyAccessIsAnswerable(*this))
+        return;
+
     // This process has been used for several registrable domains already.
     if (!m_site && m_site.error() == SiteState::MultipleSites)
         return;
@@ -3176,7 +3192,7 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 {
     RefPtr<WebPageProxy> targetPage;
     for (Ref page : pages()) {
-        if (page->webPageIDInMainFrameProcess() == identifier) {
+        if (page->hasWebPageInProcess(*this, identifier)) {
             targetPage = WTF::move(page);
             break;
         }
@@ -3203,9 +3219,10 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 
     m_speechRecognitionServerMap.ensure(identifier, [&]() {
 #if ENABLE(MEDIA_STREAM)
-        auto createRealtimeMediaSource = [weakPage = WeakPtr { targetPage }](WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier) {
+        auto createRealtimeMediaSource = [weakPage = WeakPtr { targetPage }, weakThis = WeakPtr { *this }, identifier](WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier) {
             RefPtr page = weakPage;
-            return page ? page->createRealtimeMediaSourceForSpeechRecognition(clientIdentifier) : CaptureSourceOrError { { "Page is invalid"_s, WebCore::MediaAccessDenialReason::InvalidAccess } };
+            RefPtr protectedThis = weakThis;
+            return page && protectedThis ? page->createRealtimeMediaSourceForSpeechRecognition(*protectedThis, identifier, clientIdentifier) : CaptureSourceOrError { { "Page is invalid"_s, WebCore::MediaAccessDenialReason::InvalidAccess } };
         };
         Ref speechRecognitionServer = SpeechRecognitionServer::create(*this, identifier, WTF::move(permissionChecker), WTF::move(checkIfMockCaptureDevicesEnabled), WTF::move(createRealtimeMediaSource));
 #else
@@ -3244,6 +3261,19 @@ void WebProcessProxy::muteCaptureInPagesExcept(WebCore::PageIdentifier pageID)
     }
 #else
     UNUSED_PARAM(pageID);
+#endif
+}
+
+void WebProcessProxy::muteCaptureInPagesExcept(const WebProcessProxy& process, WebCore::PageIdentifier pageIDInProcess)
+{
+#if PLATFORM(COCOA)
+    for (Ref page : globalPages()) {
+        if (!page->hasWebPageInProcess(process, pageIDInProcess))
+            page->setMediaStreamCaptureMuted(true);
+    }
+#else
+    UNUSED_PARAM(process);
+    UNUSED_PARAM(pageIDInProcess);
 #endif
 }
 
@@ -3334,8 +3364,7 @@ void WebProcessProxy::updateRemoteWorkerProcessAssertion(RemoteWorkerType worker
 
     WEBPROCESSPROXY_RELEASE_LOG(ProcessSuspension, "updateRemoteWorkerProcessAssertion: workerType=%" PUBLIC_LOG_STRING, workerType == RemoteWorkerType::SharedWorker ? "shared" : "service");
 
-    // FIXME: Drop SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE once <rdar://150855062> is fixed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE bool shouldTakeForegroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
+    bool shouldTakeForegroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
         return &process != this && !!process.m_foregroundToken;
     });
     if (shouldTakeForegroundActivity) {
@@ -3344,8 +3373,7 @@ void WebProcessProxy::updateRemoteWorkerProcessAssertion(RemoteWorkerType worker
         return;
     }
 
-    // FIXME: Drop SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE once <rdar://150855062> is fixed.
-    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE bool shouldTakeBackgroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
+    bool shouldTakeBackgroundActivity = std::ranges::any_of(workerInformation->clientProcesses, [&](auto& process) {
         return &process != this && !!process.m_backgroundToken;
     });
     if (shouldTakeBackgroundActivity) {
@@ -3499,7 +3527,7 @@ void WebProcessProxy::getNotifications(const URL& registrationURL, const String&
             }
 
             Vector<NotificationData> filteredNotifications;
-            for (auto& notification : notifications) {
+            for (auto& notification : borrow(notifications)) {
                 if (tag == notification.tag)
                     filteredNotifications.append(notification);
             }
@@ -3565,6 +3593,10 @@ void WebProcessProxy::unwrapCryptoKey(WrappedCryptoKey&& wrappedKey, CompletionH
 
 WebProcessProxy::FirstPartyAccessResult WebProcessProxy::allowsFirstPartyAccess(const WebCore::RegistrableDomain& domain) const
 {
+    // A web archive's documents have whatever origins the archive claims, which the UI process cannot verify.
+    if (hasCommittedWebArchive())
+        return FirstPartyAccessResult::Pass;
+
     if (m_site)
         return domain == m_site->domain() ? FirstPartyAccessResult::Pass : FirstPartyAccessResult::HardFailure;
 
@@ -3585,6 +3617,10 @@ WebProcessProxy::FirstPartyAccessResult WebProcessProxy::allowsFirstPartyAccess(
 
 void WebProcessProxy::setAppBadgeFromWorker(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, std::optional<uint64_t> badge)
 {
+    // A web archive can claim any origin, so it must not badge the app of one.
+    if (hasCommittedWebArchive())
+        return;
+
     EXTRACT_WITH_MESSAGE_CHECK(origin, untrustedOrigin, ProcessSpeaksForDomain { *this, ShouldCheckWithoutSiteIsolation::Yes });
     if (RefPtr dataStore = websiteDataStore())
         dataStore->workerUpdatedAppBadge(origin, badge);
@@ -3606,7 +3642,7 @@ const WeakHashSet<WebProcessProxy>* WebProcessProxy::sharedWorkerClientProcesses
 
 void WebProcessProxy::permissionChanged(WebCore::PermissionName permissionName, const WebCore::SecurityOriginData& topOrigin)
 {
-    auto webProcessPools = WebKit::WebProcessPool::allProcessPools();
+    const Vector webProcessPools = WebKit::WebProcessPool::allProcessPools();
 
     for (auto& webProcessPool : webProcessPools) {
         for (Ref webProcessProxy : webProcessPool->processes())

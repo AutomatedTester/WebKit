@@ -36,6 +36,7 @@
 
 namespace WebCore {
 
+class HTMLFrameOwnerElement;
 class RenderTextFragment;
 
 namespace InlineIterator {
@@ -63,6 +64,8 @@ WEBCORE_EXPORT SimpleRange findClosestPlainText(const SimpleRange&, const String
 WEBCORE_EXPORT Vector<SimpleRange> findAllPlainText(const SimpleRange&, const String&, FindOptions, unsigned limit);
 WEBCORE_EXPORT bool containsPlainText(const String& document, const String&, FindOptions); // Lets us use the search algorithm on a string.
 
+bool isFrameOwnerFullyClipped(HTMLFrameOwnerElement&, TextIteratorBehaviors);
+
 // FIXME: Move this somewhere else in the editing directory. It doesn't belong in the header with TextIterator.
 bool isRendererReplacedElement(RenderObject*, TextIteratorBehaviors = { });
 
@@ -71,8 +74,8 @@ bool isRendererReplacedElement(RenderObject*, TextIteratorBehaviors = { });
 class BitStack {
 public:
     void push(bool);
-    void LEGACY_NODELETE pop();
-    bool LEGACY_NODELETE top() const;
+    NODELETE void pop();
+    NODELETE bool top() const;
 
 private:
     unsigned m_size { 0 };
@@ -107,7 +110,7 @@ struct TextIteratorPosition {
 // at points where replaced elements break up the text flow. The text is delivered in
 // the chunks it's already stored in, to avoid copying any text.
 
-bool LEGACY_NODELETE shouldEmitNewlinesBeforeAndAfterNode(Node&, bool emitsNewlinesPerInnerTextSpec = false);
+NODELETE bool shouldEmitNewlinesBeforeAndAfterNode(Node&, bool emitsNewlinesPerInnerTextSpec = false);
 
 class TextIterator {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(TextIterator, WEBCORE_EXPORT);
@@ -120,7 +123,7 @@ public:
 
     StringView text() const LIFETIME_BOUND { ASSERT(!atEnd()); return m_text; }
     WEBCORE_EXPORT SimpleRange range() const;
-    WEBCORE_EXPORT TextIteratorPosition position() const;
+    NODELETE WEBCORE_EXPORT TextIteratorPosition position() const;
     WEBCORE_EXPORT Node* node() const;
 
     // Returns true when the current output is a newline emitted from exiting
@@ -139,7 +142,7 @@ private:
     void init();
     void exitNode(Node*);
     bool shouldRepresentNodeOffsetZero();
-    bool LEGACY_NODELETE shouldEmitSpaceBeforeAndAfterNode(Node&);
+    NODELETE bool shouldEmitSpaceBeforeAndAfterNode(Node&);
     void representNodeOffsetZero();
     bool handleTextNode();
     bool handleReplacedElement();
@@ -275,7 +278,7 @@ public:
     StringView text() const LIFETIME_BOUND { return m_underlyingIterator.text().substring(m_runOffset); }
     WEBCORE_EXPORT SimpleRange range() const;
 
-    bool LEGACY_NODELETE atBreak() const { return m_atBreak; }
+    NODELETE bool atBreak() const { return m_atBreak; }
     unsigned characterOffset() const { return m_offset; }
 
 private:
@@ -313,7 +316,7 @@ public:
     bool atEnd() const { return !m_didLookAhead && m_underlyingIterator.atEnd(); }
     void advance();
 
-    StringView LEGACY_NODELETE text() const LIFETIME_BOUND;
+    NODELETE StringView text() const LIFETIME_BOUND;
 
 private:
     TextIterator m_underlyingIterator;

@@ -29,7 +29,9 @@
 
 #include "WebExtensionError.h"
 #include "WebExtensionEventListenerType.h"
+#include "WebExtensionMatchPattern.h"
 #include "WebExtensionTabIdentifier.h"
+#include "WebExtensionTabParameters.h"
 #include "WebPageProxyIdentifier.h"
 #include <wtf/Identified.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -48,7 +50,6 @@ OBJC_PROTOCOL(WKWebExtensionTab);
 namespace WebKit {
 
 class WebExtensionContext;
-class WebExtensionMatchPattern;
 class WebExtensionWindow;
 class WebProcessProxy;
 struct WebExtensionTabParameters;
@@ -109,9 +110,14 @@ public:
     using WebProcessProxySet = HashSet<Ref<WebProcessProxy>>;
 
     WebExtensionTabParameters parameters() const;
-    WebExtensionTabParameters changedParameters(OptionSet<ChangedProperties> = { }) const;
+    enum class ValueSource : bool { Snapshot, Live };
+    WebExtensionTabParameters changedParameters(ValueSource = ValueSource::Live) const;
 
-    WebExtensionContext* LEGACY_NODELETE extensionContext() const;
+    enum class HasChanges : bool { No, Yes };
+    HasChanges removeUnchangedParameters(WebExtensionTabParameters&);
+    WebExtensionTabParameters parametersApplying(const WebExtensionTabParameters&) const;
+
+    NODELETE WebExtensionContext* extensionContext() const;
 
     bool operator==(const WebExtensionTab&) const;
 
@@ -128,8 +134,8 @@ public:
     void setTemporaryPermissionMatchPattern(RefPtr<WebExtensionMatchPattern>&& matchPattern) { m_temporaryPermissionMatchPattern = WTF::move(matchPattern); }
 
     OptionSet<ChangedProperties> changedProperties() const { return m_changedProperties; }
-    void addChangedProperties(OptionSet<ChangedProperties> properties) { m_changedProperties.add(properties); }
-    void clearChangedProperties() { m_changedProperties = { }; }
+    void addChangedProperties(OptionSet<ChangedProperties>);
+    void clearChangedProperties();
 
     RefPtr<WebExtensionWindow> window() const;
     size_t index() const;
@@ -142,7 +148,7 @@ public:
     String title() const;
 
     bool isOpen() const;
-    void didOpen() { ASSERT(!m_isOpen); m_isOpen = true; }
+    void didOpen();
     void didClose() { ASSERT(m_isOpen); m_isOpen = false; }
 
     bool isPrivate() const;
@@ -207,6 +213,10 @@ public:
 
     bool shouldGrantPermissionsOnUserGesture() const;
 
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebExtensionTabAdditions.h>)
+#include <WebKitAdditions/WebExtensionTabAdditions.h>
+#endif
+
     WebProcessProxySet processes(WebExtensionEventListenerType, WebExtensionContentWorldType) const;
 
 #ifdef __OBJC__
@@ -216,12 +226,17 @@ public:
 #endif
 
 private:
+    WebExtensionTabParameters unredactedChangedParameters(OptionSet<ChangedProperties>) const;
+    void redactIfNeeded(WebExtensionTabParameters&) const;
+
     WeakPtr<WebExtensionContext> m_extensionContext;
 #if PLATFORM(COCOA)
     WeakObjCPtr<WKWebExtensionTab> m_delegate;
 #endif
     RefPtr<WebExtensionMatchPattern> m_temporaryPermissionMatchPattern;
     OptionSet<ChangedProperties> m_changedProperties;
+    WebExtensionTabParameters m_pendingChangedParameters;
+    WebExtensionTabParameters m_reportedParameters;
     bool m_activeUserGesture : 1 { false };
     bool m_isOpen : 1 { false };
     mutable bool m_private : 1 { false };

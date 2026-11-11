@@ -54,7 +54,6 @@ class EditorClient;
 class HTMLImageElement;
 class PageConfiguration;
 class SocketProvider;
-enum class BroadcastFocusedElement : bool;
 enum class ContentChange : uint8_t;
 struct FocusOptions;
 
@@ -74,7 +73,7 @@ class EmptyChromeClient : public ChromeClient {
     bool canTakeFocus(FocusDirection) const final { return false; }
     void takeFocus(FocusDirection) final { }
 
-    void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement) final { }
+    void focusedElementChanged(Element*, LocalFrame*, FocusOptions) final { }
     void focusedFrameChanged(Frame*) final { }
 
     RefPtr<Page> createWindow(LocalFrame&, const String&, const WindowFeatures&, const NavigationAction&) final;
@@ -147,13 +146,13 @@ class EmptyChromeClient : public ChromeClient {
 
     RefPtr<DateTimeChooser> createDateTimeChooser(DateTimeChooserClient&) final;
 
-    void LEGACY_NODELETE setTextIndicator(RefPtr<TextIndicator>&&) const final;
-    void LEGACY_NODELETE updateTextIndicator(RefPtr<TextIndicator>&&) const final;
+    NODELETE void setTextIndicator(RefPtr<TextIndicator>&&) const final;
+    NODELETE void updateTextIndicator(RefPtr<TextIndicator>&&) const final;
 
-    DisplayRefreshMonitorFactory* LEGACY_NODELETE displayRefreshMonitorFactory() const final;
+    NODELETE DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final;
 
-    void LEGACY_NODELETE runOpenPanel(LocalFrame&, FileChooser&) final;
-    void LEGACY_NODELETE showShareSheet(ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&&) final;
+    NODELETE void runOpenPanel(LocalFrame&, FileChooser&) final;
+    NODELETE void showShareSheet(ShareDataWithParsedURL&&, CompletionHandler<void(bool)>&&) final;
     void loadIconForFiles(const Vector<String>&, FileIconLoader&) final { }
 
     void elementDidFocus(Element&, const FocusOptions&) final { }
@@ -228,7 +227,7 @@ class EmptyChromeClient : public ChromeClient {
 };
 
 WEBCORE_EXPORT Ref<SocketProvider> emptySocketProvider();
-DiagnosticLoggingClient& LEGACY_NODELETE emptyDiagnosticLoggingClient();
+NODELETE DiagnosticLoggingClient& emptyDiagnosticLoggingClient();
 WEBCORE_EXPORT PageConfiguration pageConfigurationWithEmptyClients(std::optional<PageIdentifier>, PAL::SessionID);
 
 class EmptyCryptoClient: public CryptoClient {

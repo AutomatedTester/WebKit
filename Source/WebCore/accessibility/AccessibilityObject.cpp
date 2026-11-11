@@ -104,7 +104,6 @@
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderImageResource.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
 #include "RenderListItem.h"
@@ -119,6 +118,7 @@
 #include "SVGNames.h"
 #include "Settings.h"
 #include "SharedBuffer.h"
+#include "SimulatedClick.h"
 #include "TextCheckerClient.h"
 #include "TextCheckingHelper.h"
 #include "TextControlInnerElements.h"
@@ -706,8 +706,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
     if (!cache)
         return nullptr;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+    RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     while (accessibleObject && !isAccessible(*accessibleObject)) {
         axNode = NodeTraversal::next(*axNode);
 
@@ -717,8 +716,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
         if (!axNode)
             return nullptr;
 
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+        accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     }
 
     return accessibleObject.unsafeGet();
@@ -985,8 +983,7 @@ AXTextMarkerRange AccessibilityObject::textMarkerRange() const
 
 Vector<BoundaryPoint> AccessibilityObject::previousLineStartBoundaryPoints(const VisiblePosition& startingPosition, const SimpleRange& targetRange, unsigned positionsToRetrieve) const
 {
-    Vector<BoundaryPoint> boundaryPoints;
-    boundaryPoints.reserveInitialCapacity(positionsToRetrieve);
+    Vector<BoundaryPoint> boundaryPoints(ReserveCapacityTag { }, positionsToRetrieve);
 
     std::optional<VisiblePosition> lastPosition = startingPosition;
     for (unsigned i = 0; i < positionsToRetrieve; i++) {
@@ -1031,14 +1028,14 @@ std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRe
     return lastBoundaryPointContainedInRect(boundaryPoints, startBoundary, rect, midIndex + 1, rightIndex, isFlippedWritingMode);
 }
 
-static IntPoint LEGACY_NODELETE textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
+NODELETE static IntPoint textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.minXMinYCorner();
     return rect.maxXMinYCorner();
 }
 
-static IntPoint LEGACY_NODELETE textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
+NODELETE static IntPoint textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.maxXMaxYCorner();
@@ -1304,11 +1301,9 @@ static SimpleRange rangeFromTextOperationRange(const TextOperationRange& textOpe
 
 Vector<String> AccessibilityObject::performTextOperation(const AccessibilityTextOperation& operation)
 {
-    Vector<TextOperationRange> textOperationRanges;
-    textOperationRanges.reserveInitialCapacity(operation.textRanges.size());
+    Vector<TextOperationRange> textOperationRanges(ReserveCapacityTag { }, operation.textRanges.size());
 
-    Vector<String> result;
-    result.reserveInitialCapacity(operation.textRanges.size());
+    Vector<String> result(ReserveCapacityTag { }, operation.textRanges.size());
 
     if (operation.textRanges.isEmpty())
         return result;
@@ -1620,7 +1615,7 @@ bool AccessibilityObject::press()
     RefPtr<Element> hitTestElement;
     RefPtr document = this->document();
     if (document) {
-        constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AccessibilityHitTest };
+        constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AccessibilityHitTest };
         HitTestResult hitTestResult { clickPoint() };
         document->hitTest(hitType, hitTestResult);
         if (RefPtr innerNode = hitTestResult.innerNode()) {
@@ -1646,9 +1641,14 @@ bool AccessibilityObject::press()
     UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, document.get());
 
     bool dispatchedEvent = false;
+    bool dispatchedSimulatedTouch = false;
 #if PLATFORM(IOS_FAMILY)
-    if (hasTouchEventListener())
+    if (hasTouchEventListener()) {
+#if ENABLE(IOS_TOUCH_EVENTS)
+        dispatchedSimulatedTouch = !!localMainFrame();
+#endif
         dispatchedEvent = dispatchTouchEvent();
+    }
 #endif
 
     if (dispatchedEvent)
@@ -1660,6 +1660,12 @@ bool AccessibilityObject::press()
             return true;
         }
     }
+
+    // The simulated touch already dispatched pointerdown and pointerup, so like a tap, follow it with the
+    // compatibility mouse events and a click, but not a second set of pointer events.
+    std::optional<SimulatedClickWithoutPointerEventsScope> withoutPointerEventsScope;
+    if (dispatchedSimulatedTouch)
+        withoutPointerEventsScope.emplace();
 
     return pressElement->accessKeyAction(true) || pressElement->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents);
 }
@@ -1840,7 +1846,7 @@ VisiblePosition AccessibilityObject::visiblePositionForPoint(const IntPoint& poi
 #else
         pointToUse = point;
 #endif
-        constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active };
+        constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active };
         HitTestResult result { pointToUse };
         protect(renderView->document())->hitTest(hitType, result);
         innerNode = result.innerNode();
@@ -2004,11 +2010,19 @@ VisiblePositionRange AccessibilityObject::rightLineVisiblePositionRange(const Vi
     return { startPosition, endPosition };
 }
 
+// Text has the style of its parent here, so text in the same parent stays in one style range.
+static const Style::ComputedStyle& styleForStyleRange(const RenderObject& renderer)
+{
+    if (is<RenderText>(renderer) && renderer.parent())
+        return renderer.parent()->style();
+    return renderer.style();
+}
+
 static VisiblePosition startOfStyleRange(const VisiblePosition& visiblePos)
 {
     CheckedPtr renderer = visiblePos.deepEquivalent().deprecatedNode()->renderer();
     CheckedPtr startRenderer = renderer;
-    CheckedPtr style = &renderer->style();
+    CheckedPtr style = &styleForStyleRange(*renderer);
 
     // traverse backward by renderer to look for style change
     for (CheckedPtr r = renderer->previousInPreOrder(); r; r = r->previousInPreOrder()) {
@@ -2017,7 +2031,7 @@ static VisiblePosition startOfStyleRange(const VisiblePosition& visiblePos)
             continue;
 
         // stop at style change
-        if (&r->style() != style.get())
+        if (&styleForStyleRange(*r) != style.get())
             break;
 
         // remember match
@@ -2031,7 +2045,7 @@ static VisiblePosition endOfStyleRange(const VisiblePosition& visiblePos)
 {
     CheckedPtr renderer = visiblePos.deepEquivalent().deprecatedNode()->renderer();
     CheckedPtr endRenderer = renderer;
-    const CheckedRef style = renderer->style();
+    const CheckedRef style = styleForStyleRange(*renderer);
 
     // traverse forward by renderer to look for style change
     for (CheckedPtr r = renderer->nextInPreOrder(); r; r = r->nextInPreOrder()) {
@@ -2040,7 +2054,7 @@ static VisiblePosition endOfStyleRange(const VisiblePosition& visiblePos)
             continue;
 
         // stop at style change
-        if (&r->style() != style.ptr())
+        if (&styleForStyleRange(*r) != style.ptr())
             break;
 
         // remember match
@@ -2203,7 +2217,7 @@ ModelPlayerAccessibilityChildren AccessibilityObject::modelElementChildren()
 #endif
 
 // Finds a RenderListItem parent given a node.
-static RenderListItem* LEGACY_NODELETE renderListItemContainer(Node* node)
+NODELETE static RenderListItem* renderListItemContainer(Node* node)
 {
     for (; node; node = node->parentNode()) {
         if (auto* listItem = dynamicDowncast<RenderListItem>(node->renderer()))
@@ -2538,7 +2552,7 @@ int AccessibilityObject::lineForPosition(const VisiblePosition& visiblePos) cons
     // top document.
     while (true) {
         savedVisiblePos = currentVisiblePos;
-        currentVisiblePos = previousLinePosition(currentVisiblePos, 0, HasEditableAXRole);
+        currentVisiblePos = previousLinePosition(currentVisiblePos, 0, EditableType::AXRole);
         if (currentVisiblePos.isNull() || inSameLine(currentVisiblePos, savedVisiblePos))
             break;
         // Count lines rather than steps, because one step can cross more than one. The start of a
@@ -2954,7 +2968,7 @@ static CheckedPtr<RenderObject> nearestRendererFromNode(Node& node)
     return renderer;
 }
 
-static int zIndexFromRenderer(RenderObject* renderer)
+NODELETE static int zIndexFromRenderer(RenderObject* renderer)
 {
     for (auto* layer = renderer->enclosingLayer(); layer; layer = layer->parent()) {
         if (int zIndex = layer->zIndex())
@@ -3084,13 +3098,12 @@ bool AccessibilityObject::replaceTextInRange(const String& replacementString, co
         return true;
     }
 
-    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
-        input->setRangeText(replacementString, range.location, range.length, emptyString());
-        return true;
-    }
-    if (RefPtr textarea = dynamicDowncast<HTMLTextAreaElement>(element)) {
-        textarea->setRangeText(replacementString, range.location, range.length, emptyString());
-        return true;
+    // On Cocoa, text that AX clients insert in password fields reaches this code path, since password fields don't use input methods.
+    if (RefPtr textControl = dynamicDowncast<HTMLTextFormControlElement>(element)) {
+        // setRangeText() takes the end of the range, not its length. It clamps both to the length of the value.
+        unsigned start = clampTo<unsigned>(range.location);
+        unsigned end = clampTo<unsigned>(range.location + std::min(range.length, std::numeric_limits<uint64_t>::max() - range.location));
+        return !textControl->setRangeText(replacementString, start, end, emptyString()).hasException();
     }
 
     return false;
@@ -3328,6 +3341,9 @@ AccessibilityRole AccessibilityObject::ariaRoleToWebCoreRole(const String& value
 
 String AccessibilityObject::computedRoleString() const
 {
+    // We only finalize some roles, like a list without markers, after adding children, so add them now.
+    const_cast<AccessibilityObject*>(this)->updateChildrenIfNecessary();
+
     // FIXME: Need a few special cases that aren't in the RoleMap: option, etc. http://webkit.org/b/128296
     auto role = this->role();
 
@@ -3387,33 +3403,38 @@ String AccessibilityObject::embeddedImageDescription() const
     return renderImage->accessibilityDescription();
 }
 
-static RefPtr<Image> imageFromRenderer(RenderObject* renderer)
+static RefPtr<Image> imageFromRenderer(const RenderImage& renderImage)
 {
-    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer);
-    RefPtr cachedImage = renderImage ? renderImage->cachedImage() : nullptr;
+    RefPtr cachedImage = renderImage.cachedImage();
     return cachedImage ? cachedImage->image() : nullptr;
 }
 
 FloatSize AccessibilityObject::imageDataSize() const
 {
-    if (RefPtr image = imageFromRenderer(renderer()))
-        return image->size();
-    return { };
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer());
+    if (!renderImage || !imageFromRenderer(*renderImage))
+        return { };
+    return renderImage->concreteObjectSizeForAccessibility().size();
 }
 
 RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters& parameters) const
 {
-    RefPtr image = imageFromRenderer(renderer());
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer());
+    if (!renderImage)
+        return nullptr;
+
+    RefPtr image = imageFromRenderer(*renderImage);
     if (!image || !image->hasSomethingToDraw())
         return nullptr;
 
-    auto nativeSize = image->size();
-    if (nativeSize.isEmpty())
+    auto concreteObjectSize = renderImage->concreteObjectSizeForAccessibility();
+    auto imageSize = concreteObjectSize.size();
+    if (imageSize.isEmpty())
         return nullptr;
 
     // Determine the resize dimensions.
-    float targetWidth = parameters.resizeWidth ? parameters.resizeWidth : nativeSize.width();
-    float targetHeight = parameters.resizeHeight ? parameters.resizeHeight : nativeSize.height();
+    float targetWidth = parameters.resizeWidth ? parameters.resizeWidth : imageSize.width();
+    float targetHeight = parameters.resizeHeight ? parameters.resizeHeight : imageSize.height();
 
     // Clamp to a maximum of maxDimension x maxDimension pixels, preserving aspect ratio.
     constexpr float maxPixelArea = AXImageDataParameters::maxDimension * AXImageDataParameters::maxDimension;
@@ -3430,7 +3451,7 @@ RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters&
         return nullptr;
 
     // Draw the source image scaled into the buffer.
-    imageBuffer->context().drawImage(*image, ConcreteObjectSize::fixed(nativeSize), FloatRect({ }, bufferSize), FloatRect({ }, nativeSize));
+    image->draw(imageBuffer->context(), ImageDrawDescriptor { concreteObjectSize, renderImage->imageOrientation() }, FloatRect({ }, bufferSize), FloatRect({ }, imageSize));
 
     // Determine the extraction rect from subrect parameters or full image.
     IntRect extractionRect;
@@ -3468,7 +3489,13 @@ const Style::ComputedStyle* AccessibilityObject::style() const
             // Trying to get the style from a RenderText that has no parent (e.g. because it hasn't been
             // set yet, or it was destroyed as part of an in-progress render-tree update) will cause a
             // crash because RenderTexts get their style from their parent.
-            return renderText->parent() ? &renderText->style() : nullptr;
+            // Non-inherited properties like the background color come from the parent.
+            if (!renderText->parent())
+                return nullptr;
+            // Text in a display: contents element has inherited properties of its own and no parent box of its own.
+            if (renderText->inheritsStyleFromDisplayContentsParent())
+                return &renderText->style();
+            return &renderText->parent()->style();
         }
         return &renderer->style();
     }
@@ -3860,9 +3887,8 @@ Vector<String> AccessibilityObject::classList() const
         return { };
 
     Ref domClassList = element->classList();
-    Vector<String> classList;
     unsigned length = domClassList->length();
-    classList.reserveInitialCapacity(length);
+    Vector<String> classList(ReserveCapacityTag { }, length);
     for (unsigned k = 0; k < length; k++)
         classList.append(domClassList->item(k).string());
     return classList;
@@ -4083,7 +4109,7 @@ HashMap<String, AXEditingStyleValueVariant> AccessibilityObject::resolvedEditing
 // Note that the return value represents the ideal new scroll offset.
 // This may be out of range - the calling function should clip this
 // to the available range.
-static int computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
+NODELETE static int computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
 {
     int viewportSize = viewportMax - viewportMin;
 

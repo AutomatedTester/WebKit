@@ -38,6 +38,7 @@
 #include "OpenXRInput.h"
 #include "OpenXRInputSource.h"
 #include "OpenXRLayer.h"
+#include "OpenXRPlaneDetectionManager.h"
 #include "OpenXRUtils.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
@@ -129,6 +130,11 @@ void OpenXRCoordinator::getPrimaryDeviceInfo(WebPageProxy& page, DeviceInfoCallb
 #endif
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    if (OpenXRPlaneDetectionManager::isSupported(m_instance, m_systemId))
+        deviceInfo.arFeatures.append(PlatformXR::SessionFeature::PlaneDetection);
+#endif
+
 #if ENABLE(WEBXR_LAYERS)
     deviceInfo.vrFeatures.append(PlatformXR::SessionFeature::Layers);
     deviceInfo.arFeatures.append(PlatformXR::SessionFeature::Layers);
@@ -183,7 +189,7 @@ bool OpenXRCoordinator::collectSwapchainFormatsIfNeeded()
     return true;
 }
 
-std::unique_ptr<OpenXRSwapchain> OpenXRCoordinator::createSwapchain(uint32_t width, uint32_t height, bool alpha, uint32_t faceCount) const
+std::unique_ptr<OpenXRSwapchain> OpenXRCoordinator::createSwapchain(uint32_t width, uint32_t height, bool alpha, uint32_t faceCount, PlatformXR::LayerUpdateMode updateMode) const
 {
     auto format = m_graphicsBinding->selectColorFormat(m_supportedSwapchainFormats, alpha);
 
@@ -198,6 +204,7 @@ std::unique_ptr<OpenXRSwapchain> OpenXRCoordinator::createSwapchain(uint32_t wid
     // resolved in the web process before the content reaches us.
     info.sampleCount = 1;
     info.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+    info.createFlags = updateMode == PlatformXR::LayerUpdateMode::Static ? XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT : 0;
 
     return OpenXRSwapchain::create(m_session, info, alpha ? OpenXRSwapchain::HasAlpha::Yes : OpenXRSwapchain::HasAlpha::No, *m_graphicsBinding);
 }
@@ -240,7 +247,7 @@ void OpenXRCoordinator::createLayerProjection(uint32_t width, uint32_t height, b
 }
 
 #if ENABLE(WEBXR_LAYERS)
-void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, CreateCompositionLayerCallback&& reply)
+void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, PlatformXR::LayerUpdateMode updateMode, CreateCompositionLayerCallback&& reply)
 {
     if (type == PlatformXR::CompositionLayerType::Equirect) {
 #if !defined(XR_KHR_composition_layer_equirect2)
@@ -273,7 +280,7 @@ void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType 
     WTF::switchOn(m_state,
         [&](Idle&) { reply(std::nullopt); },
         [&](Active& active) {
-            active.renderQueue->dispatch([this, type, size, layout, completionHandler = WTF::move(reply)] mutable {
+            active.renderQueue->dispatch([this, type, size, layout, updateMode, completionHandler = WTF::move(reply)] mutable {
                 if (!collectSwapchainFormatsIfNeeded()) {
                     RELEASE_LOG(XR, "OpenXRCoordinator: no supported swapchain formats");
                     callOnMainRunLoop([completion = WTF::move(completionHandler)] mutable {
@@ -284,7 +291,7 @@ void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType 
 
                 bool alpha = false;
                 uint32_t faceCount = type == PlatformXR::CompositionLayerType::Cube ? 6 : 1;
-                auto swapchain = createSwapchain(size.width(), size.height(), alpha, faceCount);
+                auto swapchain = createSwapchain(size.width(), size.height(), alpha, faceCount, updateMode);
                 if (!swapchain) {
                     RELEASE_LOG(XR, "OpenXRCoordinator: failed to create swapchain");
                     callOnMainRunLoop([completion = WTF::move(completionHandler)] mutable {
@@ -315,7 +322,7 @@ void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType 
                     ASSERT(layout == PlatformXR::LayerLayout::Mono || layout == PlatformXR::LayerLayout::Stereo);
                     if (layout == PlatformXR::LayerLayout::Mono)
                         layer = OpenXRCubeLayer::create(WTF::move(swapchain), nullptr, layout);
-                    else if (auto rightSwapchain = createSwapchain(size.width(), size.height(), alpha, faceCount))
+                    else if (auto rightSwapchain = createSwapchain(size.width(), size.height(), alpha, faceCount, updateMode))
                         layer = OpenXRCubeLayer::create(WTF::move(swapchain), WTF::move(rightSwapchain), layout);
 #endif
                     break;
@@ -338,9 +345,32 @@ void OpenXRCoordinator::createCompositionLayer(PlatformXR::CompositionLayerType 
         });
 }
 
+void OpenXRCoordinator::deleteLayer(WebPageProxy& page, PlatformXR::LayerHandle handle)
+{
+    ASSERT(RunLoop::isMain());
+    WTF::switchOn(m_state,
+        [&](Idle&) { },
+        [&](Active& active) {
+            if (active.pageIdentifier != page.webPageIDInMainFrameProcess()) {
+                RELEASE_LOG(XR, "OpenXRCoordinator: trying to delete a layer owned by another page");
+                return;
+            }
+
+            // The render queue is serial, so this runs after any frame that was already dispatched. If the layer was started for the
+            // frame in flight, destroying it releases its acquired image and endFrame() skips it as an unknown handle.
+            active.renderQueue->dispatch([this, handle] {
+                auto layer = m_layers.take(handle);
+                if (!layer)
+                    return;
+                if (m_graphicsBinding)
+                    layer->releaseExportedTextures(*m_graphicsBinding);
+            });
+        });
+}
+
 #endif // ENABLE(WEBXR_LAYERS)
 
-void OpenXRCoordinator::startSession(WebPageProxy& page, WeakPtr<PlatformXRCoordinatorSessionEventClient>&& sessionEventClient, const WebCore::SecurityOriginData&, PlatformXR::SessionMode sessionMode, const PlatformXR::Device::FeatureList&, std::optional<WebCore::XRCanvasConfiguration>&&)
+void OpenXRCoordinator::startSession(WebPageProxy& page, WeakPtr<PlatformXRCoordinatorSessionEventClient>&& sessionEventClient, const WebCore::SecurityOriginData&, PlatformXR::SessionMode sessionMode, const PlatformXR::Device::FeatureList& features, std::optional<WebCore::XRCanvasConfiguration>&&)
 {
     ASSERT(RunLoop::isMain());
     LOG(XR, "OpenXRCoordinator::startSession");
@@ -362,7 +392,7 @@ void OpenXRCoordinator::startSession(WebPageProxy& page, WeakPtr<PlatformXRCoord
                 .renderState = renderState,
                 .renderQueue = renderQueue.get()
             };
-            renderQueue->dispatch([this, renderState] {
+            renderQueue->dispatch([this, renderState, features] {
                 createSessionIfNeeded();
                 if (m_session == XR_NULL_HANDLE) {
                     LOG(XR, "OpenXRCoordinator: failed to create the session");
@@ -373,6 +403,10 @@ void OpenXRCoordinator::startSession(WebPageProxy& page, WeakPtr<PlatformXRCoord
                     cleanupAllResources();
                     return;
                 }
+#if ENABLE(WEBXR_PLANE_DETECTION)
+                if (features.contains(PlatformXR::SessionFeature::PlaneDetection))
+                    m_planeDetectionManager = OpenXRPlaneDetectionManager::create(m_instance, m_systemId, m_session);
+#endif
                 waitForSessionReady(renderState, [] { });
             });
         },
@@ -688,6 +722,15 @@ void OpenXRCoordinator::createInstance()
 #endif
 #endif
 #endif
+#if ENABLE(WEBXR_PLANE_DETECTION) && defined(XR_EXT_spatial_plane_tracking)
+    if (OpenXRExtensions::singleton().isExtensionSupported(XR_EXT_FUTURE_EXTENSION_NAME ""_span)
+        && OpenXRExtensions::singleton().isExtensionSupported(XR_EXT_SPATIAL_ENTITY_EXTENSION_NAME ""_span)
+        && OpenXRExtensions::singleton().isExtensionSupported(XR_EXT_SPATIAL_PLANE_TRACKING_EXTENSION_NAME ""_span)) {
+        extensions.append(const_cast<char*>(XR_EXT_FUTURE_EXTENSION_NAME));
+        extensions.append(const_cast<char*>(XR_EXT_SPATIAL_ENTITY_EXTENSION_NAME));
+        extensions.append(const_cast<char*>(XR_EXT_SPATIAL_PLANE_TRACKING_EXTENSION_NAME));
+    }
+#endif
 #if defined(XR_KHR_composition_layer_equirect2)
     if (OpenXRExtensions::singleton().isExtensionSupported(XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME ""_span))
         extensions.append(const_cast<char*>(XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME));
@@ -872,6 +915,9 @@ void OpenXRCoordinator::cleanupSessionAndAssociatedResources()
     m_input.reset();
 #if ENABLE(WEBXR_HIT_TEST)
     m_hitTestManager.reset();
+#endif
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    m_planeDetectionManager.reset();
 #endif
 
     if (m_session != XR_NULL_HANDLE) {
@@ -1090,6 +1136,11 @@ PlatformXR::FrameData OpenXRCoordinator::populateFrameData(Box<RenderState> rend
     }
 #endif
 
+#if ENABLE(WEBXR_PLANE_DETECTION)
+    if (m_planeDetectionManager)
+        frameData.detectedPlanes = m_planeDetectionManager->update(m_localSpace, renderState->frameState.predictedDisplayTime);
+#endif
+
     auto toXREnvironmentBlendMode = [](XrEnvironmentBlendMode mode) {
         switch (mode) {
         case XR_ENVIRONMENT_BLEND_MODE_OPAQUE:
@@ -1216,7 +1267,7 @@ void OpenXRCoordinator::endFrame(Box<RenderState> renderState, Vector<PlatformXR
         auto it = m_layers.find(layer.handle);
         if (it == m_layers.end()) {
             // This should not happen as handlers are created here and never changed in the WebProcess. However it could be the case that a layer
-            // is removed but still submitted for rendering due to some unfortunate timing of IPC messages and/or asynchronous methods.
+            // is removed (see deleteLayer()) but still submitted for rendering due to some unfortunate timing of IPC messages and/or asynchronous methods.
             RELEASE_LOG(XR, "OpenXRCoordinator::endFrame: skipping unknown layer handle %d", layer.handle);
             continue;
         }

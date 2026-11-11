@@ -33,7 +33,9 @@
 #include "ProxyingNetworkAgent.h"
 
 #include "HandleMessage.h"
+#include "ProvisionalFrameProxy.h"
 #include "ProxyingNetworkAgentMessages.h"
+#include "WebFrameProxy.h"
 #include "WebInspectorBackendMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
@@ -243,14 +245,38 @@ CommandResult<void> ProxyingNetworkAgent::enable()
 {
     // FIXME: <https://webkit.org/b/308890> Only needed under Site Isolation; without it,
     // InspectorNetworkAgent in the single WebContent process handles network events.
-    Ref inspectedPage = m_inspectedPage.get();
+    Ref inspectedPage = m_inspectedPage;
     Ref prefs = inspectedPage->preferences();
     if (!prefs->siteIsolationEnabled())
         return { };
 
+    if (m_enabled)
+        return { };
+
     m_enabled = true;
 
+    // Register once per frame, not once per process: WebPageInspectorController releases one registration per
+    // frame, so a process registered once would be released while it still hosts other frames.
+    for (RefPtr frame = inspectedPage->mainFrame(); frame; frame = frame->traverseNext().frame) {
+        if (auto pageID = frame->webPageIDInCurrentProcess()) {
+            Ref process = frame->process();
+            enableInstrumentationForProcess(process, *pageID);
+        }
+
+        // Released by willDestroyProvisionalFrame, or carried to the new process by didCommitProvisionalFrame.
+        if (RefPtr provisionalFrame = frame->provisionalFrame()) {
+            Ref process = provisionalFrame->process();
+            enableInstrumentationForProcess(process, inspectedPage->webPageIDInProcess(process));
+        }
+    }
+
+    // Processes that host this page's WebPage but no frame (e.g. the process of a popup in the same browsing context group,
+    // which holds only a remote page). They were instrumented when enable() registered every process once, so keep doing that.
+    // Nothing releases these per frame, so they are held on purpose until disable(): a process that later hosts a frame and
+    // loses it goes 1->2->1 and stays registered.
     inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (m_instrumentedProcessPageCounts.contains(std::make_pair(webProcess.coreProcessIdentifier(), pageID)))
+            return;
         Ref protectedWebProcess { webProcess };
         enableInstrumentationForProcess(protectedWebProcess, pageID);
     });
@@ -292,8 +318,7 @@ CommandResult<void> ProxyingNetworkAgent::disable()
     m_extraRequestHeaders = { };
     m_resourceCachingDisabled = false;
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    if (RefPtr inspectedPage = m_inspectedPage.get())
-        protect(inspectedPage->websiteDataStore())->setEmulatedConditions(std::nullopt, 0_s);
+    protect(protect(m_inspectedPage)->websiteDataStore())->setEmulatedConditions(std::nullopt, 0_s);
 #endif
 
     return { };
@@ -309,11 +334,7 @@ CommandResult<void> ProxyingNetworkAgent::setExtraHTTPHeaders(Ref<JSON::Object>&
     }
     m_extraRequestHeaders = WTF::move(headerMap);
 
-    RefPtr inspectedPage = m_inspectedPage.get();
-    if (!inspectedPage)
-        return { };
-
-    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+    protect(m_inspectedPage)->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         webProcess.send(Messages::WebInspectorBackend::SetExtraHTTPHeaders { m_extraRequestHeaders }, pageID);
     });
 
@@ -335,7 +356,7 @@ static String replyFailureString(const String& replyError)
 // failure the returned string is the frontend-facing error. Shared by the requestId-routed
 // commands (getResponseBody, getSerializedCertificate), which then issue their own async IPC to the
 // resolved process.
-static CommandResultOf<Ref<WebKit::WebProcessProxy>, PageIdentifier, ResourceLoaderIdentifier> resolveRequestProcess(WebKit::WebPageProxy* inspectedPage, const Protocol::Network::RequestId& requestId)
+static CommandResultOf<Ref<WebKit::WebProcessProxy>, PageIdentifier, ResourceLoaderIdentifier> resolveRequestProcess(WebKit::WebPageProxy& inspectedPage, const Protocol::Network::RequestId& requestId)
 {
     auto parsed = IdentifierRegistry::parseProtocolRequestId(requestId);
     if (!parsed)
@@ -343,12 +364,9 @@ static CommandResultOf<Ref<WebKit::WebProcessProxy>, PageIdentifier, ResourceLoa
 
     auto [processIdentifier, resourceID] = *parsed;
 
-    if (!inspectedPage)
-        return makeUnexpected("Inspected page is gone"_s);
-
     RefPtr<WebKit::WebProcessProxy> targetProcess;
     std::optional<PageIdentifier> targetPageID;
-    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+    inspectedPage.forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (webProcess.coreProcessIdentifier() == processIdentifier) {
             targetProcess = &webProcess;
             targetPageID = pageID;
@@ -363,8 +381,7 @@ static CommandResultOf<Ref<WebKit::WebProcessProxy>, PageIdentifier, ResourceLoa
 
 void ProxyingNetworkAgent::getResponseBody(const Protocol::Network::RequestId& requestId, Ref<GetResponseBodyCallback>&& callback)
 {
-    RefPtr inspectedPage = m_inspectedPage.get();
-    auto resolved = resolveRequestProcess(inspectedPage.get(), requestId);
+    auto resolved = resolveRequestProcess(protect(m_inspectedPage), requestId);
     if (!resolved) {
         callback->sendFailure(resolved.error());
         return;
@@ -385,8 +402,7 @@ void ProxyingNetworkAgent::getResponseBody(const Protocol::Network::RequestId& r
 
 void ProxyingNetworkAgent::getSerializedCertificate(const Protocol::Network::RequestId& requestId, Ref<GetSerializedCertificateCallback>&& callback)
 {
-    RefPtr inspectedPage = m_inspectedPage.get();
-    auto resolved = resolveRequestProcess(inspectedPage.get(), requestId);
+    auto resolved = resolveRequestProcess(protect(m_inspectedPage), requestId);
     if (!resolved) {
         callback->sendFailure(resolved.error());
         return;
@@ -408,11 +424,7 @@ CommandResult<void> ProxyingNetworkAgent::setResourceCachingDisabled(bool disabl
 {
     m_resourceCachingDisabled = disabled;
 
-    RefPtr inspectedPage = m_inspectedPage.get();
-    if (!inspectedPage)
-        return { };
-
-    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+    protect(m_inspectedPage)->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         webProcess.send(Messages::WebInspectorBackend::SetResourceCachingDisabled { disabled }, pageID);
     });
 
@@ -437,16 +449,10 @@ void ProxyingNetworkAgent::loadResource(const Protocol::Network::FrameId& frameI
 
     auto [processIdentifier, frameID] = *parsed;
 
-    RefPtr inspectedPage = m_inspectedPage.get();
-    if (!inspectedPage) {
-        callback->sendFailure("Inspected page is gone"_s);
-        return;
-    }
-
     RefPtr<WebKit::WebProcessProxy> targetProcess;
     std::optional<PageIdentifier> targetPageID;
 
-    inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+    protect(m_inspectedPage)->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         if (webProcess.coreProcessIdentifier() == processIdentifier) {
             targetProcess = &webProcess;
             targetPageID = pageID;
@@ -540,15 +546,11 @@ CommandResult<void> ProxyingNetworkAgent::setEmulatedConditions(std::optional<in
     if (latency && *latency < 0)
         return makeUnexpected("latency cannot be negative"_s);
 
-    RefPtr inspectedPage = m_inspectedPage.get();
-    if (!inspectedPage)
-        return makeUnexpected("Inspected page is gone"_s);
-
     std::optional<uint64_t> bandwidthBytesPerSecond;
     if (bandwidth)
         bandwidthBytesPerSecond = *bandwidth;
 
-    protect(inspectedPage->websiteDataStore())->setEmulatedConditions(bandwidthBytesPerSecond, Seconds::fromMilliseconds(latency.value_or(0)));
+    protect(protect(m_inspectedPage)->websiteDataStore())->setEmulatedConditions(bandwidthBytesPerSecond, Seconds::fromMilliseconds(latency.value_or(0)));
     return { };
 }
 
@@ -613,7 +615,7 @@ void ProxyingNetworkAgent::loadingFailed(ResourceID resourceID, double timestamp
     m_frontendDispatcher->loadingFailed(requestId, timestamp, errorText, canceled);
 }
 
-void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& documentURL, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp, InitiatorData&& initiator)
+void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, FrameID frameID, const String& loaderId, const String& documentURL, const URL& url, const ResourceResponse& response, ResourceType resourceType, const String& sourceMapURL, uint64_t bodySize, double timestamp, InitiatorData&& initiator)
 {
     if (!m_enabled)
         return;
@@ -621,7 +623,7 @@ void ProxyingNetworkAgent::requestServedFromMemoryCache(ResourceID resourceID, F
     auto requestId = IdentifierRegistry::protocolRequestId(resourceID.processIdentifier(), resourceID.object());
     auto frameIdString = IdentifierRegistry::protocolFrameId(frameID, resourceID.processIdentifier());
     auto cachedResourceObject = Protocol::Network::CachedResource::create()
-        .setUrl(response.url().string())
+        .setUrl(url.string())
         .setType(toProtocolResourceType(resourceType))
         .setBodySize(bodySize)
         .release();

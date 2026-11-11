@@ -33,11 +33,9 @@
 #include "config.h"
 #include "InspectorTimelineAgent.h"
 
-#include "Element.h"
 #include "Event.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorCPUProfilerAgent.h"
-#include "InspectorDOMAgent.h"
 #include "InspectorMemoryAgent.h"
 #include "InstrumentingAgents.h"
 #include "JSExecState.h"
@@ -348,20 +346,6 @@ void InspectorTimelineAgent::didPerformanceMark(const String& label, std::option
     appendRecord(TimelineRecordFactory::createTimeStampData(label), TimelineRecordType::TimeStamp, true, timestamp);
 }
 
-void InspectorTimelineAgent::didEnqueueFirstContentfulPaint()
-{
-    appendRecord(JSON::Object::create(), TimelineRecordType::FirstContentfulPaint, false);
-}
-
-void InspectorTimelineAgent::didEnqueueLargestContentfulPaint(Element* element, unsigned area)
-{
-    Inspector::Protocol::DOM::NodeId nodeID = 0;
-    if (CheckedPtr domAgent = Ref { m_instrumentingAgents.get() }->persistentDOMAgent())
-        nodeID = domAgent->pushNodeToFrontend(element);
-
-    appendRecord(TimelineRecordFactory::createLargestContentfulPaintData(nodeID, area), TimelineRecordType::LargestContentfulPaint, false);
-}
-
 void InspectorTimelineAgent::startProgrammaticCapture()
 {
     ASSERT(!tracking());
@@ -430,6 +414,9 @@ void InspectorTimelineAgent::toggleInstruments(InstrumentState state)
 
 void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::ScriptProfiler))
+        return;
+
     if (CheckedPtr scriptProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentScriptProfilerAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = scriptProfilerAgent->startTracking(true);
@@ -440,6 +427,9 @@ void InspectorTimelineAgent::toggleScriptProfilerInstrument(InstrumentState stat
 
 void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Heap))
+        return;
+
     if (CheckedPtr heapAgent = Ref { m_instrumentingAgents.get() }->persistentWebHeapAgent()) {
         if (state == InstrumentState::Start) {
             if (shouldStartHeapInstrument())
@@ -451,6 +441,9 @@ void InspectorTimelineAgent::toggleHeapInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::CPU))
+        return;
+
 #if ENABLE(RESOURCE_USAGE)
     if (CheckedPtr cpuProfilerAgent = Ref { m_instrumentingAgents.get() }->persistentCPUProfilerAgent()) {
         if (state == InstrumentState::Start)
@@ -465,6 +458,9 @@ void InspectorTimelineAgent::toggleCPUInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleMemoryInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Memory))
+        return;
+
 #if ENABLE(RESOURCE_USAGE)
     if (CheckedPtr memoryAgent = Ref { m_instrumentingAgents.get() }->persistentMemoryAgent()) {
         if (state == InstrumentState::Start)
@@ -490,6 +486,9 @@ void InspectorTimelineAgent::toggleTimelineInstrument(InstrumentState state)
 
 void InspectorTimelineAgent::toggleAnimationInstrument(InstrumentState state)
 {
+    if (!shouldToggleInstrument(Inspector::Protocol::Timeline::Instrument::Animation))
+        return;
+
     if (CheckedPtr animationAgent = Ref { m_instrumentingAgents.get() }->persistentAnimationAgent()) {
         if (state == InstrumentState::Start)
             std::ignore = animationAgent->startTracking();
@@ -533,7 +532,7 @@ void InspectorTimelineAgent::breakpointActionProbe(JSC::JSGlobalObject*, JSC::Br
     appendRecord(TimelineRecordFactory::createProbeSampleData(actionID, sampleId), TimelineRecordType::ProbeSample, false);
 }
 
-static Inspector::Protocol::Timeline::EventType LEGACY_NODELETE toProtocol(TimelineRecordType type)
+NODELETE static Inspector::Protocol::Timeline::EventType toProtocol(TimelineRecordType type)
 {
     switch (type) {
     case TimelineRecordType::EventDispatch:
@@ -613,13 +612,62 @@ bool InspectorTimelineAgent::shouldNestUnder(TimelineRecordType type, TimelineRe
         switch (previousType) {
         case TimelineRecordType::EvaluateScript:
         case TimelineRecordType::FunctionCall:
+        case TimelineRecordType::RenderingFrame:
             return true;
-        default:
+        case TimelineRecordType::EventDispatch:
+        case TimelineRecordType::ScheduleStyleRecalculation:
+        case TimelineRecordType::RecalculateStyles:
+        case TimelineRecordType::InvalidateLayout:
+        case TimelineRecordType::ScheduleLayout:
+        case TimelineRecordType::Layout:
+        case TimelineRecordType::Paint:
+        case TimelineRecordType::Composite:
+        case TimelineRecordType::TimerInstall:
+        case TimelineRecordType::TimerRemove:
+        case TimelineRecordType::TimerFire:
+        case TimelineRecordType::TimeStamp:
+        case TimelineRecordType::Time:
+        case TimelineRecordType::TimeEnd:
+        case TimelineRecordType::ProbeSample:
+        case TimelineRecordType::ConsoleProfile:
+        case TimelineRecordType::RequestAnimationFrame:
+        case TimelineRecordType::CancelAnimationFrame:
+        case TimelineRecordType::FireAnimationFrame:
+        case TimelineRecordType::ObserverCallback:
+        case TimelineRecordType::FirstContentfulPaint:
+        case TimelineRecordType::LargestContentfulPaint:
+        case TimelineRecordType::Screenshot:
             return false;
         }
-    default:
+        ASSERT_NOT_REACHED();
+        return false;
+    case TimelineRecordType::Paint:
+        return previousType == TimelineRecordType::Paint || previousType == TimelineRecordType::RenderingFrame;
+    case TimelineRecordType::ScheduleStyleRecalculation:
+    case TimelineRecordType::RecalculateStyles:
+    case TimelineRecordType::InvalidateLayout:
+    case TimelineRecordType::ScheduleLayout:
+    case TimelineRecordType::Layout:
+    case TimelineRecordType::Composite:
+    case TimelineRecordType::TimerInstall:
+    case TimelineRecordType::TimerRemove:
+    case TimelineRecordType::EvaluateScript:
+    case TimelineRecordType::ProbeSample:
+    case TimelineRecordType::RequestAnimationFrame:
+    case TimelineRecordType::CancelAnimationFrame:
+    case TimelineRecordType::FirstContentfulPaint:
+    case TimelineRecordType::LargestContentfulPaint:
+        return previousType == TimelineRecordType::RenderingFrame;
+    case TimelineRecordType::RenderingFrame:
+    case TimelineRecordType::TimeStamp:
+    case TimelineRecordType::Time:
+    case TimelineRecordType::TimeEnd:
+    case TimelineRecordType::ConsoleProfile:
+    case TimelineRecordType::Screenshot:
         return false;
     }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 void InspectorTimelineAgent::addRecordToTimeline(Ref<JSON::Object>&& record, TimelineRecordType type)
@@ -627,6 +675,14 @@ void InspectorTimelineAgent::addRecordToTimeline(Ref<JSON::Object>&& record, Tim
     record->setString("type"_s, Inspector::Protocol::Helpers::getEnumConstantValue(toProtocol(type)));
 
     const TimelineRecordEntry* previousEntry = m_recordStack.isEmpty() ? nullptr : &m_recordStack.last();
+    if (previousEntry && !shouldNestUnder(type, previousEntry->type)) {
+        // Flatten unrelated records into their rendering frame.
+        auto frameIndex = m_recordStack.reverseFindIf([](auto& entry) {
+            return entry.type == TimelineRecordType::RenderingFrame;
+        });
+        previousEntry = frameIndex != notFound ? &m_recordStack[frameIndex] : nullptr;
+    }
+
     if (previousEntry && shouldNestUnder(type, previousEntry->type)) {
         // Nested paint records are an implementation detail and add no information not already contained in the parent.
         if (type == TimelineRecordType::Paint && previousEntry->type == type)

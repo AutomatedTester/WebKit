@@ -70,7 +70,6 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderObjectInlines.h"
 #include "Settings.h"
 #include "StyleExtractor.h"
@@ -166,7 +165,7 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
         renderer->absoluteQuads(highlight.quads);
         for (auto& quad : highlight.quads)
             contentsQuadToCoordinateSystem(mainView, *containingView, quad, coordinateSystem);
-    } else if (isAnyOf<RenderBox, RenderInline>(*renderer)) {
+    } else if (is<RenderBox>(*renderer) || renderer->isInlineBox()) {
         LayoutRect contentBox;
         LayoutRect paddingBox;
         LayoutRect borderBox;
@@ -184,21 +183,20 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
             marginBox = LayoutRect(borderBox.x() - margins.left(), borderBox.y() - margins.top(),
                 borderBox.width() + margins.left() + margins.right(), borderBox.height() + margins.top() + margins.bottom());
         } else {
-            auto& renderInline = downcast<RenderInline>(*renderer);
+            auto& inlineBox = downcast<RenderBoxModelObject>(*renderer);
 
-            // RenderInline's bounding box includes padding and borders, excludes margins.
-            borderBox = renderInline.borderBoxRectInContainer();
-            paddingBox = LayoutRect(borderBox.x() + renderInline.borderLeft(), borderBox.y() + renderInline.borderTop(),
-                borderBox.width() - renderInline.borderLeft() - renderInline.borderRight(), borderBox.height() - renderInline.borderTop() - renderInline.borderBottom());
-            contentBox = LayoutRect(paddingBox.x() + renderInline.paddingLeft(), paddingBox.y() + renderInline.paddingTop(),
-                paddingBox.width() - renderInline.paddingLeft() - renderInline.paddingRight(), paddingBox.height() - renderInline.paddingTop() - renderInline.paddingBottom());
+            // An inline box's bounding box includes padding and borders, excludes margins.
+            borderBox = inlineBox.borderBoxRectInContainer();
+            paddingBox = LayoutRect(borderBox.x() + inlineBox.borderLeft(), borderBox.y() + inlineBox.borderTop(),
+                borderBox.width() - inlineBox.borderLeft() - inlineBox.borderRight(), borderBox.height() - inlineBox.borderTop() - inlineBox.borderBottom());
+            contentBox = LayoutRect(paddingBox.x() + inlineBox.paddingLeft(), paddingBox.y() + inlineBox.paddingTop(),
+                paddingBox.width() - inlineBox.paddingLeft() - inlineBox.paddingRight(), paddingBox.height() - inlineBox.paddingTop() - inlineBox.paddingBottom());
             // Ignore marginTop and marginBottom for inlines.
-            marginBox = LayoutRect(borderBox.x() - renderInline.marginLeft(), borderBox.y(),
-                borderBox.width() + renderInline.horizontalMarginExtent(), borderBox.height());
+            marginBox = LayoutRect(borderBox.x() - inlineBox.marginLeft(), borderBox.y(),
+                borderBox.width() + inlineBox.horizontalMarginExtent(), borderBox.height());
         }
 
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
+        FloatQuad absContentQuad = renderer->localToAbsoluteQuad(FloatRect(contentBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absPaddingQuad = renderer->localToAbsoluteQuad(FloatRect(paddingBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absBorderQuad = renderer->localToAbsoluteQuad(FloatRect(borderBox));
         SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad absMarginQuad = renderer->localToAbsoluteQuad(FloatRect(marginBox));
@@ -344,8 +342,7 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
 
     if (paths.shape.isEmpty()) {
         LayoutRect shapeBounds = shapeOutsideInfo->computedShapePhysicalBoundingBox();
-        // FIXME: Remove suppression once rdar://189998444 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
+        FloatQuad shapeQuad = renderer->localToAbsoluteQuad(FloatRect(shapeBounds));
         contentsQuadToCoordinateSystem(mainView, *containingView, shapeQuad, InspectorOverlay::CoordinateSystem::Document);
         drawOutlinedQuad(context, shapeQuad, shapeHighlightColor, Color::transparentBlack, bounds);
         return;
@@ -1227,12 +1224,12 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     }
 }
 
-static bool LEGACY_NODELETE rendererIsFlexboxItem(RenderObject& renderer)
+NODELETE static bool rendererIsFlexboxItem(RenderObject& renderer)
 {
     return is<RenderFlexibleBox>(renderer.parent()) && !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
 }
 
-static bool LEGACY_NODELETE rendererIsGridItem(RenderObject& renderer)
+NODELETE static bool rendererIsGridItem(RenderObject& renderer)
 {
     if (is<RenderGrid>(renderer.parent()))
         return !renderer.isOutOfFlowPositioned() && !renderer.isExcludedFromNormalLayout();
@@ -2375,7 +2372,7 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
         // Build bounds for each child and collect children on the same logical line.
         {
             auto childRect = renderChild->borderBoxRectInContainer();
-            renderFlex->flipForWritingMode(childRect);
+            renderFlex->blockStartRelativeToPhysical(childRect);
             childRect.expand(renderChild->marginBox());
 
             auto itemBounds = childQuadToRootQuad({ childRect });

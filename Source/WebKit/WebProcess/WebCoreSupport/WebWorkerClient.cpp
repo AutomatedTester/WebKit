@@ -67,7 +67,7 @@ public:
     RefPtr<WebCore::GraphicsContextGL> createGraphicsContextGL(const WebCore::GraphicsContextGLAttributes&) const final;
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    RefPtr<WebCore::WebGPU::GPU> createGPUForWebGPU() const override;
+    RefPtr<WebCore::WebGPUIntegration> createGPUForWebGPU() const override;
 #endif
 private:
     RemoteRenderingBackendProxy& ensureRenderingBackend() const;
@@ -141,16 +141,18 @@ RefPtr<GraphicsContextGL> GPUProcessWebWorkerClient::createGraphicsContextGL(con
     if (!dispatcher)
         return nullptr;
     assertIsCurrent(*dispatcher);
+#if !PLATFORM(COCOA)
     if (!WebProcess::singleton().shouldUseRemoteRenderingForWebGL()) {
         // ANGLE does not support multithreading, so we cannot create in-process contexts in worker threads.
         return nullptr;
     }
+#endif
     return RemoteGraphicsContextGLProxy::create(attributes, protect(ensureRenderingBackend()), *dispatcher);
 }
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> GPUProcessWebWorkerClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> GPUProcessWebWorkerClient::createGPUForWebGPU() const
 {
     RefPtr dispatcher = this->dispatcher();
     if (!dispatcher)
@@ -222,7 +224,7 @@ RefPtr<GraphicsContextGL> WebWorkerClient::createGraphicsContextGL(const Graphic
 #endif
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebCore::WebGPU::GPU> WebWorkerClient::createGPUForWebGPU() const
+RefPtr<WebCore::WebGPUIntegration> WebWorkerClient::createGPUForWebGPU() const
 {
     return nullptr;
 }

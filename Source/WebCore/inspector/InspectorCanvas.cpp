@@ -42,6 +42,7 @@
 #include "FloatPoint.h"
 #include "GPUCanvasContext.h"
 #include "GPUDevice.h"
+#include "GPUSupportedFeatures.h"
 #include "Gradient.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
@@ -55,6 +56,7 @@
 #include "InspectorCanvasAgent.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorInstrumentation.h"
+#include "InspectorObjectIdentifier.h"
 #include "JSCanvasDirection.h"
 #include "JSCanvasFillRule.h"
 #include "JSCanvasLineCap.h"
@@ -73,7 +75,6 @@
 #include "Path2D.h"
 #include "SVGPathUtilities.h"
 #include "StringAdaptors.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include <ranges>
@@ -108,7 +109,7 @@ Ref<InspectorCanvas> InspectorCanvas::create(GPUDevice& device)
 InspectorCanvas::~InspectorCanvas() = default;
 
 InspectorCanvas::InspectorCanvas(CanvasRenderingContext& context)
-    : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
+    : m_identifier(makeString("canvas:"_s, generateInspectorObjectIdentifierString()))
     , m_context(context)
 {
 }
@@ -120,7 +121,7 @@ CanvasRenderingContext* InspectorCanvas::canvasContext() const
 }
 
 InspectorCanvas::InspectorCanvas(GPUDevice& device)
-    : m_identifier(makeString("canvas:"_s, IdentifiersFactory::createIdentifier()))
+    : m_identifier(makeString("canvas:"_s, generateInspectorObjectIdentifierString()))
     , m_context(device)
 {
 }
@@ -702,7 +703,7 @@ Ref<Inspector::Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(b
                 .release();
 
             auto features = JSON::ArrayOf<String>::create();
-            for (const String& feature : device->backing().features().features())
+            for (const String& feature : device->features()->backing().features())
                 features->addItem(feature);
             result->setFeatures(WTF::move(features));
 
@@ -888,7 +889,7 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
             String dataURL = "data:,"_s;
 
             if (RefPtr image = imageElement->sourceImage())
-                dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
+                dataURL = encodeDataURL(image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }), "image/png"_s);
 
             index = indexForData(dataURL);
         },
@@ -956,7 +957,7 @@ int InspectorCanvas::indexForData(DuplicateDataVariant data)
 
             if (RefPtr cachedImage = cssImageValue->image()) {
                 if (RefPtr image = cachedImage->image())
-                    dataURL = encodeDataURL(image->currentNativeImage(DefaultSizing { }.resolve(image->naturalDimensions())), "image/png"_s);
+                    dataURL = encodeDataURL(image->currentNativeImage(ImageDrawDescriptor { DefaultSizing { }.resolve(image->naturalDimensions()) }), "image/png"_s);
             }
 
             index = indexForData(dataURL);

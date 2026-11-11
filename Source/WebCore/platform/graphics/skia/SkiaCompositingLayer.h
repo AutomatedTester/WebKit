@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "AcceleratedAnimations.h"
 #include "BoxExtents.h"
 #include "Color.h"
@@ -35,6 +35,7 @@
 #include "FloatPoint3D.h"
 #include "FloatRect.h"
 #include "FloatRoundedRect.h"
+#include "IntRect.h"
 #include "IntSize.h"
 #include "SkiaCompositingLayer3DRenderingContext.h"
 #include "SkiaCompositingLayerImageSetBatch.h"
@@ -44,7 +45,9 @@
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColorFilter.h>
+#include <skia/core/SkImage.h>
 #include <skia/core/SkM44.h>
+#include <skia/core/SkMatrix.h>
 #include <skia/core/SkPath.h>
 #include <skia/effects/SkImageFilters.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
@@ -63,6 +66,7 @@ class FilterOperations;
 class SkiaBackingStore;
 
 enum class FilterSurfaceAlignment : bool { LocalCoordinates, DevicePixels };
+enum class ShouldReuseFilteredBackdrop : bool { No, Yes };
 
 class SkiaCompositingLayer final : public RefCountedAndCanMakeWeakPtr<SkiaCompositingLayer> {
     WTF_MAKE_TZONE_ALLOCATED(SkiaCompositingLayer);
@@ -107,10 +111,24 @@ public:
     void addDamage(Damage&&);
 #endif
 
+    void damageWholeLayer()
+    {
+#if ENABLE(DAMAGE_TRACKING)
+        if (!damagePropagationEnabled() || m_rect.isEmpty())
+            return;
+
+        if (!m_layerDamage)
+            m_layerDamage = Damage(m_rect.size(), Damage::Mode::Full);
+        else
+            m_layerDamage->makeFull();
+#endif
+    }
+
     void setUseBackingStore(bool, CoordinatedAnimatedBackingStoreClient* = nullptr);
     void updateBackingStore(CoordinatedBackingStoreProxy::Update&&, float);
     bool hasPendingBackingStoreTileUpdates() const;
     void processPendingTileUpdates();
+    bool processPendingTileUpdatesIncludingPreRendered(const Function<bool()>& shouldStopProcessingTiles);
     void setImageBackingStore(CoordinatedImageBackingStore*);
     void setContentsBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
     std::unique_ptr<CoordinatedPlatformLayerBuffer> takeContentsBuffer();
@@ -185,6 +203,12 @@ private:
     };
 #endif
 
+    struct FilteredImage {
+        sk_sp<SkImage> image;
+        SkIRect subset;
+        SkIPoint offset;
+    };
+
     // The damage-collecting walk gathers damage and draws nothing. The painting walk is the reverse.
     struct PaintContext {
 #if ENABLE(DAMAGE_TRACKING)
@@ -209,6 +233,24 @@ private:
         RefPtr<SkiaCompositingLayer> paintingBackdropForLayer;
         bool skipAfterBackdrop { false };
         SkiaCompositingLayerImageSetBatch imageSetBatch;
+
+        // Painting a backdrop walks the backdrop root's subtree, which reaches the earlier backdrop-filter
+        // layers again. Keep their filtered backdrops for the rest of the frame instead of filtering them again.
+        struct FilteredBackdrop {
+            struct Key {
+                const SkiaCompositingLayer* layer { nullptr };
+                TransformationMatrix layerTransform;
+                SkMatrix layerToScaled;
+                FloatRect localBounds;
+                IntRect outputRect;
+
+                bool operator==(const Key&) const = default;
+            };
+
+            Key key;
+            FilteredImage filtered;
+        };
+        Vector<FilteredBackdrop> filteredBackdrops;
     };
 
     struct Filter {
@@ -237,7 +279,7 @@ private:
     bool stopPaintingIntoBackdropIfNeeded(PaintContext&);
     void paintSelfAndChildren(SkCanvas&, PaintContext&);
     void paintWithIntermediateSurface(SkCanvas&, PaintContext&, const IntRect&, SkPaint*, NOESCAPE const PaintFunction&);
-    void paintWithFilter(SkCanvas&, PaintContext&, const TransformationMatrix& layerTransform, const TransformationMatrix& inverseLayerTransform, const FloatRect& localBounds, const SkPaint&, FilterSurfaceAlignment, NOESCAPE const PaintFunction&);
+    void paintWithFilter(SkCanvas&, PaintContext&, const TransformationMatrix& layerTransform, const TransformationMatrix& inverseLayerTransform, const FloatRect& localBounds, const SkPaint&, FilterSurfaceAlignment, NOESCAPE const PaintFunction&, ShouldReuseFilteredBackdrop = ShouldReuseFilteredBackdrop::No);
     FloatSize filterSurfaceScale(const PaintContext&) const;
     void paintWith3DRenderingContext(SkCanvas&, PaintContext&);
     void paintBackdrop(SkCanvas&, PaintContext&);
@@ -251,23 +293,11 @@ private:
     void recursiveCleanUpAfterPaint();
 
     void clipRect(SkCanvas&, const FloatRoundedRect&, const TransformationMatrix& = { });
+    void clipRectToDevicePixels(SkCanvas&, const FloatRoundedRect&, const TransformationMatrix&);
 
     enum class IncludesReplica : bool { No, Yes };
     enum class IncludesFilterOutsets : bool { No, Yes };
     void computeOverlapRegions(ComputeOverlapRegionData&, const TransformationMatrix& accumulatedReplicaTransform, IncludesReplica = IncludesReplica::Yes, IncludesFilterOutsets = IncludesFilterOutsets::Yes);
-
-    void damageWholeLayer()
-    {
-#if ENABLE(DAMAGE_TRACKING)
-        if (!damagePropagationEnabled() || m_rect.isEmpty())
-            return;
-
-        if (!m_layerDamage)
-            m_layerDamage = Damage(m_rect.size(), Damage::Mode::Full);
-        else
-            m_layerDamage->makeFull();
-#endif
-    }
 
     void groupPropertyChanged()
     {
@@ -384,4 +414,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

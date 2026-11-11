@@ -12,6 +12,9 @@
 
 #include "common/span_util.h"
 #include "common/unsafe_buffers.h"
+#include "common/utilities.h"
+#include "libANGLE/Display.h"
+#include "libANGLE/Shader.h"
 #include "libANGLE/renderer/metal/BufferMtl.h"
 #include "libANGLE/renderer/metal/ContextMtl.h"
 #include "libANGLE/renderer/metal/TextureMtl.h"
@@ -38,10 +41,9 @@ bool CompareBlockInfo(const sh::BlockMemberInfo &a, const sh::BlockMemberInfo &b
 size_t GetAlignmentOfUniformGroup(sh::BlockLayoutMap *blockLayoutMap)
 {
     size_t align = 1;
-    for (auto layoutIter = blockLayoutMap->begin(); layoutIter != blockLayoutMap->end();
-         ++layoutIter)
+    for (const auto &layoutEntry : *blockLayoutMap)
     {
-        align = std::max(mtl::GetMetalAlignmentForGLType(layoutIter->second.type), align);
+        align = std::max(mtl::GetMetalAlignmentForGLType(layoutEntry.second.type), align);
     }
     return align;
 }
@@ -349,6 +351,35 @@ class StdMTLBLockLayoutEncoderFactory : public gl::CustomBlockLayoutEncoderFacto
   public:
     sh::BlockLayoutEncoder *makeEncoder() override { return new mtl::BlockLayoutEncoderMTL(); }
 };
+
+// Writes the MSL source given to the Metal compiler, preceded by the compile options and the
+// preprocessor macros it is compiled with.
+void DumpMslShaderSource(const std::string &source,
+                         const std::map<std::string, std::string> &substitutionMacros,
+                         bool disableFastMath,
+                         bool usesInvariance)
+{
+    std::ostringstream content;
+    content << "// disableFastMath: " << disableFastMath
+            << ", preserveInvariance: " << usesInvariance << "\n";
+    for (const auto &macro : substitutionMacros)
+    {
+        content << "#define " << macro.first << " " << macro.second << "\n";
+    }
+    content << source;
+    const std::string dump = content.str();
+
+    std::ostringstream path;
+    const std::string shaderDumpDir = gl::GetShaderDumpFileDirectory();
+    if (!shaderDumpDir.empty())
+    {
+        path << shaderDumpDir << "/";
+    }
+    path << std::hash<std::string>{}(dump) << ".metal";
+
+    writeFile(path.str().c_str(), dump);
+    INFO() << "Dumped Metal shader source: " << path.str();
+}
 }  // anonymous namespace
 
 angle::Result CreateMslShaderLib(mtl::Context *context,
@@ -364,6 +395,13 @@ angle::Result CreateMslShaderLib(mtl::Context *context,
         angle::ObjCPtr<NSError> err;
         const bool disableFastMath      = translatedMslInfo->hasIsnanOrIsinf;
         const bool usesInvariance       = translatedMslInfo->hasInvariant;
+        const angle::FrontendFeatures &frontendFeatures =
+            context->getDisplay()->getDisplay()->getFrontendFeatures();
+        if (frontendFeatures.dumpTranslatedShaders.enabled)
+        {
+            DumpMslShaderSource(*translatedMslInfo->metalShaderSource, substitutionMacros,
+                                disableFastMath, usesInvariance);
+        }
         translatedMslInfo->metalLibrary = libraryCache.getOrCompileShaderLibrary(
             context->getDisplay(), translatedMslInfo->metalShaderSource, substitutionMacros,
             disableFastMath, usesInvariance, &err);
@@ -461,7 +499,7 @@ void ProgramExecutableMtl::saveInterfaceBlockInfo(gl::BinaryOutputStream *stream
     // First, save the number of Ib's to process
     stream->writeInt<unsigned int>((unsigned int)mUniformBlockConversions.size());
     // Next, iterate through all of the conversions.
-    for (auto conversion : mUniformBlockConversions)
+    for (const auto &conversion : mUniformBlockConversions)
     {
         // Write the name of the conversion
         stream->writeString(conversion.first);
@@ -732,9 +770,8 @@ angle::Result ProgramExecutableMtl::initDefaultUniformBlocks(
     const auto &uniforms         = mExecutable->getUniforms();
     const auto &uniformNames     = mExecutable->getUniformNames();
     const auto &uniformLocations = mExecutable->getUniformLocations();
-    for (size_t locSlot = 0; locSlot < uniformLocations.size(); ++locSlot)
+    for (const gl::VariableLocation &location : uniformLocations)
     {
-        const gl::VariableLocation &location = uniformLocations[locSlot];
         gl::ShaderMap<sh::BlockMemberInfo> layoutInfo;
 
         if (location.used() && !location.ignored)
@@ -800,10 +837,9 @@ void ProgramExecutableMtl::initUniformBlocksRemapper(const gl::SharedCompiledSha
 {
     std::unordered_map<std::string, UBOConversionInfo> conversionMap;
     const std::vector<sh::InterfaceBlock> ibs = shader->uniformBlocks;
-    for (size_t i = 0; i < ibs.size(); ++i)
+    for (const sh::InterfaceBlock &ib : ibs)
     {
 
-        const sh::InterfaceBlock &ib = ibs[i];
         if (mUniformBlockConversions.find(ib.name) == mUniformBlockConversions.end())
         {
             mtl::BlockLayoutEncoderMTL metalEncoder;
@@ -1044,6 +1080,11 @@ angle::Result ProgramExecutableMtl::getSpecializedShader(
         setConstantValue:&(context->getDisplay()->getFeatures().writeHelperSampleMask.enabled)
                     type:MTLDataTypeBool
                 withName:@"ANGLEWriteHelperSampleMask"];
+    [funcConstants setConstantValue:&(context->getDisplay()
+                                          ->getFeatures()
+                                          .useBarycentricCoordinatesForHelperInvocations.enabled)
+                               type:MTLDataTypeBool
+                           withName:@"ANGLEUseBarycentricCoordinatesForHelperInvocations"];
     ANGLE_TRY(CreateMslShader(context, translatedMslInfo->metalLibrary, SHADER_ENTRY_NAME,
                               funcConstants.get(), &shaderVariant->metalShader));
 

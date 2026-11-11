@@ -47,6 +47,7 @@
 #include <wtf/Ref.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebKit {
@@ -84,7 +85,7 @@ static std::optional<Ref<Inspector::Protocol::BidiScript::RemoteValue>> extractN
     // Extract the handle from session-node property
     RefPtr<JSON::Value> sessionNodeValue;
     String nodeHandle;
-    for (auto& key : nodeObject->keys()) {
+    for (auto& key : borrow(nodeObject->keys())) {
         if (key.startsWith("session-node-"_s)) {
             if (nodeObject->getValue(key, sessionNodeValue) && sessionNodeValue) {
                 nodeHandle = sessionNodeValue->asString();
@@ -293,7 +294,7 @@ void BidiBrowsingContextAgent::close(const BrowsingContext& browsingContext, std
 
 static constexpr Inspector::Protocol::Automation::BrowsingContextPresentation defaultBrowsingContextPresentation = Inspector::Protocol::Automation::BrowsingContextPresentation::Tab;
 
-static Inspector::Protocol::Automation::BrowsingContextPresentation LEGACY_NODELETE browsingContextPresentationFromCreateType(Inspector::Protocol::BidiBrowsingContext::CreateType createType)
+NODELETE static Inspector::Protocol::Automation::BrowsingContextPresentation browsingContextPresentationFromCreateType(Inspector::Protocol::BidiBrowsingContext::CreateType createType)
 {
     switch (createType) {
     case Inspector::Protocol::BidiBrowsingContext::CreateType::Tab:
@@ -378,7 +379,7 @@ Ref<Inspector::Protocol::BidiBrowsingContext::Info> BidiBrowsingContextAgent::ge
 
     auto childrenInfo = JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>::create();
     auto newDepth = maxDepth ? std::optional<uint64_t>(*maxDepth - 1) : std::nullopt;
-    for (auto& child : tree.children)
+    for (auto& child : borrow(tree.children))
         childrenInfo->addItem(getNavigableInfo(child, newDepth, IncludeParentID::No));
 
     info->setChildren(WTF::move(childrenInfo));
@@ -423,7 +424,7 @@ void BidiBrowsingContextAgent::getTree(const BrowsingContext& optionalRoot, std:
 
     RefPtr processPool = session->processPool();
     for (Ref process : borrow(processPool->processes()).get()) {
-        for (Ref page : process->pages()) {
+        for (Ref page : process->mainPages()) {
             if (!page->isControlledByAutomation())
                 continue;
 
@@ -587,7 +588,7 @@ void BidiBrowsingContextAgent::locateNodes(const BrowsingContext& browsingContex
 static constexpr Seconds defaultPageLoadTimeout = 300_s;
 static constexpr ReadinessState defaultReadinessState = ReadinessState::Interactive;
 
-static PageLoadStrategy LEGACY_NODELETE pageLoadStrategyFromReadinessState(ReadinessState state)
+NODELETE static PageLoadStrategy pageLoadStrategyFromReadinessState(ReadinessState state)
 {
     switch (state) {
     case ReadinessState::None:
@@ -634,6 +635,118 @@ void BidiBrowsingContextAgent::navigate(const BrowsingContext& browsingContext, 
     });
 }
 
+// https://w3c.github.io/webdriver/#dfn-parse-a-page-range
+// Ranges are returned as inclusive [lower, upper] pairs, with an upper bound of the maximum value
+// standing for the last page; that bound is only known once the document has been paginated.
+static std::optional<Vector<std::pair<uint64_t, uint64_t>>> parsePrintPageRanges(const JSON::Array& pageRanges)
+{
+    auto parseDecimalInteger = [](StringView string) -> std::optional<uint64_t> {
+        if (string.isEmpty() || string.length() > 16)
+            return std::nullopt;
+        for (auto character : string.codeUnits()) {
+            if (!isASCIIDigit(character))
+                return std::nullopt;
+        }
+        return parseInteger<uint64_t>(string);
+    };
+
+    Vector<std::pair<uint64_t, uint64_t>> ranges;
+    for (const auto& range : pageRanges) {
+        if (auto number = range->asDouble()) {
+            if (!JSC::isInteger(*number) || *number < 0 || *number > JSC::maxSafeInteger())
+                return std::nullopt;
+            auto page = static_cast<uint64_t>(*number);
+            ranges.append({ page, page });
+            continue;
+        }
+
+        auto string = range->asString();
+        if (string.isNull())
+            return std::nullopt;
+
+        const auto rangeParts = string.splitAllowingEmptyEntries('-');
+        if (rangeParts.size() < 1 || rangeParts.size() > 2)
+            return std::nullopt;
+
+        if (rangeParts.size() == 1) {
+            auto page = parseDecimalInteger(rangeParts[0]);
+            if (!page)
+                return std::nullopt;
+            ranges.append({ *page, *page });
+            continue;
+        }
+
+        auto lowerBound = rangeParts[0].isEmpty() ? std::optional<uint64_t> { 1 } : parseDecimalInteger(rangeParts[0]);
+        auto upperBound = rangeParts[1].isEmpty() ? std::optional<uint64_t> { std::numeric_limits<uint64_t>::max() } : parseDecimalInteger(rangeParts[1]);
+        if (!lowerBound || !upperBound || *lowerBound > *upperBound)
+            return std::nullopt;
+        ranges.append({ *lowerBound, *upperBound });
+    }
+    return ranges;
+}
+
+void BidiBrowsingContextAgent::print(const BrowsingContext& browsingContext, std::optional<bool>&& optionalBackground, RefPtr<JSON::Object>&& optionalMargin, const String& optionalOrientation, RefPtr<JSON::Object>&& optionalPage, RefPtr<JSON::Array>&& optionalPageRanges, std::optional<double>&& optionalScale, std::optional<bool>&& optionalShrinkToFit, CommandCallback<String>&& callback)
+{
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-print
+    RefPtr session = m_session;
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
+
+    // The "get a navigable" algorithm uses `no such frame` for both top-level and child contexts.
+    // https://w3c.github.io/webdriver-bidi/#get-a-navigable
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(browsingContext.isEmpty(), FrameNotFound);
+
+    // https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextprintmarginparameters
+    WebCore::FloatBoxExtent marginInCentimeters { 1.f, 1.f, 1.f, 1.f };
+    if (optionalMargin) {
+        for (auto [key, side] : { std::pair { "top"_s, WebCore::BoxSide::Top }, std::pair { "right"_s, WebCore::BoxSide::Right }, std::pair { "bottom"_s, WebCore::BoxSide::Bottom }, std::pair { "left"_s, WebCore::BoxSide::Left } }) {
+            if (RefPtr value = optionalMargin->getValue(key)) {
+                auto margin = value->asDouble();
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!margin, InvalidParameter);
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(*margin < 0, InvalidParameter);
+                marginInCentimeters.at(side) = clampTo<float>(*margin);
+            }
+        }
+    }
+
+    // https://w3c.github.io/webdriver-bidi/#cddl-type-browsingcontextprintpageparameters
+    // The minimum page size is 1pt, (2.54 / 72) cm.
+    static constexpr double minimumPageSideInCentimeters = 0.0352;
+    double pageWidthInCentimeters = 21.59;
+    double pageHeightInCentimeters = 27.94;
+    if (optionalPage) {
+        for (auto [key, side] : { std::pair { "width"_s, &pageWidthInCentimeters }, std::pair { "height"_s, &pageHeightInCentimeters } }) {
+            if (RefPtr value = optionalPage->getValue(key)) {
+                auto length = value->asDouble();
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!length, InvalidParameter);
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(*length < minimumPageSideInCentimeters, InvalidParameter);
+                *side = *length;
+            }
+        }
+    }
+
+    // `orientation` is modeled as an optional string so we can reject invalid provided values.
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!optionalOrientation.isNull() && optionalOrientation != "portrait"_s && optionalOrientation != "landscape"_s, InvalidParameter);
+    if (optionalOrientation == "landscape"_s)
+        std::swap(pageWidthInCentimeters, pageHeightInCentimeters);
+
+    auto scale = optionalScale.value_or(1);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(scale < 0.1 || scale > 2, InvalidParameter);
+
+    Vector<std::pair<uint64_t, uint64_t>> pageRanges;
+    if (optionalPageRanges) {
+        auto parsedPageRanges = parsePrintPageRanges(*optionalPageRanges);
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!parsedPageRanges, InvalidParameter);
+        pageRanges = WTF::move(*parsedPageRanges);
+    }
+
+    auto handles = session->extractBrowsingContextHandles(browsingContext);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(handles);
+    auto [pageHandle, frameHandle] = handles.value();
+
+    WebCore::FloatSize pageSizeInCentimeters { clampTo<float>(pageWidthInCentimeters), clampTo<float>(pageHeightInCentimeters) };
+    session->printBidiPage(pageHandle, frameHandle, optionalBackground.value_or(false), pageSizeInCentimeters, marginInCentimeters, scale, optionalShrinkToFit.value_or(true), WTF::move(pageRanges), WTF::move(callback));
+}
+
 void BidiBrowsingContextAgent::reload(const BrowsingContext& browsingContext, std::optional<bool>&& optionalIgnoreCache, std::optional<ReadinessState>&& optionalReadinessState, CommandCallbackOf<String, Inspector::Protocol::BidiBrowsingContext::NavigationID>&& callback)
 {
     RefPtr session = m_session.get();
@@ -658,12 +771,34 @@ void BidiBrowsingContextAgent::reload(const BrowsingContext& browsingContext, st
     });
 }
 
-void BidiBrowsingContextAgent::traverseHistory(const BrowsingContext& browsingContext, int delta, CommandCallback<void>&& callback)
+void BidiBrowsingContextAgent::traverseHistory(const BrowsingContext& browsingContext, double delta, CommandCallback<void>&& callback)
 {
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-traverseHistory
     RefPtr session = m_session.get();
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
 
-    session->traverseHistoryInBrowsingContext(browsingContext, delta, WTF::move(callback));
+    // The delta is a js-int: an integer within the safe integer range. The protocol declares it as a
+    // number rather than an integer because an integer parameter is read with JSON::Value::asInteger(),
+    // which truncates, so 1.5 would arrive as 1 and out-of-range values would wrap before they could be
+    // rejected. It is narrowed to int only once it has been validated.
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!JSC::isSafeInteger(delta), InvalidParameter, "delta must be an integer"_s);
+
+    // The "get a navigable" algorithm uses `no such frame` for both top-level and child contexts.
+    // https://w3c.github.io/webdriver-bidi/#get-a-navigable
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(browsingContext.isEmpty(), FrameNotFound);
+
+    auto handles = session->extractBrowsingContextHandles(browsingContext);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(handles);
+    auto [pageHandle, frameHandle] = handles.value();
+
+    // Only a top-level traversable has a session history to traverse.
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!frameHandle.isEmpty(), InvalidParameter, "The browsing context is not a top-level browsing context"_s);
+
+    // A safe integer can be as large as 2^53 - 1, beyond the range of int, so this guards the cast below.
+    // No session history is anywhere near that long, so such a delta cannot name an entry.
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(std::abs(delta) > std::numeric_limits<int>::max(), NoSuchHistoryEntry);
+
+    session->traverseHistoryInBrowsingContext(pageHandle, static_cast<int>(delta), WTF::move(callback));
 }
 
 static std::optional<int> parseNonNegativeInteger(const JSON::Object& object, const String& key)

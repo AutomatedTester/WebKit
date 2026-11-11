@@ -257,6 +257,47 @@ WheelEventHandlingResult ScrollingTree::handleWheelEventWithNode(const PlatformW
     return WheelEventHandlingResult::unhandled();
 }
 
+#if PLATFORM(MAC)
+void ScrollingTree::stopSpringAnimationsForWheelEvent(const PlatformWheelEvent& wheelEvent)
+{
+    // Spring animations last long enough that the user may want to take over before they finish, by touching the trackpad
+    // or by scrolling. A nested scroller may handle the event, so stop the springs of all the scrollers that enclose it too.
+    if (!wheelEvent.isGestureStart() && !wheelEvent.isNonGestureEvent())
+        return;
+
+    // Avoid hit testing when nothing is animating.
+    if (!hasNodeWithActiveScrollAnimations())
+        return;
+
+    Locker locker { m_treeLock };
+
+    RefPtr rootNode = m_rootNode;
+    if (!rootNode)
+        return;
+
+    FloatPoint position;
+    {
+        Locker locker { m_treeStateLock };
+        position = rootNode->viewToContentsPoint(wheelEvent.position(), m_treeState.mainFrameScrollPosition);
+    }
+
+    RefPtr node = scrollingNodeForPoint(position);
+    while (node) {
+        if (RefPtr scrollingNode = dynamicDowncast<ScrollingTreeScrollingNode>(*node))
+            scrollingNode->stopSpringAnimation();
+
+        if (RefPtr scrollProxyNode = dynamicDowncast<ScrollingTreeOverflowScrollProxyNode>(*node)) {
+            if (RefPtr relatedNode = nodeForID(scrollProxyNode->overflowScrollingNodeID())) {
+                node = WTF::move(relatedNode);
+                continue;
+            }
+        }
+
+        node = node->parent();
+    }
+}
+#endif
+
 RefPtr<ScrollingTreeNode> ScrollingTree::scrollingNodeForPoint(FloatPoint)
 {
     ASSERT(asyncFrameOrOverflowScrollingEnabled());
@@ -551,13 +592,13 @@ bool ScrollingTree::updateTreeFromStateNodeRecursive(const ScrollingStateNode* s
         auto parentIt = m_nodeMap.find(*parentNodeID);
         ASSERT_WITH_SECURITY_IMPLICATION(parentIt != m_nodeMap.end());
         if (parentIt != m_nodeMap.end()) {
-            RefPtr parent = parentIt->value.get();
+            Ref parent = parentIt->value;
 
             RefPtr oldParent = node->parent();
             if (oldParent)
                 oldParent->removeChild(*node);
 
-            if (oldParent != parent)
+            if (oldParent != parent.ptr())
                 node->setParent(parent.copyRef());
 
             parent->appendChild(*node);

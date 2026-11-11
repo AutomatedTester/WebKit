@@ -31,6 +31,7 @@
 #include "compiler/translator/tree_ops/DeferGlobalInitializers.h"
 #include "compiler/translator/tree_ops/EmulateGLFragColorBroadcast.h"
 #include "compiler/translator/tree_ops/EmulateMultiDrawShaderBuiltins.h"
+#include "compiler/translator/tree_ops/EnsureLoopForwardProgress.h"
 #include "compiler/translator/tree_ops/ExpandFragmentOutputsToVec4.h"
 #include "compiler/translator/tree_ops/FoldConstantSwitch.h"
 #include "compiler/translator/tree_ops/FoldExpressions.h"
@@ -51,7 +52,6 @@
 #include "compiler/translator/tree_ops/glsl/WrapStructConstructors.h"
 #include "compiler/translator/tree_ops/glsl/apple/AddAndTrueToLoopCondition.h"
 #include "compiler/translator/tree_ops/glsl/apple/UnfoldShortCircuitAST.h"
-#include "compiler/translator/tree_ops/msl/EnsureLoopForwardProgress.h"
 #include "compiler/translator/tree_util/FindSymbolNode.h"
 #include "compiler/translator/tree_util/IntermNodePatternMatcher.h"
 #include "compiler/translator/tree_util/IntermNode_util.h"
@@ -802,13 +802,6 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     // Folding should only be able to generate warnings.
     ASSERT(mDiagnostics.numErrors() == 0);
 
-    // Fold switch statements with constant expression.  Run after FoldExpressions because the
-    // switch selector may need folding.
-    if (!FoldConstantSwitch(this, root, &mSymbolTable))
-    {
-        return false;
-    }
-
     const bool hasAnyClipCullDistance =
         parseContext.isExtensionEnabled(TExtension::ANGLE_clip_cull_distance) ||
         parseContext.isExtensionEnabled(TExtension::EXT_clip_cull_distance) ||
@@ -974,7 +967,10 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     // Needs to run before SimplifyLoopConditions to be able to detect |for| loops correctly.
     if (compileOptions.ensureLoopForwardProgress)
     {
-        if (!EnsureLoopForwardProgress(this, root))
+        EnsureLoopForwardProgressMode mode = mOutputType == SH_MSL_METAL_OUTPUT
+                                                 ? EnsureLoopForwardProgressMode::Volatile
+                                                 : EnsureLoopForwardProgressMode::Counter;
+        if (!EnsureLoopForwardProgress(this, root, mode))
         {
             return false;
         }
@@ -1029,6 +1025,20 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         return false;
     }
 
+    // Fold switch statements with constant expression.  Run after FoldExpressions because the
+    // switch selector may need folding.  This pass may leave dead code, so prune it again
+    // afterwards.
+    mValidateASTOptions.validateNoStatementsAfterBranch = false;
+    if (!FoldConstantSwitch(this, root, &mSymbolTable))
+    {
+        return false;
+    }
+    if (!PruneNoOps(this, root, &mSymbolTable))
+    {
+        return false;
+    }
+    mValidateASTOptions.validateNoStatementsAfterBranch = true;
+
     if (!RemoveUnreferencedVariables(this, root, &mSymbolTable))
     {
         return false;
@@ -1061,14 +1071,6 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
     if (compileOptions.scalarizeVecAndMatConstructorArgs)
     {
         if (!ScalarizeVecAndMatConstructorArgs(this, root, &mSymbolTable))
-        {
-            return false;
-        }
-    }
-
-    if (compileOptions.avoidComplexExpressionsInStructConstructor)
-    {
-        if (!WrapStructConstructors(this, root, &mSymbolTable))
         {
             return false;
         }
@@ -1154,6 +1156,15 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
 
         if (!InitializeUninitializedLocals(this, root, getShaderVersion(), canUseLoopsToInitialize,
                                            &getSymbolTable()))
+        {
+            return false;
+        }
+    }
+
+    if (compileOptions.avoidComplexExpressionsInStructConstructor)
+    {
+        // Must run after InitializeUninitializedLocals, as that would introduce struct constructors
+        if (!WrapStructConstructors(this, root, &mSymbolTable))
         {
             return false;
         }
@@ -1814,16 +1825,16 @@ const ShBuiltInResources &TCompiler::getResources() const
 bool TCompiler::isVaryingDefined(const char *varyingName)
 {
     ASSERT(mVariablesCollected);
-    for (size_t ii = 0; ii < mInputVaryings.size(); ++ii)
+    for (const ShaderVariable &inputVarying : mInputVaryings)
     {
-        if (mInputVaryings[ii].name == varyingName)
+        if (inputVarying.name == varyingName)
         {
             return true;
         }
     }
-    for (size_t ii = 0; ii < mOutputVaryings.size(); ++ii)
+    for (const ShaderVariable &outputVarying : mOutputVaryings)
     {
-        if (mOutputVaryings[ii].name == varyingName)
+        if (outputVarying.name == varyingName)
         {
             return true;
         }

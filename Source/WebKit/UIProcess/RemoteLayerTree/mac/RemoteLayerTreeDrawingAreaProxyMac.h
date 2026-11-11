@@ -55,7 +55,7 @@ public:
     DisplayLink& displayLink();
     DisplayLink* existingDisplayLink();
 
-    void LEGACY_NODELETE updateZoomTransactionID();
+    NODELETE void updateZoomTransactionID();
     std::optional<WebCore::PlatformLayerIdentifier> pageScalingLayerID() { return m_pageScalingLayerID.asOptional(); }
     std::optional<WebCore::PlatformLayerIdentifier> pageScrollingLayerID() { return m_pageScrollingLayerID.asOptional(); }
     std::optional<WebCore::PlatformLayerIdentifier> scrolledContentsLayerID() const { return m_scrolledContentsLayerID.asOptional(); }
@@ -68,7 +68,7 @@ private:
     RemoteLayerTreeDrawingAreaProxyMac(WebPageProxy&, WebProcessProxy&);
 
     WebCore::DelegatedScrollingMode delegatedScrollingMode() const override;
-    std::unique_ptr<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;
+    Ref<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const override;
 
     bool isRemoteLayerTreeDrawingAreaProxyMac() const override { return true; }
 
@@ -96,7 +96,9 @@ private:
     // anchored by the scroll position instead.
     void applyDelegatedZoomToLayer(double scale, WebCore::FloatPoint originInVisibleRect);
     void animateDelegatedZoomSnapBack(double fromScale, WebCore::FloatPoint fromLayerPosition, double toScale, WebCore::FloatPoint originInVisibleRect);
+    void didFinishDelegatedZoomSnapBack();
     bool hasDelegatedZoomSnapAnimation() const;
+    void reassertDelegatedZoom(double scaleToApply);
     void removeDelegatedZoomFromLayer();
     void commitDelegatedZoom(double scale, WebCore::FloatPoint originInVisibleRect);
 
@@ -114,6 +116,8 @@ private:
 
     // The scrolled-contents layer position the scrolling thread would write for this scale and scroll position.
     WebCore::FloatPoint scrolledContentsLayerPositionForScale(double scale, WebCore::FloatPoint scrollPosition) const;
+
+    bool uiProcessOwnsScrolledContentsLayerPosition() const;
 
     enum class IsStableState : bool { No, Yes };
     void sendVisibleContentRectUpdate(double scale, IsStableState);
@@ -197,6 +201,7 @@ private:
     std::optional<double> m_delegatedZoomAppliedScale;
     std::optional<WebCore::FloatPoint> m_delegatedZoomAppliedLayerPosition;
     unsigned m_commitsSinceCommittingDelegatedZoom { 0 };
+    double m_pageScaleFactorFromLastCommit { 1 };
     // In case the presentation update callback never arrives. Deliberately generous, since releasing the scale
     // too early is the bug we're guarding against.
     static constexpr unsigned maxCommitsToHoldDelegatedZoomScale { 60 };

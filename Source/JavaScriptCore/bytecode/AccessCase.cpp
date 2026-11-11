@@ -246,7 +246,7 @@ RefPtr<AccessCase> AccessCase::createTransition(
             return nullptr;
 
         // If we are (re)allocating inline, jsc needs two extra scratchGPRs
-        if (!oldStructure->couldHaveIndexingHeader() && GPRInfo::numberOfRegisters < (requiredRegisters + 2))
+        if (oldStructure->canAllocatePropertyStorageInJIT() && GPRInfo::numberOfRegisters < (requiredRegisters + 2))
             return nullptr;
     }
 
@@ -991,7 +991,7 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedNullKeyTransition:
     case IndexedTrueKeyTransition:
     case IndexedFalseKeyTransition:
-        doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && structure()->couldHaveIndexingHeader();
+        doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && !structure()->canAllocatePropertyStorageInJIT();
         break;
     case Getter:
     case Setter:
@@ -1405,6 +1405,8 @@ bool AccessCase::isStillLive(VM& vm) const
     forEachDependentCell(vm, [&](JSCell* cell) {
         isValid &= vm.heap.isMarked(cell);
     });
+    if (m_identifier && m_identifier.isCell())
+        isValid &= vm.heap.isMarked(m_identifier.cell());
     return isValid;
 }
 

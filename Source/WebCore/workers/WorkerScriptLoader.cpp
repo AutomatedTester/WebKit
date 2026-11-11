@@ -179,8 +179,10 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     } else if (auto* activeServiceWorker = scriptExecutionContext.activeServiceWorker())
         options.serviceWorkerRegistrationIdentifier = activeServiceWorker->registrationIdentifier();
 
-    if (m_destination == FetchOptions::Destination::Sharedworker)
+    if (m_destination == FetchOptions::Destination::Sharedworker) {
         m_userAgentForSharedWorker = scriptExecutionContext.userAgent(m_url);
+        m_navigatorPlatformForSharedWorker = scriptExecutionContext.navigatorPlatform();
+    }
 
     // During create, callbacks may happen which remove the last reference to this object.
     Ref<WorkerScriptLoader> protectedThis(*this);
@@ -293,12 +295,9 @@ void WorkerScriptLoader::didReceiveData(const SharedBuffer& buffer)
     }
 #endif
 
-    if (!m_decoder) {
-        // FIXME: Share more code with CachedScript / CachedScriptSourceProvider.
-        Ref decoder = TextResourceDecoder::create("text/javascript"_s, "UTF-8"_s);
-        decoder->setAlwaysUseUTF8();
-        lazyInitialize(m_decoder, WTF::move(decoder));
-    }
+    // FIXME: Share more code with CachedScript / CachedScriptSourceProvider.
+    if (!m_decoder)
+        lazyInitialize(m_decoder, TextResourceDecoder::createUTF8());
 
     if (buffer.isEmpty())
         return;

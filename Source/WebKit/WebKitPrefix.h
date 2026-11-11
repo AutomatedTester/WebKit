@@ -168,7 +168,6 @@
 #include <JavaScriptCore/HeapCellInlines.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/IndexingHeader.h>
-#include <JavaScriptCore/IndexingHeaderInlines.h>
 #include <JavaScriptCore/InferredValue.h>
 #include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/IterationKind.h>
@@ -344,8 +343,8 @@
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/Image.h>
 #include <WebCore/ImageAdapter.h>
+#include <WebCore/ImageDrawDescriptor.h>
 #include <WebCore/ImageOrientation.h>
-#include <WebCore/ImagePaintingOptions.h>
 #include <WebCore/ImageTypes.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/IntRect.h>

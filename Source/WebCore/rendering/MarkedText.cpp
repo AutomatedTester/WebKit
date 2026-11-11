@@ -57,11 +57,10 @@ Vector<MarkedText> MarkedText::subdivide(const Vector<MarkedText>& markedTexts, 
     };
 
     // 1. Build table of all offsets.
-    Vector<Offset> offsets;
     ASSERT(markedTexts.size() < std::numeric_limits<unsigned>::max() / 2);
     unsigned numberOfMarkedTexts = markedTexts.size();
     unsigned numberOfOffsets = 2 * numberOfMarkedTexts;
-    offsets.reserveInitialCapacity(numberOfOffsets);
+    Vector<Offset> offsets(ReserveCapacityTag { }, numberOfOffsets);
     for (auto& markedText : markedTexts) {
         offsets.append({ Offset::Begin, markedText.startOffset, &markedText });
         offsets.append({ Offset::End, markedText.endOffset, &markedText });
@@ -74,8 +73,7 @@ Vector<MarkedText> MarkedText::subdivide(const Vector<MarkedText>& markedTexts, 
     });
 
     // 3. Compute intersection.
-    Vector<MarkedText> result;
-    result.reserveInitialCapacity(numberOfMarkedTexts);
+    Vector<MarkedText> result(ReserveCapacityTag { }, numberOfMarkedTexts);
     HashSet<CheckedPtr<const MarkedText>> processedMarkedTexts;
     unsigned offsetSoFar = offsets[0].value;
     for (unsigned i = 1; i < numberOfOffsets; ++i) {
@@ -117,7 +115,8 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
                 continue;
             if (renderStyle->textDecorationLineInEffect().isNone() && phase == PaintPhase::Decoration)
                 continue;
-            for (auto& highlightRange : highlightRegistry->map().get(highlightName)->highlightRanges()) {
+            RefPtr highlight = highlightRegistry->map().get(highlightName);
+            for (auto& highlightRange : highlight->highlightRangesFor(renderer)) {
                 if (!renderHighlight.setRenderRange(highlightRange))
                     continue;
                 if (auto* staticRange = dynamicDowncast<StaticRange>(highlightRange->range()); staticRange
@@ -138,7 +137,7 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
                 auto [highlightStart, highlightEnd] = renderHighlight.rangeForTextBox(renderer, selectableRange);
 
                 if (highlightStart < highlightEnd) {
-                    int currentPriority = highlightRegistry->map().get(highlightName)->priority();
+                    int currentPriority = highlight->priority();
                     // If we can just append it to the end, do that instead.
                     if (markedTexts.isEmpty() || markedTexts.last().priority <= currentPriority)
                         markedTexts.append({ highlightStart, highlightEnd, MarkedText::Type::Highlight, nullptr, highlightName, currentPriority });
@@ -159,7 +158,7 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
 
     auto appendMarkedTextHighlights = [&](const HighlightRegistry& registry, MarkedText::Type markedTextType) {
         for (Ref highlight : registry.map().values()) {
-            for (Ref highlightRange : highlight->highlightRanges()) {
+            for (Ref highlightRange : highlight->highlightRangesFor(renderer)) {
                 if (!renderHighlight.setRenderRange(highlightRange))
                     continue;
 
@@ -223,8 +222,7 @@ Vector<MarkedText> MarkedText::collectForDocumentMarkers(const RenderText& rende
         }
     };
 
-    Vector<MarkedText> markedTexts;
-    markedTexts.reserveInitialCapacity(markers.size());
+    Vector<MarkedText> markedTexts(ReserveCapacityTag { }, markers.size());
 
     // Give any document markers that touch this run a chance to draw before the text has been drawn.
     // Note end() points at the last char, not one past it like endOffset and ranges do.
@@ -371,8 +369,7 @@ Vector<MarkedText> MarkedText::collectForDictationStreamingOpacity(const RenderT
     if (markers.isEmpty())
         return { };
 
-    Vector<MarkedText> result;
-    result.reserveInitialCapacity(markers.size());
+    Vector<MarkedText> result(ReserveCapacityTag { }, markers.size());
     for (auto& marker : markers) {
         auto [clampedStart, clampedEnd] = selectableRange.clamp(marker->startOffset(), marker->endOffset());
         if (clampedStart < clampedEnd)

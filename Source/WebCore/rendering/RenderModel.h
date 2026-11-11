@@ -44,13 +44,15 @@ public:
     RenderModel(HTMLModelElement&, Style::ComputedStyle&&);
     virtual ~RenderModel();
 
-    HTMLModelElement& LEGACY_NODELETE modelElement() const;
+    NODELETE HTMLModelElement& modelElement() const;
 
 private:
     void element() const = delete;
     ASCIILiteral renderName() const final { return "RenderModel"_s; }
 
-    bool LEGACY_NODELETE requiresLayer() const final;
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
+    NODELETE bool requiresLayer() const final;
     void updateFromElement() final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
     void paintReplaced(PaintInfo&, const LayoutPoint&) final;

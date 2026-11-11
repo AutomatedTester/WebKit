@@ -32,7 +32,7 @@ namespace JSC { namespace FTL {
 
 using namespace DFG;
 
-static bool LEGACY_NODELETE verboseCapabilities()
+NODELETE static bool verboseCapabilities()
 {
     return verboseCompilationEnabled() || Options::verboseFTLFailure();
 }
@@ -201,6 +201,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case Construct:
     case DirectConstruct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case TailCallVarargs:
     case TailCallVarargsInlinedCaller:
@@ -215,6 +216,8 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case CallCustomAccessorSetter:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case ValueToInt32:
     case DFG::Branch:
     case ToBoolean:
@@ -322,7 +325,6 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case IsUndefinedOrNull:
     case IsBoolean:
     case IsNumber:
-    case IsBigInt:
     case NumberIsInteger:
     case GlobalIsNaN:
     case NumberIsNaN:
@@ -416,6 +418,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case StringReplace:
     case StringReplaceAll:
     case StringReplaceRegExp:
@@ -522,6 +525,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case DataViewGetInt:
     case DataViewGetFloat:
     case DataViewSet:
+    case TypedArraySet:
     case DateNow:
     case DateGetStorage:
     case DateGetInt32OrNaN:
@@ -618,8 +622,6 @@ CapabilityLevel canCompile(Graph& graph)
                 case StringObjectUse:
                 case StringOrStringObjectUse:
                 case SymbolUse:
-                case AnyBigIntUse:
-                case BigInt32Use:
                 case HeapBigIntUse:
                 case DateObjectUse:
                 case MapObjectUse:

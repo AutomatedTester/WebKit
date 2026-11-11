@@ -345,7 +345,7 @@ public:
 
     [[nodiscard]] T& at(size_t i) LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -357,7 +357,7 @@ public:
     }
     [[nodiscard]] const T& at(size_t i) const LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             const_cast<MarkedVector*>(this)->OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -378,11 +378,15 @@ public:
         m_size = 0;
     }
 
-    void append(T v)
+    ALWAYS_INLINE void append(T v)
     {
         ASSERT(m_size <= m_capacity);
-        if (m_size == m_capacity || (mallocBase() && !m_markSet)) {
-            if (slowAppend<T>(v) == Status::Overflowed)
+        // Only a value that refers to a cell needs this out of line storage to be marked.
+        bool needsMarking = true;
+        if constexpr (std::is_same_v<T, JSValue>)
+            needsMarking = v.isCell();
+        if (m_size == m_capacity || (!m_markSet && needsMarking && mallocBase())) [[unlikely]] {
+            if (slowAppend<T>(v) == Status::Overflowed) [[unlikely]]
                 this->overflowed();
             return;
         }

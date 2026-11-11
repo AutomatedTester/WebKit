@@ -44,7 +44,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static inline bool LEGACY_NODELETE computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
+NODELETE static inline bool computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
 {
     if (session.networkProcess().sessionIsControlledByAutomation(session.sessionID()))
         return true;
@@ -184,6 +184,14 @@ void NetworkTaskCocoa::setCookieTransformForThirdPartyRequest(const WebCore::Res
 }
 #endif
 
+static const Vector<String>& cnameCloakingExemptTargetPatterns(const URL& firstPartyURL)
+{
+    static MainRunLoopNeverDestroyed<HashMap<String, Vector<String>>> patternsByFirstPartyHost;
+    return patternsByFirstPartyHost.get().ensure(firstPartyURL.host().toString(), [&] {
+        return Quirks::cnameCloakingCookieCapExemptTargetPatterns(firstPartyURL);
+    }).iterator->value;
+}
+
 void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::ResourceRequest& request)
 {
     if (!shouldApplyCookiePolicyForThirdPartyCloaking())
@@ -210,6 +218,7 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
     protect(task()).get()._cookieTransformCallback = makeBlockPtr([
         requestURL = crossThreadCopy(request.url())
         , firstPartyURL = crossThreadCopy(firstPartyURL)
+        , exemptCNAMETargetPatterns = crossThreadCopy(cnameCloakingExemptTargetPatterns(firstPartyURL))
         , firstPartyHostCNAME = crossThreadCopy(networkSession->firstPartyHostCNAMEDomain(firstPartyHostName))
         , firstPartyAddress = crossThreadCopy(networkSession->firstPartyHostIPAddress(firstPartyHostName))
         , thirdPartyCNAMEDomainForTesting = crossThreadCopy(m_networkSession->thirdPartyCNAMEDomainForTesting())
@@ -242,12 +251,11 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
                 // We only apply this quirk if we're already on Google or youtube.com;
                 // otherwise, we would've already bailed at the top of this method, due to
                 // the request being third party.
-                auto hostName = requestURL.host();
-                if (hostName == "accounts.google.com"_s)
+                if (firstPartyRegistrableDomainName == "google.com"_s)
                     return true;
 
                 return (firstPartyRegistrableDomainName.startsWith("google."_s) || firstPartyRegistrableDomainName == "youtube.com"_s)
-                    && hostName == makeString("consent."_s, firstPartyRegistrableDomainName);
+                    && requestURL.host() == makeString("consent."_s, firstPartyRegistrableDomainName);
             };
 
             if (shouldCapCookieExpiryForThirdPartyIPAddress(*remoteAddress, *firstPartyAddress) && !needsThirdPartyIPAddressQuirk(requestURL, firstPartyRegistrableDomainName)) {
@@ -263,10 +271,21 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
             return cookiesSetInResponse;
         }
 
+        auto isExemptCNAMETarget = [&] {
+            if (exemptCNAMETargetPatterns.isEmpty())
+                return false;
+            String cnameHostName;
+            if (RetainPtr lastResolvedCNAMEInChain = [[task _resolvedCNAMEChain] lastObject])
+                cnameHostName = lastResolvedCNAMEInChain.get();
+            if (cnameHostName.isEmpty())
+                cnameHostName = cnameDomain.string();
+            return Quirks::anyPatternMatchesCNAMETarget(exemptCNAMETargetPatterns, cnameHostName);
+        };
+
         // CNAME cloaking is a first-party sub resource that resolves
         // through a CNAME that differs from the first-party domain and
         // also differs from the top frame host's CNAME, if one exists.
-        if (!cnameDomain.matches(firstPartyURL) && (!firstPartyHostCNAME || cnameDomain != *firstPartyHostCNAME)) {
+        if (!cnameDomain.matches(firstPartyURL) && (!firstPartyHostCNAME || cnameDomain != *firstPartyHostCNAME) && !isExemptCNAMETarget()) {
             // Don't use RetainPtr here. This array has to be retained and
             // auto released to not be released before returned to the code
             // executing the block.
@@ -323,8 +342,16 @@ WebCore::ThirdPartyCookieBlockingDecision NetworkTaskCocoa::requestThirdPartyCoo
     auto thirdPartyCookieBlockingDecision = storedCredentialsPolicy() == WebCore::StoredCredentialsPolicy::EphemeralStateless ? WebCore::ThirdPartyCookieBlockingDecision::All : WebCore::ThirdPartyCookieBlockingDecision::None;
     if (CheckedPtr networkStorageSession = protect(m_networkSession)->networkStorageSession()) {
         if (!NetworkStorageSession::shouldBlockCookies(thirdPartyCookieBlockingDecision))
-            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), webPageProxyID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByDedicatedWorker(), navigationLosesFrameSpecificStorageAccess());
+            thirdPartyCookieBlockingDecision = networkStorageSession->thirdPartyCookieBlockingDecisionForRequest(request, frameID(), webPageProxyID(), shouldRelaxThirdPartyCookieBlocking(), NetworkSession::isRequestToKnownCrossSiteTracker(request), isInitiatedByWorker(), navigationLosesFrameSpecificStorageAccess());
     }
+
+    auto latchedDecision = request.latchedThirdPartyCookieBlockingDecision();
+    if (latchedDecision == WebCore::ThirdPartyCookieBlockingDecision::All)
+        return WebCore::ThirdPartyCookieBlockingDecision::All;
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    if (latchedDecision == WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned && thirdPartyCookieBlockingDecision == WebCore::ThirdPartyCookieBlockingDecision::None)
+        return WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned;
+#endif
 
     return thirdPartyCookieBlockingDecision;
 }
@@ -382,6 +409,14 @@ void NetworkTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&& re
 #endif
     } else if (storedCredentialsPolicy() != WebCore::StoredCredentialsPolicy::EphemeralStateless && needsFirstPartyCookieBlockingLatchModeQuirk(request.firstPartyForCookies(), request.url(), redirectResponse.url()))
         unblockCookies();
+
+    if (m_hasBeenSetToUseStatelessCookieStorage)
+        request.setLatchedThirdPartyCookieBlockingDecision(WebCore::ThirdPartyCookieBlockingDecision::All);
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    else if (m_hasBeenSetToAllowOnlyPartitionedCookies)
+        request.setLatchedThirdPartyCookieBlockingDecision(WebCore::ThirdPartyCookieBlockingDecision::AllExceptPartitioned);
+#endif
+
 #if !RELEASE_LOG_DISABLED
     if (protect(m_networkSession)->shouldLogCookieInformation())
         RELEASE_LOG_IF(isAlwaysOnLoggingAllowed(), Network, "%p - NetworkTaskCocoa::willPerformHTTPRedirection::logCookieInformation: pageID=%" PRIu64 ", frameID=%" PRIu64 ", taskID=%lu: %s cookies for redirect URL %s", this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, (unsigned long)[task() taskIdentifier], (m_hasBeenSetToUseStatelessCookieStorage ? "Blocking" : "Not blocking"), request.url().string().utf8());

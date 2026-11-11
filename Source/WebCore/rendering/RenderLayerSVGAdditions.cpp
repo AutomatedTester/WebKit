@@ -125,7 +125,7 @@ public:
         m_maskLayer.reset();
     }
 
-    bool paintsIntoMaskLayer() const { return !!m_maskLayer; }
+    NODELETE bool paintsIntoMaskLayer() const { return !!m_maskLayer; }
 
 private:
     void paintPhase(RenderLayerModelObject& renderer, PaintPhase phase, const LayoutPoint& paintOffset)
@@ -156,7 +156,7 @@ bool RenderLayer::hasVisibleContentForPaintingForSVG() const
     // container for mask/clipPath/marker/pattern or the referenced content itself for feImage. Any
     // layer up the chain carrying the flag means we paint this resource subtree now, so it must
     // paint despite living in a hidden (<defs>) or resource container, regardless of visibility.
-    for (CheckedPtr ancestor = this; ancestor; ancestor = ancestor->parent()) {
+    for (auto* ancestor = this; ancestor; ancestor = ancestor->parent()) {
         if (ancestor->isPaintingResourceLayerForSVG())
             return true;
     }
@@ -241,10 +241,10 @@ void RenderLayer::paintNegativeZOrderChildrenForSVG(GraphicsContext& context, co
 static bool viewBoxDisablesPaintingForSVG(RenderLayerModelObject& renderer)
 {
     if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(renderer))
-        return protect(svgRoot->svgSVGElement())->viewBoxDisablesPainting();
+        return svgRoot->svgSVGElement().viewBoxDisablesPainting();
 
     if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(renderer))
-        return protect(viewportContainer->svgSVGElement())->viewBoxDisablesPainting();
+        return viewportContainer->svgSVGElement().viewBoxDisablesPainting();
 
     return false;
 }
@@ -310,8 +310,28 @@ bool RenderLayer::shouldSkipRepaintAfterLayoutForSVG() const
     ASSERT(m_svgData);
     ASSERT(renderer().document().settings().layerBasedSVGEngineEnabled());
 
-    // The SVG containers themselves never trigger repaints, only their contents are allowed to.
-    return is<RenderSVGContainer>(renderer()) && !shouldPaintWithFilters();
+    // SVG containers leave repaints to their contents, unless they changed themselves.
+    if (!is<RenderSVGContainer>(renderer()) || shouldPaintWithFilters())
+        return false;
+    return m_repaintStatus != RepaintStatus::NeedsFullRepaint || is<RenderSVGHiddenContainer>(renderer());
+}
+
+std::optional<TransformationMatrix> RenderLayer::computeContainerTransformForRepaintForSVG() const
+{
+    // Hidden containers never paint, so their transform needs no repaint.
+    CheckedPtr container = dynamicDowncast<RenderSVGContainer>(renderer());
+    if (!container || is<RenderSVGHiddenContainer>(*container))
+        return std::nullopt;
+    return container->computeChildrenToParentUserSpaceTransform();
+}
+
+void RenderLayer::setNeedsFullRepaintIfSVGContainerTransformChanged(const RenderLayerModelObject* repaintContainer)
+{
+    // The children of a container cannot repaint the area under its old transform.
+    if (!m_svgData || !m_svgData->containerTransformForRepaintRects || repaintContainer == &renderer())
+        return;
+    if (m_svgData->containerTransformForRepaintRects != computeContainerTransformForRepaintForSVG())
+        m_repaintStatus = RepaintStatus::NeedsFullRepaint;
 }
 
 bool RenderLayer::isCompositedSVGPaintOrderChild() const
@@ -742,17 +762,14 @@ void RenderLayer::paintChildrenInDOMOrderForSVG(GraphicsContext& context, const 
     }
 }
 
-std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTransformForSVG(
+std::optional<RenderLayer::SVGLocalToContainerTransform> RenderLayer::computeLocalToContainerTransformForSVG(
     CheckedRef<RenderElement> rendererRef, const LayoutSize& positionOffset) const
 {
     CheckedRef layerModelObject = downcast<RenderLayerModelObject>(rendererRef.get());
     TransformationMatrix transform;
     CheckedRef style = layerModelObject->style();
 
-    // Fast path: a non-layer SVG renderer already caches 'transform' in m_localTransform.
-    // The only difference from the paint transform is the reference-box + nominal shift, which
-    // just moves the transform-origin, so the paint transform equals:
-    // translate(nominal) * m_localTransform * translate(-nominal).
+    // Fast path: a non-layer SVG renderer caches its nominal transform; move it to the user space origin.
     bool isNonLayerSVG = !rendererRef->hasSelfPaintingLayer() && rendererRef->isSVGLayerAwareRenderer();
     CheckedPtr useTransformRenderer = (isNonLayerSVG && !is<RenderSVGViewportContainer>(rendererRef.get()))
         ? dynamicDowncast<RenderSVGModelObject>(rendererRef.get()) : nullptr;
@@ -760,7 +777,7 @@ std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTra
     if (useTransformRenderer) {
         auto nominal = useTransformRenderer->nominalSVGLayoutLocation();
         transform.translate(nominal.x().toFloat(), nominal.y().toFloat());
-        transform.multiply(TransformationMatrix(useTransformRenderer->localTransform()));
+        transform.multiply(TransformationMatrix(useTransformRenderer->nominalTransform()));
         transform.translate(-nominal.x().toFloat(), -nominal.y().toFloat());
     } else {
         auto referenceBoxRect = layerModelObject->transformReferenceBoxRect(style);
@@ -796,7 +813,7 @@ std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTra
     }
 
     transform.translateRight(containerOffset.width().toFloat(), containerOffset.height().toFloat());
-    return SVGRendererTransform { transform, containerOffset };
+    return SVGLocalToContainerTransform { transform, containerOffset };
 }
 
 void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& context, CheckedRef<RenderElement> rendererToPaint,
@@ -804,8 +821,8 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
     OptionSet<PaintBehavior> paintBehavior, RenderObject* subtreePaintRoot, const LayoutSize& nominalPreTranslation)
 {
     ASSERT(rendererToPaint->isTransformed());
-    auto rendererTransform = computeRendererTransformForSVG(rendererToPaint, positionOffset);
-    if (!rendererTransform)
+    auto localToContainerTransform = computeLocalToContainerTransformForSVG(rendererToPaint, positionOffset);
+    if (!localToContainerTransform)
         return;
 
     Ref document = rendererToPaint->document();
@@ -819,7 +836,7 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
     // paintDirtyRect through it together, keeping content and the leaf visual-overflow cull in one
     // coordinate space. translateRight post-multiplies, placing the offset in this container's own
     // space, where nominal lives.
-    auto scopeTransform = rendererTransform->transform;
+    auto scopeTransform = localToContainerTransform->transform;
     if (!nominalPreTranslation.isZero())
         scopeTransform.translateRight(-nominalPreTranslation.width().toFloat(), -nominalPreTranslation.height().toFloat());
 
@@ -892,8 +909,7 @@ void RenderLayer::paintSubtreeWithinTransformScopeForSVG(GraphicsContext& contex
         if (!viewportContainer->hasSelfPaintingLayer() && SVGRenderSupport::isOverflowHidden(*viewportContainer)) {
             clipSaver.save();
             auto clipOffset = viewportContainer->isTransformed() ? LayoutPoint() : paintOffset;
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST context.clip(FloatRect(viewportContainer->overflowClipRect(clipOffset)));
+            context.clip(FloatRect(viewportContainer->overflowClipRect(clipOffset)));
         }
     }
 
@@ -1032,17 +1048,16 @@ RenderLayer::HitLayer RenderLayer::hitTestRendererByInversingTransformForSVG(Ren
     const LayoutSize& positionOffset, const HitTestRequest& request, HitTestResult& result,
     const LayoutRect& hitTestRect, const HitTestLocation& hitTestLocation)
 {
-    auto transformResult = computeRendererTransformForSVG(rendererToTest, positionOffset);
-    if (!transformResult)
+    auto localToContainerTransform = computeLocalToContainerTransformForSVG(rendererToTest, positionOffset);
+    if (!localToContainerTransform)
         return { };
 
-    auto inverse = transformResult->transform.inverse();
+    auto inverse = localToContainerTransform->transform.inverse();
     if (!inverse)
         return { };
 
     auto localPoint = inverse->mapPoint(hitTestLocation.point());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
+    auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
 
     HitTestLocation localLocation { LayoutPoint { localPoint } };
 
@@ -1094,7 +1109,7 @@ RenderLayer::HitLayer RenderLayer::hitTestSubtreeWithinTransformScopeForSVG(Rend
             adjustedOffset.moveBy(childSvgModel->currentSVGLayoutLocation());
 
         if (childElement->isRenderSVGContainer()) {
-            if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(*childElement)) {
+            if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(*childElement)) {
                 if (SVGRenderSupport::isOverflowHidden(*viewportContainer) && !viewportContainer->viewport().contains(hitTestLocation.point()))
                     continue;
             }

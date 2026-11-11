@@ -85,7 +85,7 @@ public:
     std::optional<WebCore::PageIdentifier> pageID() const final { return m_pageID; }
     std::optional<WebPageProxyIdentifier> webPageProxyID() const final { return m_webPageProxyID; }
 
-    bool isInitiatedByDedicatedWorker() const final { return m_isInitiatedByDedicatedWorker; }
+    bool isInitiatedByWorker() const final { return m_isInitiatedByWorker; }
 
     bool navigationLosesFrameSpecificStorageAccess() const final { return m_navigationLosesFrameSpecificStorageAccess; }
 
@@ -95,6 +95,8 @@ public:
     void setPriority(WebCore::ResourceLoadPriority) override;
 
     void checkTAO(const WebCore::ResourceResponse&);
+
+    OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections() const { return m_advancedPrivacyProtections; }
 
 private:
     NetworkDataTaskCocoa(NetworkSession&, NetworkDataTaskClient&, const NetworkLoadParameters&);
@@ -123,6 +125,7 @@ private:
     bool m_navigationLosesFrameSpecificStorageAccess { false };
     const RefPtr<WebCore::SecurityOrigin> m_sourceOrigin;
     uint64_t m_requiredCookiesVersion { 0 };
+    const OptionSet<WebCore::AdvancedPrivacyProtections> m_advancedPrivacyProtections;
 };
 
 WebCore::Credential serverTrustCredential(const WebCore::AuthenticationChallenge&);

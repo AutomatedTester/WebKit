@@ -98,7 +98,7 @@ public:
     Inspector::Protocol::ErrorStringOr<String> snapshotNode(Inspector::Protocol::DOM::NodeId);
     Inspector::Protocol::ErrorStringOr<String> snapshotRect(int x, int y, int width, int height, Inspector::Protocol::Page::CoordinateSystem);
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
-    Inspector::Protocol::ErrorStringOr<String> archive();
+    void archive(Ref<ArchiveCallback>&&);
 #endif
 #if !PLATFORM(COCOA)
     Inspector::Protocol::ErrorStringOr<void> setScreenSizeOverride(std::optional<int>&& width, std::optional<int>&& height);
@@ -130,10 +130,13 @@ public:
 
     static void evaluateBootstrapScript(LocalFrame&, const String& source);
 
+    // Returns false if the setting isn't backed by page Settings.
+    WEBCORE_EXPORT static bool applySettingOverride(Page&, Inspector::Protocol::Page::Setting, std::optional<bool>);
+
 private:
     double timestamp();
 
-    InspectorOverlay& LEGACY_NODELETE overlay() const;
+    NODELETE InspectorOverlay& overlay() const;
 
     void overridePrefersReducedMotion(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);
     void overridePrefersContrast(std::optional<Inspector::Protocol::Page::UserPreferenceValue>&&);

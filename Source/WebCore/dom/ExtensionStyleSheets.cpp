@@ -96,7 +96,7 @@ void ExtensionStyleSheets::clearPageUserSheet()
 {
     if (m_pageUserSheet) {
         m_pageUserSheet = nullptr;
-        m_document->styleScope().didChangeExtensionStyleSheets();
+        protect(m_document->styleScope())->didChangeExtensionStyleSheets();
     }
 }
 
@@ -104,7 +104,7 @@ void ExtensionStyleSheets::updatePageUserSheet()
 {
     clearPageUserSheet();
     if (pageUserSheet())
-        m_document->styleScope().didChangeExtensionStyleSheets();
+        protect(m_document->styleScope())->didChangeExtensionStyleSheets();
 }
 
 const Vector<Ref<CSSStyleSheet>>& ExtensionStyleSheets::injectedUserStyleSheets() const
@@ -134,10 +134,10 @@ void ExtensionStyleSheets::updateInjectedStyleSheetCache() const
     if (!owningPage)
         return;
 
-    auto addStyleSheet = [&](const UserStyleSheet& userStyleSheet) {
-        Ref sheet = createExtensionsStyleSheet(document, userStyleSheet.url(), userStyleSheet.source(), userStyleSheet.level());
+    auto addStyleSheet = [&](const URL& url, const String& source, UserStyleLevel level) {
+        Ref sheet = createExtensionsStyleSheet(document, url, source, level);
 
-        m_injectedStyleSheetToSource.set(sheet.copyRef(), userStyleSheet.source());
+        m_injectedStyleSheetToSource.set(sheet.copyRef(), source);
 
         if (sheet->contents().isUserStyleSheet())
             m_injectedUserStyleSheets.append(WTF::move(sheet));
@@ -146,7 +146,7 @@ void ExtensionStyleSheets::updateInjectedStyleSheetCache() const
     };
 
     for (const auto& userStyleSheet : m_pageSpecificStyleSheets)
-        addStyleSheet(userStyleSheet);
+        addStyleSheet(userStyleSheet.url(), userStyleSheet.source(), userStyleSheet.level());
 
     RefPtr frame = document->frame();
     RefPtr userContentProvider = frame ? frame->userContentProvider() : nullptr;
@@ -180,7 +180,7 @@ void ExtensionStyleSheets::updateInjectedStyleSheetCache() const
         if (!UserContentURLPattern::matchesPatterns(url, userStyleSheet.allowlist(), userStyleSheet.blocklist()))
             return;
 
-        addStyleSheet(userStyleSheet);
+        addStyleSheet(userStyleSheet.url(), userStyleSheet.source(), userStyleSheet.level());
     });
 }
 
@@ -200,6 +200,22 @@ void ExtensionStyleSheets::removePageSpecificUserStyleSheet(const UserStyleSheet
         invalidateInjectedStyleSheetCache();
 }
 
+void ExtensionStyleSheets::setQuirkStyleSheets(Vector<String>&& sources)
+{
+    if (m_quirkStyleSheetSources == sources)
+        return;
+
+    for (auto& sheet : m_quirkStyleSheets)
+        sheet->detachFromDocument();
+
+    m_quirkStyleSheetSources = WTF::move(sources);
+    m_quirkStyleSheets = m_quirkStyleSheetSources.map([&](auto& source) {
+        return createExtensionsStyleSheet(protect(m_document), { }, source, UserStyleLevel::Author);
+    });
+
+    protect(m_document->styleScope())->didChangeExtensionStyleSheets();
+}
+
 bool ExtensionStyleSheets::hasCachedInjectedStyleSheets() const
 {
     return !m_injectedUserStyleSheets.isEmpty()
@@ -210,7 +226,7 @@ bool ExtensionStyleSheets::hasCachedInjectedStyleSheets() const
 void ExtensionStyleSheets::invalidateInjectedStyleSheetCache()
 {
     m_injectedStyleSheetCacheValid = false;
-    m_document->styleScope().didChangeExtensionStyleSheets();
+    protect(m_document->styleScope())->didChangeExtensionStyleSheets();
 }
 
 void ExtensionStyleSheets::addUserStyleSheet(Ref<StyleSheetContents>&& userSheet)
@@ -237,7 +253,7 @@ void ExtensionStyleSheets::addDisplayNoneSelector(const String& identifier, cons
         return ContentExtensionStyleSheet::create(protect(document));
     });
     if (result.isNewEntry)
-        m_userStyleSheets.append(result.iterator->value->styleSheet());
+        m_userStyleSheets.append(protect(result.iterator->value->styleSheet()));
 
     if (protect(result.iterator->value)->addDisplayNoneSelector(selector, selectorID))
         document->styleScope().didChangeExtensionStyleSheets();
@@ -275,6 +291,8 @@ void ExtensionStyleSheets::detachFromDocument()
     for (auto& sheet : m_userStyleSheets)
         sheet->detachFromDocument();
     for (auto& sheet : m_authorStyleSheetsForTesting)
+        sheet->detachFromDocument();
+    for (auto& sheet : m_quirkStyleSheets)
         sheet->detachFromDocument();
 }
 

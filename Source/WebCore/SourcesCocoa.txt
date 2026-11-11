@@ -61,6 +61,8 @@ JSApplePayPaymentTiming.cpp
 JSApplePayPaymentTokenContext.cpp
 JSApplePayRecurringPaymentDateUnit.cpp
 JSApplePayRecurringPaymentRequest.cpp
+JSApplePayReferenceRequest.cpp
+JSApplePayReferenceSession.cpp
 JSApplePayRequest.cpp
 JSApplePayRequestBase.cpp
 JSApplePaySession.cpp
@@ -95,6 +97,7 @@ Modules/applepay/ApplePayMerchantCapability.cpp
 Modules/applepay/ApplePayPaymentAuthorizationResult.cpp
 Modules/applepay/ApplePayPaymentAuthorizedEvent.cpp
 Modules/applepay/ApplePayPaymentMethodSelectedEvent.cpp
+Modules/applepay/ApplePayReferenceSession.cpp
 Modules/applepay/ApplePayRequestBase.cpp
 Modules/applepay/ApplePaySession.cpp
 Modules/applepay/ApplePaySessionPaymentRequest.cpp
@@ -176,7 +179,6 @@ crypto/cocoa/CryptoKeyRSACocoa.cpp
 crypto/cocoa/CryptoUtilitiesCocoa.cpp
 crypto/cocoa/SerializedCryptoKeyWrapCocoa.mm @nonARC
 crypto/CommonCryptoUtilities.cpp
-dom/DataTransferMac.mm @nonARC
 dom/ios/MouseEventIOS.cpp
 dom/ios/PointerEventIOS.cpp
 dom/ios/TouchEvents.cpp
@@ -193,9 +195,11 @@ editing/cocoa/EditorCocoa.mm @nonARC
 editing/cocoa/FontAttributeChangesCocoa.mm @nonARC
 editing/cocoa/FontAttributesCocoa.mm @nonARC
 editing/cocoa/FontShadowCocoa.mm @nonARC
+editing/cocoa/FrameSelectionCocoa.mm @nonARC
 editing/cocoa/HTMLConverter.mm @nonARC @no-unify-when(bundle<=8) @cost:4
 editing/cocoa/NodeHTMLConverter.mm @nonARC @no-unify-when(bundle<=8) @cost:10
 editing/cocoa/EditingHTMLConverter.mm @nonARC @no-unify-when(bundle<=8) @cost:9
+editing/cocoa/TextAlternativeWithRange.mm @nonARC @no-unify-when(bundle<=8)
 editing/cocoa/WebArchiveResourceFromNSAttributedString.mm @nonARC
 editing/cocoa/WebArchiveResourceWebResourceHandler.mm @nonARC
 editing/cocoa/WebContentReaderCocoa.mm @nonARC
@@ -203,11 +207,9 @@ editing/cocoa/WebCoreTextAttachment.mm @nonARC
 editing/ios/DictationCommandIOS.cpp
 editing/ios/EditorIOS.mm @nonARC
 editing/mac/EditorMac.mm @nonARC
-editing/mac/FrameSelectionMac.mm @nonARC
-editing/mac/TextAlternativeWithRange.mm @nonARC @no-unify-when(bundle<=8)
 editing/mac/TextUndoInsertionMarkupMac.mm @nonARC
 fileapi/FileCocoa.mm @nonARC
-history/mac/HistoryItemMac.mm @nonARC
+history/cocoa/HistoryItemCocoa.mm @nonARC
 html/HTMLMediaElementCocoa.mm @nonARC
 html/canvas/GPUCanvasContextCocoa.mm @nonARC
 html/shadow/YouTubeEmbedShadowElement.cpp
@@ -217,20 +219,26 @@ inspector/mac/PageDebuggerMac.mm @nonARC
 loader/archive/cf/LegacyWebArchive.cpp
 loader/archive/cf/LegacyWebArchiveMac.mm @nonARC
 loader/cocoa/DiskCacheMonitorCocoa.mm @nonARC
+loader/cocoa/DocumentLoaderCocoa.cpp
+loader/cocoa/LoaderNSURLExtras.mm @nonARC
 loader/cocoa/PrivateClickMeasurementCocoa.mm @nonARC
+loader/cocoa/ResourceLoaderCocoa.mm @nonARC
 loader/cocoa/SubresourceLoaderCocoa.mm @nonARC
+loader/images/cocoa/ImageAdapterCocoa.mm @nonARC
+loader/images/pdf/PDFDocumentImage.cpp
+loader/images/pdf/mac/PDFDocumentImageMac.mm @nonARC
 loader/ios/LegacyPreviewLoader.mm @nonARC
-loader/mac/DocumentLoaderMac.cpp
-loader/mac/LoaderNSURLExtras.mm @nonARC
-loader/mac/ResourceLoaderMac.mm @nonARC
 page/CaptionUserPreferencesMediaAF.cpp
 page/cocoa/CaptionUserPreferencesMediaAFCocoa.mm @nonARC
+page/cocoa/ChromeCocoa.mm @nonARC
 page/cocoa/ContentChangeObserver.cpp @header:RenderStyleGetters
 page/cocoa/DOMTimerHoldingTank.cpp
+page/cocoa/DragControllerCocoa.mm @nonARC
 page/cocoa/EventHandlerCocoa.mm @nonARC
 page/cocoa/MemoryReleaseCocoa.mm @nonARC
 page/cocoa/PageCocoa.mm @nonARC
 page/cocoa/PerformanceLoggingCocoa.mm @nonARC
+page/cocoa/QuirkTableCocoa.mm @nonARC
 page/cocoa/ResourceUsageOverlayCocoa.mm @nonARC
 page/cocoa/ResourceUsageThreadCocoa.mm @nonARC
 page/cocoa/SettingsBaseCocoa.mm @nonARC
@@ -238,9 +246,7 @@ page/cocoa/WebTextIndicatorLayer.mm @nonARC
 page/ios/EventHandlerIOS.mm @nonARC
 page/ios/FrameIOS.mm @nonARC
 page/ios/WebEventRegion.mm @nonARC
-page/mac/ChromeMac.mm @nonARC
 page/mac/CorrectionIndicator.mm @nonARC
-page/mac/DragControllerMac.mm @nonARC
 page/mac/EventHandlerMac.mm @nonARC
 page/mac/ImageOverlayControllerMac.mm @nonARC
 page/mac/ServicesOverlayController.mm @nonARC
@@ -323,12 +329,16 @@ platform/cocoa/PasteboardCocoa.mm @nonARC
 platform/cocoa/PasteboardCustomDataCocoa.mm @nonARC
 platform/cocoa/PhotosFormatSoftLink.mm @nonARC
 platform/cocoa/PlatformPasteboardCocoa.mm @nonARC
+platform/cocoa/PlatformResourceCocoa.mm @nonARC
 platform/cocoa/PlatformSpeechSynthesizerCocoa.mm @nonARC @no-unify-when(bundle<=8)
+platform/cocoa/PlaybackSessionInterfaceAVKitLegacy.mm @nonARC @no-unify
+platform/cocoa/PlaybackSessionInterfaceCocoa.mm @nonARC @no-unify
 platform/cocoa/PlaybackSessionModelMediaElement.mm @nonARC
 platform/cocoa/PowerSourceNotifier.mm @nonARC
 platform/cocoa/PublicSuffixStoreCocoa.mm @nonARC
 platform/cocoa/RemoteCommandListenerCocoa.mm @nonARC
 platform/cocoa/SearchPopupMenuCocoa.mm @nonARC
+platform/cocoa/SerializedPlatformDataCueCocoa.mm @nonARC
 platform/cocoa/SerializedPlatformDataCueValue.mm @nonARC @no-unify-when(bundle<=8)
 platform/cocoa/SharedBufferCocoa.mm @nonARC
 platform/cocoa/SharedMemoryCocoa.mm @nonARC
@@ -342,6 +352,7 @@ platform/cocoa/UserAgentCocoa.mm @nonARC
 platform/cocoa/VideoPresentationModelVideoElement.mm @nonARC
 platform/cocoa/VideoPresentationLayerProvider.mm @nonARC
 platform/cocoa/VideoToolboxSoftLink.cpp
+platform/cocoa/WebAVPlayerController.mm @nonARC
 platform/cocoa/WebCoreAdditions.mm @nonARC @no-unify // #includes opaque WebKitAdditions sources.
 platform/cocoa/WebCoreNSErrorExtras.mm @nonARC
 platform/cocoa/WebCoreNSURLExtras.mm @nonARC
@@ -430,11 +441,10 @@ platform/graphics/cg/GradientCG.cpp
 platform/graphics/cg/GradientRendererCG.cpp
 platform/graphics/cg/GraphicsContextCG.cpp
 platform/graphics/cg/GraphicsContextGLCG.cpp
-platform/graphics/cg/IOSurfacePool.cpp
+platform/graphics/cg/IOSurfacePool.mm @nonARC
 platform/graphics/cg/ImageBackingStoreCG.cpp
 platform/graphics/cg/ImageBufferCGBackend.cpp
 platform/graphics/cg/ImageBufferCGBitmapBackend.cpp
-platform/graphics/cg/ImageBufferCGPDFDocumentBackend.cpp
 platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
 platform/graphics/cg/ImageDecoderCG.cpp
 platform/graphics/cg/ImageUtilitiesCG.cpp
@@ -442,7 +452,7 @@ platform/graphics/cg/IntPointCG.cpp
 platform/graphics/cg/IntRectCG.cpp
 platform/graphics/cg/IntSizeCG.cpp
 platform/graphics/cg/NativeImageCG.cpp
-platform/graphics/cg/PDFDocumentImage.cpp
+platform/graphics/cg/PDFDocumentBuffer.cpp
 platform/graphics/cg/PathCG.cpp
 platform/graphics/cg/PatternCG.cpp
 platform/graphics/cg/ShareableBitmapCG.mm @nonARC @no-unify-when(bundle<=8)
@@ -467,14 +477,13 @@ platform/graphics/cocoa/GraphicsContextCocoa.mm @nonARC
 platform/graphics/cocoa/H264UtilitiesCocoa.mm @nonARC
 platform/graphics/cocoa/HEVCUtilitiesCocoa.mm @nonARC
 platform/graphics/cocoa/IOSurface.mm @nonARC
-platform/graphics/cocoa/IOSurfacePoolCocoa.mm @nonARC
 platform/graphics/cocoa/ISOBMFFPreParser.cpp
 platform/graphics/cocoa/ISOBMFFTrackInfoParser.cpp
 platform/graphics/cocoa/IconCocoa.mm @nonARC
 platform/graphics/cocoa/IntRectCocoa.mm @nonARC
-platform/graphics/cocoa/ImageAdapterCocoa.mm @nonARC
 platform/graphics/cocoa/MediaPlayerCocoa.mm @nonARC
 platform/graphics/cocoa/MediaPlayerPrivateWebM.mm @nonARC @no-unify-when(bundle<=8) @cost:7
+platform/graphics/cocoa/NativeImageCocoa.mm @nonARC
 platform/graphics/cocoa/PeriodicSharedTimer.mm @nonARC
 platform/graphics/cocoa/PlatformMediaEngineConfigurationFactoryCocoa.cpp
 platform/graphics/cocoa/PlatformTimeRangesCocoa.mm @nonARC @no-unify-when(bundle<=8)
@@ -538,7 +547,6 @@ platform/graphics/mac/ColorMac.mm @nonARC
 platform/graphics/mac/GraphicsChecksMac.cpp
 platform/graphics/mac/IconMac.mm @nonARC
 platform/graphics/mac/LegacyDisplayRefreshMonitorMac.cpp
-platform/graphics/mac/PDFDocumentImageMac.mm @nonARC
 platform/graphics/mac/ScrollbarTrackCornerSystemImageMac.mm @nonARC
 platform/graphics/mac/WebKitNSImageExtras.mm @nonARC
 platform/graphics/mac/controls/ButtonMac.mm @nonARC
@@ -588,8 +596,6 @@ platform/ios/PasteboardIOS.mm @nonARC
 platform/ios/PlatformEventFactoryIOS.mm @nonARC @no-unify
 platform/ios/PlatformPasteboardIOS.mm @nonARC
 platform/ios/PlatformScreenIOS.mm @nonARC
-platform/ios/PlaybackSessionInterfaceAVKitLegacy.mm @nonARC @no-unify
-platform/ios/PlaybackSessionInterfaceIOS.mm @nonARC @no-unify
 platform/ios/PlaybackSessionInterfaceTVOS.cpp
 platform/ios/PreviewConverterIOS.mm @nonARC
 platform/ios/QuickLook.mm @nonARC
@@ -606,7 +612,6 @@ platform/ios/ValidationBubbleIOS.mm @nonARC
 platform/ios/VideoPresentationInterfaceAVKitLegacy.mm @nonARC @no-unify
 platform/ios/VideoPresentationInterfaceIOS.mm @nonARC @no-unify
 platform/ios/VideoPresentationInterfaceTVOS.mm @nonARC
-platform/ios/WebAVPlayerController.mm @nonARC
 platform/ios/WebBackgroundTaskController.mm @nonARC
 platform/ios/WebCoreMotionManager.mm @nonARC
 platform/ios/WebEvent.mm @nonARC @no-unify
@@ -647,7 +652,6 @@ platform/mac/ScrollbarsControllerMac.mm @nonARC @no-unify-when(bundle<=8) @cost:
 platform/mac/ScrollbarThemeMac.mm @nonARC @no-unify-when(bundle<=8) @cost:3
 platform/mac/ScrollingEffectsController.mm @nonARC
 platform/mac/ScrollingMomentumCalculatorMac.mm @nonARC
-platform/mac/SerializedPlatformDataCueMac.mm @nonARC
 platform/mac/SuddenTermination.mm @nonARC
 platform/mac/ThemeMac.mm @nonARC
 platform/mac/ThreadCheck.mm @nonARC @no-unify-when(bundle<=8)
@@ -749,4 +753,3 @@ testing/cocoa/WebViewVisualIdentificationOverlay.mm @nonARC
 
 platform/graphics/angle/GraphicsContextGLANGLE.cpp @no-unify // ANGLE headers redefine GL types/macros that collide with system OpenGL.
 platform/graphics/cocoa/GraphicsContextGLCocoa.mm @nonARC @no-unify // ANGLE headers redefine GL types/macros that collide with system OpenGL.
-platform/graphics/cv/GraphicsContextGLCVCocoa.mm @nonARC @no-unify // ANGLE headers redefine GL types/macros that collide with system OpenGL.

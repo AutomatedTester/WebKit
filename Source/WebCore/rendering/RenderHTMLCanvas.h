@@ -46,23 +46,28 @@ public:
     RenderHTMLCanvas(HTMLCanvasElement&, Style::ComputedStyle&&);
     virtual ~RenderHTMLCanvas();
 
-    HTMLCanvasElement& LEGACY_NODELETE canvasElement() const;
+    NODELETE HTMLCanvasElement& canvasElement() const;
 
     void canvasSizeChanged();
 
     RenderBlock* innerRenderer() const { return m_innerRenderer.get(); }
-    void setInnerRenderer(RenderBlock*);
+    NODELETE void setInnerRenderer(RenderBlock*);
 
     bool hasDrawableContent() const final;
 
-    DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&) const;
+    DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&, const IntRect& elementRelativeBounds) const;
     std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(RenderElement&) const;
+
+    void requestPaintEventIfNeeded(const RenderElement& repaintedRenderer) const;
 
 private:
     void element() const = delete;
 
     bool requiresLayer() const override;
     ASCIILiteral renderName() const override { return "RenderHTMLCanvas"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     bool canHaveChildren() const override;
 
     void layout() override;

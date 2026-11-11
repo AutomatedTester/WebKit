@@ -38,6 +38,7 @@
 #include "WebProcess.h"
 #include <WebCore/AsyncScrollingCoordinator.h>
 #include <WebCore/Chrome.h>
+#include <WebCore/CoordinatedTileManager.h>
 #include <WebCore/Damage.h>
 #include <WebCore/GraphicsLayerCoordinated.h>
 #include <WebCore/LocalFrame.h>
@@ -45,12 +46,10 @@
 #include <WebCore/NativeImage.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/PlatformDisplay.h>
-#include <WebCore/ProcessCapabilities.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderView.h>
 #include <WebCore/ScrollingThread.h>
 #include <WebCore/Settings.h>
-#include <WebCore/SkiaPaintingEngine.h>
 #include <WebCore/ThreadedScrollingTree.h>
 #include <WebCore/WindowEventLoop.h>
 #include <wtf/SetForScope.h>
@@ -68,18 +67,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LayerTreeHost);
 static bool damageOverlayForcesPropagation()
 {
     // WEBKIT_SHOW_DAMAGE draws the damage the layers report, so it needs propagation on even when the
-    // propagateDamagingInformation setting that normally turns it on is off. Only the Skia accumulated-damage
-    // overlay is handled here. The non-Skia TextureMapperDamageVisualizer draws off the propagation flags instead.
-#if USE(TEXTURE_MAPPER)
-    return false;
-#else
+    // propagateDamagingInformation setting that normally turns it on is off.
     const auto* showDamageEnvvar = getenv("WEBKIT_SHOW_DAMAGE");
     if (!showDamageEnvvar)
         return false;
 
     auto value = parseInteger<unsigned>(StringView::fromLatin1(showDamageEnvvar));
     return value && *value;
-#endif
 }
 #endif
 
@@ -109,11 +103,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
     }
 
     lazyInitialize(m_compositor, ThreadedCompositor::create(webPage, *this, m_sceneState.get()));
-#if USE(TEXTURE_MAPPER)
-    m_skiaPaintingEngine = SkiaPaintingEngine::create(nullptr);
-#else
-    m_skiaPaintingEngine = SkiaPaintingEngine::create(m_compositor->threadSafeGrContext());
-#endif
+    m_tileManager = CoordinatedTileManager::create(m_compositor->threadSafeGrContext());
 
 #if ENABLE(DAMAGE_TRACKING)
     std::optional<OptionSet<ThreadedCompositor::DamagePropagationFlags>> damagePropagationFlags;
@@ -131,7 +121,7 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
 
 LayerTreeHost::~LayerTreeHost()
 {
-    m_skiaPaintingEngine = nullptr;
+    m_tileManager = nullptr;
 
     // ThreadedCompositor must be invalidated before invalidating CoordinatedSceneState
     // to invalidate pending layers in the compositor thread.
@@ -184,6 +174,10 @@ void LayerTreeHost::updateRendering()
 
     TraceScope traceScope(LayerTreeHostRenderingUpdateStart, LayerTreeHostRenderingUpdateEnd);
 
+    m_renderingUpdateID++;
+
+    m_tileManager->didStartRenderingUpdate(m_renderingUpdateID);
+
     Ref page = m_webPage;
     page->updateRendering();
     page->flushPendingEditorStateUpdate();
@@ -219,6 +213,7 @@ void LayerTreeHost::updateRendering()
         drawingArea->dispatchPendingCallbacksAfterEnsuringDrawing();
 
     bool didChangeSceneState = m_sceneState->flush();
+    m_tileManager->didFinishRenderingUpdate();
     if (m_compositionRequired || m_pendingResize || m_forceFrameSync || didChangeSceneState)
         requestCompositionForRenderingUpdate();
 
@@ -233,9 +228,9 @@ void LayerTreeHost::updateRendering()
         return it.value->hasOneRef();
     });
 
-    if (m_waitUntilPaintingComplete) {
-        m_sceneState->waitUntilPaintingComplete();
-        m_waitUntilPaintingComplete = false;
+    if (m_waitUntilPaintingFinished) {
+        m_sceneState->waitUntilPaintingFinished();
+        m_waitUntilPaintingFinished = false;
     }
 }
 
@@ -271,6 +266,13 @@ void LayerTreeHost::setViewOverlayRootLayer(GraphicsLayer* graphicsLayer)
 
 void LayerTreeHost::updateRenderingWithForcedRepaint()
 {
+    if (m_webPage->size().isEmpty()) {
+        m_pendingForceRepaint = false;
+        if (m_forcedRepaintAsyncCallback)
+            m_forcedRepaintAsyncCallback();
+        return;
+    }
+
     if (m_isWaitingForRenderer) {
         if (m_forcedRepaintAsyncCallback)
             m_pendingForceRepaint = true;
@@ -281,10 +283,10 @@ void LayerTreeHost::updateRenderingWithForcedRepaint()
     protect(m_webPage)->corePage()->forceRepaintAllFrames();
     m_forceFrameSync = true;
 
-    // Make sure `m_sceneState->waitUntilPaintingComplete()` is invoked at the
+    // Make sure `m_sceneState->waitUntilPaintingFinished()` is invoked at the
     // end of the currently running layer flush, or after the next one if there
     // is none ongoing at present.
-    m_waitUntilPaintingComplete = true;
+    m_waitUntilPaintingFinished = true;
 
     // If updateRenderingWithForcedRepaint() is invoked via JS through e.g. a rAF() callback, a call
     // to `page->updateRendering()` _during_ a layer flush is responsible for that.
@@ -389,6 +391,11 @@ void LayerTreeHost::requestComposition(CompositionReason reason)
     m_compositor->requestComposition(reason);
 }
 
+void LayerTreeHost::didChangeLayerPendingPosition(CoordinatedPlatformLayer& layer)
+{
+    m_sceneState->didChangeLayerPendingPosition(layer);
+}
+
 RunLoop* LayerTreeHost::compositingRunLoop() const
 {
     return m_compositor->runLoop();
@@ -410,15 +417,19 @@ void LayerTreeHost::didPaintTile()
     m_compositor->pendingTilesDidChange();
 }
 
+#if USE(SKIA)
+void LayerTreeHost::didPaintPreRenderedTile(CoordinatedPlatformLayer& layer)
+{
+    if (m_sceneState->didPaintPreRenderedTile(layer) == CoordinatedSceneState::ChangedPreRenderedTiles::Yes)
+        m_compositor->preRenderedTilesDidChange();
+}
+#endif
+
 Ref<CoordinatedImageBackingStore> LayerTreeHost::imageBackingStore(Ref<NativeImage>&& nativeImage)
 {
     auto nativeImageID = nativeImage->uniqueID();
     auto addResult = m_imageBackingStores.ensure(nativeImageID, [&] {
-#if USE(TEXTURE_MAPPER)
-        return CoordinatedImageBackingStore::create(WTF::move(nativeImage));
-#else
         return CoordinatedImageBackingStore::create(WTF::move(nativeImage), m_compositor->threadSafeGrContext());
-#endif
     });
     return addResult.iterator->value;
 }
@@ -599,18 +610,7 @@ void LayerTreeHost::foreachRegionInDamageHistoryForTesting(NOESCAPE const Functi
 
 void LayerTreeHost::fillGLInformation(RenderProcessInfo&& info, CompletionHandler<void(RenderProcessInfo&&)>&& completionHandler)
 {
-#if USE(TEXTURE_MAPPER)
-    if (ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext())
-        info.gpuPaintingThreadsCount = SkiaPaintingEngine::numberOfGPUPaintingThreads();
-    else
-        info.cpuPaintingThreadsCount = SkiaPaintingEngine::numberOfCPUPaintingThreads();
-#else
-    auto threadsCount = SkiaPaintingEngine::numberOfCPUPaintingThreads();
-    if (ProcessCapabilities::canUseAcceleratedBuffers())
-        info.gpuPaintingThreadsCount = threadsCount;
-    else
-        info.cpuPaintingThreadsCount = threadsCount;
-#endif
+    info.paintingThreadsCount = CoordinatedTileManager::numberOfPaintingThreads();
     m_compositor->fillGLInformation(WTF::move(info), WTF::move(completionHandler));
 }
 

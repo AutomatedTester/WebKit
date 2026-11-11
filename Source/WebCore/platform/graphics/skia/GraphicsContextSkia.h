@@ -82,8 +82,8 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, RasterDrawingOptions) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions) final;
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawLinesForText(const FloatPoint&, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle) final;
@@ -113,8 +113,9 @@ public:
     void clipOut(const FloatRect&) final;
     void clipOut(const Path&) final;
     void clipPath(const Path&, WindRule) final;
+    void clipTransformedPath(const AffineTransform&, const Path&, WindRule) final;
     IntRect clipBounds() const final;
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
 
     RenderingMode renderingMode() const final;
 
@@ -132,10 +133,6 @@ private:
     };
 
     bool makeGLContextCurrentIfNeeded() const;
-#if USE(TEXTURE_MAPPER)
-    void trackAcceleratedRenderingFenceIfNeeded(const sk_sp<SkImage>&, GrDirectContext*);
-    void trackAcceleratedRenderingFenceIfNeeded(Pattern&);
-#endif
     sk_sp<SkImage> imageForCurrentThread(const sk_sp<SkImage>&) const;
 
     void setupFillSource(SkPaint&);
@@ -202,9 +199,6 @@ private:
     SkiaState m_skiaState;
     Vector<SkiaState, 1> m_skiaStateStack;
     sk_sp<GrContextThreadSafeProxy> m_threadSafeGrContext;
-#if USE(TEXTURE_MAPPER)
-    SkiaImageToFenceMap m_imageToFenceMap;
-#endif
     bool m_enableStateReplayTracking : 1 { false };
     std::unique_ptr<SkiaImageAtlasLayoutBuilder> m_atlasLayoutBuilder;
     const ColorSpace m_colorSpace;

@@ -53,6 +53,11 @@ void enableSiteIsolation(WKWebViewConfiguration *configuration)
     setFeatureEnabled(configuration, @"SiteIsolationEnabled", true);
 }
 
+void enableUnloadEvent(WKWebViewConfiguration *configuration)
+{
+    setFeatureEnabled(configuration, @"UnloadEventEnabled", true);
+}
+
 std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegate(RetainPtr<WKWebViewConfiguration> configuration, CGRect rect, bool enable)
 {
     RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
@@ -72,6 +77,18 @@ std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsola
 std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegate(const HTTPServer& server, CGRect rect)
 {
     return siteIsolatedViewAndDelegate(server.httpsProxyConfiguration(), rect, true);
+}
+
+HTTPResponse documentIsolationPolicyResponse(const String& body)
+{
+    return { { { "Content-Type"_s, "text/html"_s }, { "Document-Isolation-Policy"_s, "isolate-and-require-corp"_s } }, body };
+}
+
+std::pair<RetainPtr<TestWKWebView>, RetainPtr<TestNavigationDelegate>> siteIsolatedViewAndDelegateWithDocumentIsolationPolicy(const HTTPServer& server)
+{
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    setFeatureEnabled(configuration.get(), @"DocumentIsolationPolicyEnabled", true);
+    return siteIsolatedViewAndDelegate(configuration);
 }
 
 WebViewWithFocusedCrossOriginIframe webViewWithFocusedCrossOriginIframe(const HTTPServer& server, WKWebViewConfiguration *configuration)

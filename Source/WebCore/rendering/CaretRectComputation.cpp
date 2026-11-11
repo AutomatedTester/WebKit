@@ -32,11 +32,9 @@
 #include "InlineIteratorTextBox.h"
 #include "InlineIteratorSVGTextBox.h"
 #include "LayoutIntegrationLineLayout.h"
-#include "LineSelection.h"
 #include "RenderBlockFlow.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInlineText.h"
@@ -133,10 +131,10 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
 {
     CheckedRef root = lineBox->formattingContextRoot();
     auto writingMode = root->writingMode();
-    auto lineSelectionRect = LineSelection::logicalRect(*lineBox);
+    auto lineRect = lineBox->contentLogicalRectAdjustedForAdjacentLineBoxes();
 
-    int height = lineSelectionRect.height();
-    int top = lineSelectionRect.y();
+    int height = lineRect.height();
+    int top = lineRect.y();
 
     // Distribute the caret's width to either side of the offset.
     float left = logicalLeftPosition;
@@ -145,8 +143,8 @@ static LayoutRect computeCaretRectForLinePosition(const InlineIterator::LineBoxI
     int caretWidthRightOfOffset = caretWidth() - caretWidthLeftOfOffset;
     left = roundf(left);
 
-    float lineLeft = lineSelectionRect.x();
-    float lineRight = lineSelectionRect.maxX();
+    float lineLeft = lineRect.x();
+    float lineRight = lineRect.maxX();
 
     bool rightAligned = false;
     switch (root->style().textAlign()) {
@@ -193,7 +191,7 @@ static LayoutRect computeCaretRectForText(const InlineBoxAndOffset& boxAndOffset
     if (!boxAndOffset.box)
         return { };
 
-    auto& textBox = downcast<InlineIterator::TextBoxIterator>(boxAndOffset.box);
+    auto textBox = InlineIterator::TextBoxIterator { boxAndOffset.box };
 
     auto positionForOffset = [&](auto offset) -> float {
         ASSERT(offset >= textBox->start());
@@ -211,7 +209,7 @@ static LayoutRect computeCaretRectForText(const InlineBoxAndOffset& boxAndOffset
         LayoutRect selectionRect;
         // Get logical x coordinate relative to text run.
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
-        textBox->fontCascade().adjustSelectionRectForText(textBox->renderer().canUseSimplifiedTextMeasuring().value_or(false), textRun, selectionRect, startOffset, endOffset);
+        textBox->fontCascade().adjustSelectionRectForText(textBox->renderer().canUseSimplifiedTextMeasuring(), textRun, selectionRect, startOffset, endOffset);
         selectionRect.shiftXEdgeTo(selectionRect.maxX());
 
         // Convert to box coordinates.
@@ -235,8 +233,8 @@ static LayoutRect computeCaretRectForLineBreak(const InlineBoxAndOffset& boxAndO
 
     auto lineBox = boxAndOffset.box->lineBox();
     auto position = boxAndOffset.box->writingMode().isLogicalLeftLineLeft()
-        ? lineBox->contentLogicalLeft()
-        : lineBox->contentLogicalRight();
+        ? lineBox.contentLogicalLeft()
+        : lineBox.contentLogicalRight();
     return computeCaretRectForLinePosition(lineBox, position, caretRectMode);
 }
 
@@ -244,12 +242,10 @@ static LayoutRect computeCaretRectForSVGInlineText(const InlineBoxAndOffset& box
 {
     auto box = boxAndOffset.box;
     auto caretOffset = boxAndOffset.offset;
-    if (!is<InlineIterator::SVGTextBoxIterator>(box))
+    if (!box || !box->isSVGText())
         return { };
 
-    auto textBox = downcast<InlineIterator::SVGTextBoxIterator>(box);
-    if (!textBox)
-        return { };
+    auto textBox = InlineIterator::SVGTextBoxIterator { box };
 
     if (caretOffset < textBox->start() || caretOffset > textBox->start() + textBox->length())
         return { };
@@ -281,9 +277,9 @@ static LayoutRect computeCaretRectForBox(const RenderBox& renderer, const Inline
 
     if (boxAndOffset.box) {
         auto lineBox = boxAndOffset.box->lineBox();
-        auto top = lineBox->contentLogicalTop();
+        auto top = lineBox.contentLogicalTop();
         rect.setY(top);
-        rect.setHeight(lineBox->contentLogicalBottom() - top);
+        rect.setHeight(lineBox.contentLogicalBottom() - top);
     }
 
     // If height of box is smaller than font height, use the latter one,
@@ -324,10 +320,10 @@ static LayoutRect computeCaretRectForBlock(const RenderBlock& renderer, const In
     return computeCaretRectForEmptyElement(renderer, renderer.logicalWidth(), renderer.textIndentOffset(), caretRectMode);
 }
 
-static LayoutRect computeCaretRectForInline(const RenderInline& renderer)
+static LayoutRect computeCaretRectForInline(const RenderBoxModelObject& renderer)
 {
     if (renderer.firstChild()) {
-        // This condition is possible if the RenderInline is at an editing boundary,
+        // This condition is possible if the inline box is at an editing boundary,
         // i.e. the VisiblePosition is:
         //   <RenderInline editingBoundary=true>|<RenderText> </RenderText></RenderInline>
         // FIXME: need to figure out how to make this return a valid rect, note that
@@ -338,7 +334,7 @@ static LayoutRect computeCaretRectForInline(const RenderInline& renderer)
     LayoutRect caretRect = computeCaretRectForEmptyElement(renderer, renderer.borderAndPaddingLogicalWidth(), 0, CaretRectMode::Normal);
 
     if (auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(renderer))
-        caretRect.moveBy(LayoutPoint { firstInlineBox->visualRectIgnoringBlockDirection().location() });
+        caretRect.moveBy(LayoutPoint { firstInlineBox->blockStartRelativePhysicalRect().location() });
 
     return caretRect;
 }
@@ -360,8 +356,8 @@ LayoutRect computeLocalCaretRect(const RenderObject& renderer, const InlineBoxAn
     if (auto* box = dynamicDowncast<RenderBox>(renderer))
         return computeCaretRectForBox(*box, boxAndOffset, caretRectMode);
 
-    if (auto* renderInline = dynamicDowncast<RenderInline>(renderer))
-        return computeCaretRectForInline(*renderInline);
+    if (renderer.isInlineBox())
+        return computeCaretRectForInline(downcast<RenderBoxModelObject>(renderer));
 
     return { };
 }

@@ -137,10 +137,10 @@ public:
             m_rootElementStyle = document.initialContainingBlockStyle();
     }
 
-    const Element* LEGACY_NODELETE element() const { return m_element; }
+    NODELETE const Element* element() const { return m_element; }
 
     void setStyle(std::unique_ptr<Style::ComputedStyle> style) { m_style = WTF::move(style); }
-    Style::ComputedStyle* LEGACY_NODELETE style() const { return m_style.get(); }
+    NODELETE Style::ComputedStyle* style() const { return m_style.get(); }
     std::unique_ptr<Style::ComputedStyle> takeStyle() { return WTF::move(m_style); }
 
     void setParentStyle(std::unique_ptr<Style::ComputedStyle> parentStyle)
@@ -148,11 +148,11 @@ public:
         m_ownedParentStyle = WTF::move(parentStyle);
         m_parentStyle = m_ownedParentStyle.get();
     }
-    const Style::ComputedStyle* LEGACY_NODELETE parentStyle() const { return m_parentStyle; }
-    const Style::ComputedStyle* LEGACY_NODELETE parentHighlightStyle() const { return m_parentHighlightStyle; }
-    const Style::ComputedStyle* LEGACY_NODELETE rootElementStyle() const { return m_rootElementStyle; }
+    NODELETE const Style::ComputedStyle* parentStyle() const { return m_parentStyle; }
+    NODELETE const Style::ComputedStyle* parentHighlightStyle() const { return m_parentHighlightStyle; }
+    NODELETE const Style::ComputedStyle* rootElementStyle() const { return m_rootElementStyle; }
 
-    CheckedPtr<TreeResolutionState> LEGACY_NODELETE treeResolutionState() { return m_treeResolutionState; }
+    NODELETE CheckedPtr<TreeResolutionState> treeResolutionState() { return m_treeResolutionState; }
 
 private:
     const Element* m_element { };
@@ -376,7 +376,7 @@ UnadjustedStyle Resolver::unadjustedStyleForCachedMatchResult(Element& element, 
 
 // animation-timing-function and animation-composition in a keyframe describe the composite operation
 // and timing function between this keyframe and the next. interpolate-size is not animatable.
-static bool isAnimatedInKeyframe(CSSPropertyID property)
+NODELETE static bool isAnimatedInKeyframe(CSSPropertyID property)
 {
     switch (property) {
     case CSSPropertyID::AnimationTimingFunction:
@@ -627,8 +627,7 @@ static const Style::ComputedStyle* parentHighlightStyleIgnoringPendingUpdate(con
     if (!resolvedStyle)
         return nullptr;
 
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle&>(*parentStyle).addPseudoElementStyle(WTF::move(resolvedStyle->style));
+    return const_cast<Style::ComputedStyle&>(*parentStyle).addPseudoElementStyle(WTF::move(resolvedStyle->style));
 }
 
 std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, const PseudoElementRequest& pseudoElementRequest, const ResolutionContext& context)
@@ -655,6 +654,7 @@ std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, c
     if (m_matchAuthorAndUserStyles) {
         collector.matchUserRules();
         collector.matchAuthorRules();
+        collector.matchQuirkRules();
     }
 
     ASSERT(!collector.matchedPseudoElements());
@@ -682,21 +682,24 @@ std::unique_ptr<Style::ComputedStyle> Resolver::styleForPage(int pageIndex)
     if (!documentElement || !documentElement->renderStyle())
         return Style::ComputedStyle::createPtr();
 
-    auto state = State(*documentElement, document().initialContainingBlockStyle(), nullptr, nullptr);
+    // The page context inherits from the root element. https://drafts.csswg.org/css-page-3/#page-properties
+    CheckedPtr rootElementStyle = documentElement->renderStyle();
 
-    state.setStyle(Style::ComputedStyle::createPtr());
-    state.style()->inheritFrom(*state.rootElementStyle());
+    auto style = Style::ComputedStyle::createPtrWithRegisteredInitialValues(document().customPropertyRegistry());
+    style->inheritFrom(*rootElementStyle);
 
-    PageRuleCollector collector(m_ruleSets, documentElement->renderStyle()->writingMode());
+    PageRuleCollector collector(m_ruleSets, rootElementStyle->writingMode());
     collector.matchAllPageRules(pageIndex);
 
-    auto& result = collector.matchResult();
-
-    Builder builder(*state.style(), builderContext(state), result);
+    Builder builder(*style, {
+        .document = document(),
+        .parentStyle = rootElementStyle.get(),
+        .rootElementStyle = rootElementStyle.get(),
+        .element = documentElement,
+    }, collector.matchResult());
     builder.applyAllProperties();
 
-    // Now return the style.
-    return state.takeStyle();
+    return style;
 }
 
 std::unique_ptr<Style::ComputedStyle> Resolver::defaultStyleForElement(const Element* element)
@@ -745,8 +748,10 @@ Vector<Ref<const StyleRule>> Resolver::pseudoStyleRulesForElement(const Element*
             collector.matchUserRules();
     }
 
-    if (m_matchAuthorAndUserStyles && (rulesToInclude & AuthorCSSRules))
+    if (m_matchAuthorAndUserStyles && (rulesToInclude & AuthorCSSRules)) {
         collector.matchAuthorRules();
+        collector.matchQuirkRules();
+    }
 
     return collector.matchedRuleList();
 }

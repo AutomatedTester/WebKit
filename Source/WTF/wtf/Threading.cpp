@@ -94,7 +94,7 @@ ThreadSuspendLocker::~ThreadSuspendLocker()
 }
 #endif
 
-static std::optional<size_t> LEGACY_NODELETE stackSize(ThreadType threadType)
+NODELETE static std::optional<size_t> stackSize(ThreadType threadType)
 {
     // Return the stack size for the created thread based on its type.
     // If the stack size is not specified, then use the system default. Platforms can tune the values here.
@@ -232,7 +232,7 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
 {
     Function<void()> function;
     {
-        // Ref is already incremented by Thread::create.
+        // Ref is already incremented by Thread::tryCreate.
         Ref context = adoptRef(*newThreadContext);
         // Block until our creating thread has completed any extra setup work, including establishing ThreadIdentifier.
         MutexLocker locker(context->mutex);
@@ -263,6 +263,13 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
 
 Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
 {
+    RefPtr thread = tryCreate(name, WTF::move(entryPoint), threadType, qos, schedulingPolicy, stackSpec);
+    RELEASE_ASSERT(thread);
+    return thread.releaseNonNull();
+}
+
+RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+{
     WTF::initialize();
 
     Ref thread = adoptRef(*new Thread(qos, schedulingPolicy, Thread::IsMain::No));
@@ -277,7 +284,10 @@ Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, Thr
                 stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
         }
         bool success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
-        RELEASE_ASSERT(success);
+        if (!success) {
+            context->deref();
+            return nullptr;
+        }
 
 #if HAVE(STACK_BOUNDS_FOR_NEW_THREAD)
         thread->m_stack = StackBounds::newThreadStackBounds(thread->m_handle);
@@ -368,8 +378,7 @@ void Thread::registerGCThread(GCThreadType gcThreadType)
 
 bool Thread::mayBeGCThread()
 {
-    // TODO: FIX THIS
-    return Thread::currentSingleton().gcThreadType() != GCThreadType::None || Thread::currentSingleton().m_isCompilationThread;
+    return Thread::currentSingleton().gcThreadType() != GCThreadType::None;
 }
 
 void Thread::registerJSThread(Thread& thread)
@@ -414,7 +423,7 @@ void Thread::setCurrentThreadQOS(QOS qos)
 }
 
 #if HAVE(QOS_CLASSES)
-static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
+NODELETE static Thread::QOS toQOS(qos_class_t qosClass)
 {
     switch (qosClass) {
     case QOS_CLASS_USER_INTERACTIVE:
@@ -433,12 +442,13 @@ static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
 }
 #endif
 
-auto Thread::currentThreadQOS() -> QOS
+auto Thread::currentThreadQOS() -> std::optional<QOS>
 {
 #if HAVE(QOS_CLASSES)
-    qos_class_t qos = QOS_CLASS_DEFAULT;
-    int relativePriority;
-    pthread_get_qos_class_np(pthread_self(), &qos, &relativePriority);
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    pthread_get_qos_class_np(pthread_self(), &qos, nullptr);
+    if (qos == QOS_CLASS_UNSPECIFIED)
+        return std::nullopt;
     return toQOS(qos);
 #else
     return currentSingleton().qos();

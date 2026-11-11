@@ -124,7 +124,7 @@ String animatedPropertyIDAsString(AnimatedProperty property)
 }
 
 using RepaintMap = HashMap<const GraphicsLayer*, Vector<FloatRect>>;
-static RepaintMap& LEGACY_NODELETE repaintRectMap()
+NODELETE static RepaintMap& repaintRectMap()
 {
     static NeverDestroyed<RepaintMap> map;
     return map;
@@ -166,7 +166,7 @@ public:
     static EmptyGraphicsLayerClient& singleton();
 };
 
-EmptyGraphicsLayerClient& LEGACY_NODELETE EmptyGraphicsLayerClient::singleton()
+NODELETE EmptyGraphicsLayerClient& EmptyGraphicsLayerClient::singleton()
 {
     static NeverDestroyed<EmptyGraphicsLayerClient> client;
     return client;
@@ -193,6 +193,7 @@ GraphicsLayer::GraphicsLayer(Type type, GraphicsLayerClient& layerClient)
     , m_showFrameProcessBorders(false)
     , m_isMaskLayer(false)
     , m_isBackdropRoot(false)
+    , m_hidesFromScreenCapture(false)
     , m_isTrackingDisplayListReplay(false)
     , m_userInteractionEnabled(true)
     , m_canDetachBackingStore(true)
@@ -799,7 +800,7 @@ void GraphicsLayer::setZPosition(float position)
     m_zPosition = position;
 }
 
-static inline const FilterOperations& LEGACY_NODELETE filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
+NODELETE static inline const FilterOperations& filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
 {
     return downcast<GraphicsLayerFilterAnimationValue>(valueList.at(index)).value();
 }
@@ -903,8 +904,7 @@ void GraphicsLayer::dumpLayer(TextStream& ts, OptionSet<LayerTreeAsTextOptions> 
     ts << indent << '(' << "GraphicsLayer"_s;
 
     if (options & LayerTreeAsTextOptions::Debug) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
+        ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
         ts << " \"" << m_name << '"';
     }
 
@@ -991,6 +991,9 @@ void GraphicsLayer::dumpProperties(TextStream& ts, OptionSet<LayerTreeAsTextOpti
 
     if (m_isBackdropRoot)
         ts << indent << "(backdropRoot "_s << m_isBackdropRoot << ")\n"_s;
+
+    if (m_hidesFromScreenCapture)
+        ts << indent << "(hidesFromScreenCapture "_s << m_hidesFromScreenCapture << ")\n"_s;
 
     if (options & LayerTreeAsTextOptions::Debug)
         ts << indent << "(primary-layer-id "_s << primaryLayerID() << ")\n"_s;

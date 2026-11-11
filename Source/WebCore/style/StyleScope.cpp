@@ -56,6 +56,7 @@
 #include "RuleSet.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGStyleElement.h"
+#include "ScriptDisallowedScope.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "StyleDocumentScope.h"
@@ -126,16 +127,23 @@ void Scope::createOrFindSharedShadowTreeResolver()
 
     auto key = makeResolverSharingKey();
 
-    auto result = documentScope().m_sharedShadowTreeResolvers.ensure(WTF::move(key), [&] {
+    if (RefPtr existingResolver = documentScope().m_sharedShadowTreeResolvers.get(key)) {
+        m_resolver = WTF::move(existingResolver);
+        m_resolver->setSharedBetweenShadowTrees();
+        return;
+    }
+
+    {
         SetForScope isUpdatingStyleResolver { m_isUpdatingStyleResolver, true };
+        ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
         m_resolver = Resolver::create(m_document, Resolver::ScopeType::ShadowTree);
 
         m_resolver->ruleSets().setUsesSharedUserStyle(!isForUserAgentShadowTree());
         protect(m_resolver)->appendAuthorStyleSheets(m_activeStyleSheets);
+    }
 
-        return protect(*m_resolver);
-    });
+    auto result = documentScope().m_sharedShadowTreeResolvers.add(WTF::move(key), protect(*m_resolver));
 
     if (!result.isNewEntry) {
         m_resolver = result.iterator->value.ptr();
@@ -633,6 +641,7 @@ void Scope::updateResolver(std::span<const Ref<CSSStyleSheet>> activeStyleSheets
         unshareShadowTreeResolverBeforeMutation();
 
     SetForScope isUpdatingStyleResolver { m_isUpdatingStyleResolver, true };
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     if (updateType == ResolverUpdateType::Reset) {
         customPropertyRegistry().clearRegisteredFromStylesheets();
@@ -703,9 +712,9 @@ void Scope::flushPendingDescendantUpdates()
 {
     ASSERT(m_hasDescendantWithPendingUpdate);
     ASSERT(!m_shadowRoot);
+    ScriptDisallowedScope::InMainThread scriptDisallowedScope;
     for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().flushPendingUpdate();
+        const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().flushPendingUpdate();
     }
     m_hasDescendantWithPendingUpdate = false;
 }
@@ -768,11 +777,11 @@ void Scope::didChangeViewportSize()
         if (!m_document->hasStyleWithViewportUnits())
             return;
 
+        ScriptDisallowedScope::InMainThread scriptDisallowedScope;
         for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
             if (descendantShadowRoot->mode() == ShadowRootMode::UserAgent)
                 continue;
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().didChangeViewportSize();
+            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().didChangeViewportSize();
         }
     }
 
@@ -813,9 +822,9 @@ void Scope::didChangeViewportSize()
 void Scope::invalidateMatchedDeclarationsCache()
 {
     if (!m_shadowRoot) {
+        ScriptDisallowedScope::InMainThread scriptDisallowedScope;
         for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-            // FIXME: Remove suppression once rdar://189998365 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().invalidateMatchedDeclarationsCache();
+            const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().invalidateMatchedDeclarationsCache();
         }
     }
 

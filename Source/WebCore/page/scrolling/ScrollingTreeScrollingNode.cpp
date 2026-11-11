@@ -264,8 +264,7 @@ FloatPoint ScrollingTreeScrollingNode::minimumScrollPosition() const
 FloatPoint ScrollingTreeScrollingNode::maximumScrollPosition() const
 {
     FloatPoint contentSizePoint(totalContentsSize());
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto maximumScrollOffset = FloatPoint(contentSizePoint - scrollableAreaSize()).expandedTo(FloatPoint());
+    auto maximumScrollOffset = FloatPoint(contentSizePoint - scrollableAreaSize()).expandedTo(FloatPoint());
     return ScrollableArea::scrollPositionFromOffset(maximumScrollOffset, toFloatSize(scrollOrigin()));
 }
 
@@ -378,15 +377,21 @@ void ScrollingTreeScrollingNode::didStopWheelEventScroll()
         scrollingTree()->scrollingTreeNodeDidStopWheelEventScroll(*this);
 }
 
-bool ScrollingTreeScrollingNode::startAnimatedScrollToPosition(FloatPoint destinationPosition)
+bool ScrollingTreeScrollingNode::startAnimatedScrollToPosition(FloatPoint destinationPosition, ScrollAnimationCurve curve)
 {
-    return m_delegate ? m_delegate->startAnimatedScrollToPosition(destinationPosition) : false;
+    return m_delegate ? m_delegate->startAnimatedScrollToPosition(destinationPosition, curve) : false;
 }
 
 void ScrollingTreeScrollingNode::stopAnimatedScroll(EnumSet<AnimatedScrollType> scrollTypesToStop)
 {
     if (m_delegate)
         m_delegate->stopAnimatedScroll(scrollTypesToStop);
+}
+
+void ScrollingTreeScrollingNode::stopSpringAnimation()
+{
+    if (m_delegate)
+        m_delegate->stopSpringAnimation();
 }
 
 void ScrollingTreeScrollingNode::serviceScrollAnimation(MonotonicTime currentTime)
@@ -458,7 +463,12 @@ void ScrollingTreeScrollingNode::handleScrollPositionRequest(const RequestedScro
 
     auto destinationPosition = requestedScrollData.destinationPosition(currentScrollPosition());
     if (isAnimatedUpdate(requestedScrollData.requestType)) {
-        startAnimatedScrollToPosition(destinationPosition);
+        // The animation can complete synchronously (e.g. UIScrollView may not animate). Respond first, because
+        // the web process ignores scroll updates that arrive before the response to its latest request.
+        scopeExit.release();
+        if (tree)
+            tree->didHandleScrollRequestForNode(scrollingNodeID(), requestedScrollData.requestType, currentScrollPosition(), shouldFireScrollEnd, requestedScrollData.identifier);
+        startAnimatedScrollToPosition(destinationPosition, requestedScrollData.animationCurve);
         return;
     }
 

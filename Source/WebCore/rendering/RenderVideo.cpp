@@ -210,7 +210,7 @@ NaturalDimensions RenderVideo::zoomedNaturalDimensions() const
 {
     if (protect(videoElement())->shouldDisplayPosterImage())
         return RenderImage::zoomedNaturalDimensions();
-    return RenderReplaced::zoomedNaturalDimensions();
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 IntRect RenderVideo::videoBox() const
@@ -263,8 +263,7 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     if (objectFit != ObjectFit::Cover && objectFit != ObjectFit::Contain)
         return std::nullopt;
 
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto naturalSize = FloatSize(posterAwareIntrinsicSize());
+    auto naturalSize = FloatSize(posterAwareIntrinsicSize());
     auto subrect = resolvedObjectViewBox(naturalSize);
     if (!subrect)
         return std::nullopt;
@@ -277,8 +276,7 @@ std::optional<LayoutRect> RenderVideo::objectFitContentsRectForFullscreenComposi
     // the whole natural frame. The result is the oversized (cover) or undersized (contain)
     // full-frame rect to use as the contents rect; the destination rect itself (unchanged)
     // remains the clip.
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST auto destRect = FloatRect(dest);
+    auto destRect = FloatRect(dest);
     float scale = objectFit == ObjectFit::Cover
         ? std::max(destRect.width() / subrect->width(), destRect.height() / subrect->height())
         : std::min(destRect.width() / subrect->width(), destRect.height() / subrect->height());
@@ -474,7 +472,7 @@ void RenderVideo::styleDidChange(Style::Difference difference, const Style::Comp
     }
 }
 
-HTMLVideoElement& LEGACY_NODELETE RenderVideo::videoElement() const
+NODELETE HTMLVideoElement& RenderVideo::videoElement() const
 {
     return downcast<HTMLVideoElement>(RenderMedia::mediaElement());
 }
@@ -482,6 +480,11 @@ HTMLVideoElement& LEGACY_NODELETE RenderVideo::videoElement() const
 RefPtr<ShareableBitmap> RenderVideo::createShareableBitmap(const CreateShareableBitmapFromImageOptions&) const
 {
     return protect(videoElement())->bitmapImageForCurrentTimeSync();
+}
+
+Ref<NativePromise<Ref<ShareableBitmap>, void>> RenderVideo::createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions&) const
+{
+    return protect(videoElement())->bitmapImageForCurrentTime();
 }
 
 void RenderVideo::updateFromElement()

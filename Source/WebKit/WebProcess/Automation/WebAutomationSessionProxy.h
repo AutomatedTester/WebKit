@@ -30,6 +30,8 @@
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSBase.h>
 #include <JavaScriptCore/PrivateName.h>
+#include <WebCore/BoxExtents.h>
+#include <WebCore/FloatSize.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PageIdentifier.h>
@@ -109,12 +111,14 @@ private:
     void resolveParentFrame(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FrameIdentifier>)>&&);
     void focusFrame(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(Inspector::CommandResult<void>)>&&);
     void computeElementLayout(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, bool scrollIntoViewIfNeeded, CoordinateSystem, CompletionHandler<void(std::optional<String>, WebCore::FloatRect, std::optional<WebCore::IntPoint>, bool)>&&);
+    void frameViewportInLayoutViewport(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(std::optional<String>, std::optional<WebCore::FloatRect>)>&&);
     void getComputedRole(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, CompletionHandler<void(std::optional<String>, std::optional<String>)>&&);
     void getComputedLabel(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, CompletionHandler<void(std::optional<String>, std::optional<String>)>&&);
     void consumeUserActivation(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(std::optional<String>, bool)>&&);
     void selectOptionElement(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, CompletionHandler<void(std::optional<String>)>&&);
     void setFilesForInputFileUpload(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, Vector<String>&& filenames, CompletionHandler<void(std::optional<String>)>&&);
     void takeScreenshot(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&, String&&)>&&);
+    void documentRectForScreenshot(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<String>, WebCore::IntRect&&)>&&);
     void snapshotRectForScreenshot(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String nodeHandle, bool scrollIntoViewIfNeeded, bool clipToViewport, CompletionHandler<void(std::optional<String>, WebCore::IntRect&&)>&&);
     void getCookiesForFrame(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(std::optional<String>, Vector<WebCore::Cookie>)>&&);
     void deleteCookie(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, String cookieName, CompletionHandler<void(std::optional<String>)>&&);
@@ -124,6 +128,7 @@ private:
     void scriptRealmCreated(WebCore::FrameIdentifier, const WebCore::SecurityOriginData&) override;
     void scriptRealmDestroyed(WebCore::FrameIdentifier) override;
     void ensureRealmForInitialEmptyDocument(WebCore::PageIdentifier);
+    void printBidiPage(WebCore::PageIdentifier, std::optional<WebCore::FrameIdentifier>, bool background, WebCore::FloatSize pageSizeInCentimeters, WebCore::FloatBoxExtent marginInCentimeters, double scale, bool shrinkToFit, Vector<std::pair<uint64_t, uint64_t>>&& pageRanges, CompletionHandler<void(String&&, String&&)>&&);
 #endif
 
     String m_sessionIdentifier;

@@ -172,6 +172,9 @@ void NetworkLoadChecker::checkRedirection(ResourceRequest&& request, ResourceReq
     if (m_options.mode == FetchOptions::Mode::Navigate)
         appendToNavigationTimingAllowValuesList(redirectResponse);
 
+    if (!isSameOrigin(m_url, protect(m_origin)) && !SecurityOrigin::create(m_url)->isSameOriginAs(SecurityOrigin::create(redirectRequest.url())))
+        m_hasCrossOriginRedirectTaint = true;
+
     m_previousURL = WTF::move(m_url);
     m_url = redirectRequest.url();
 
@@ -205,37 +208,12 @@ void NetworkLoadChecker::checkRedirection(ResourceRequest&& request, ResourceReq
     });
 }
 
-static URL contextURLforCORPViolation(NetworkResourceLoader& loader)
+static std::optional<ResourceError> performCORPCheck(const CrossOriginEmbedderPolicy& embedderCOEP, const DocumentIsolationPolicy& documentIsolationPolicy, const SecurityOrigin& embedderOrigin, const URL& url, ResourceResponse& response, ForNavigation forNavigation, NetworkResourceLoader* loader, const WebCore::OriginAccessPatterns& patterns)
 {
-    auto& url = loader.isMainResource() ? loader.parameters().parentFrameURL : loader.parameters().frameURL;
-    return url.isValid() ? url : aboutBlankURL();
-}
-
-// https://fetch.spec.whatwg.org/#cross-origin-resource-policy-check
-static std::optional<ResourceError> performCORPCheck(const CrossOriginEmbedderPolicy& embedderCOEP, DocumentIsolationPolicy documentIsolationPolicy, const SecurityOrigin& embedderOrigin, const URL& url, ResourceResponse& response, ForNavigation forNavigation, NetworkResourceLoader* loader, const WebCore::OriginAccessPatterns& patterns)
-{
-    if (auto error = validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue::UnsafeNone, DocumentIsolationPolicy::None, embedderOrigin, url, response, forNavigation, patterns))
-        return error;
-
-    if (embedderCOEP.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP && loader) {
-        if (auto error = validateCrossOriginResourcePolicy(embedderCOEP.reportOnlyValue, DocumentIsolationPolicy::None, embedderOrigin, url, response, forNavigation, patterns))
-            sendCOEPCORPViolation(*loader, contextURLforCORPViolation(*loader), embedderCOEP.reportOnlyReportingEndpoint, COEPDisposition::Reporting, loader->parameters().options.destination, loader->firstResponseURL());
-    }
-
-    if (embedderCOEP.value == CrossOriginEmbedderPolicyValue::RequireCORP) {
-        if (auto error = validateCrossOriginResourcePolicy(embedderCOEP.value, DocumentIsolationPolicy::None, embedderOrigin, url, response, forNavigation, patterns)) {
-            if (loader)
-                sendCOEPCORPViolation(*loader, contextURLforCORPViolation(*loader), embedderCOEP.reportingEndpoint, COEPDisposition::Enforce, loader->parameters().options.destination, loader->firstResponseURL());
-            return error;
-        }
-    }
-
-    // FIXME: Queue document isolation policy CORP violation reports.
-    if (documentIsolationPolicy == DocumentIsolationPolicy::IsolateAndRequireCORP) {
-        if (auto error = validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue::UnsafeNone, documentIsolationPolicy, embedderOrigin, url, response, forNavigation, patterns))
-            return error;
-    }
-    return std::nullopt;
+    if (!loader)
+        return performCrossOriginResourcePolicyCheck(embedderCOEP, documentIsolationPolicy, embedderOrigin, url, response, forNavigation, patterns, nullptr);
+    CORPViolationReportContext reportContext { *loader, loader->contextURLForReport(), loader->parameters().options.destination, loader->firstResponseURL() };
+    return performCrossOriginResourcePolicyCheck(embedderCOEP, documentIsolationPolicy, embedderOrigin, url, response, forNavigation, patterns, &reportContext);
 }
 
 ResourceError NetworkLoadChecker::validateResponse(const ResourceRequest& request, ResourceResponse& response)
@@ -266,7 +244,7 @@ ResourceError NetworkLoadChecker::validateResponse(const ResourceRequest& reques
 
     if (m_options.mode == FetchOptions::Mode::Navigate || m_isSameOriginRequest) {
         if (m_parentOrigin && m_options.mode == FetchOptions::Mode::Navigate) {
-            if (auto error = performCORPCheck(m_parentCrossOriginEmbedderPolicy, DocumentIsolationPolicy::None, *m_parentOrigin, m_url, response, ForNavigation::Yes, RefPtr { m_networkResourceLoader.get() }.get(), originAccessPatterns()))
+            if (auto error = performCORPCheck(m_parentCrossOriginEmbedderPolicy, { }, *m_parentOrigin, m_url, response, ForNavigation::Yes, RefPtr { m_networkResourceLoader }.get(), originAccessPatterns()))
                 return WTF::move(*error);
         }
         response.setTainting(ResourceResponse::Tainting::Basic);
@@ -310,7 +288,7 @@ bool NetworkLoadChecker::checkTAO(const ResourceResponse& response)
         const auto& timingAllowOriginString = response.httpHeaderField(HTTPHeaderName::TimingAllowOrigin);
         for (auto originWithSpace : StringView(timingAllowOriginString).split(',')) {
             auto origin = originWithSpace.trim(isASCIIWhitespaceWithoutFF<char16_t>);
-            if (origin == "*"_s || origin == protect(m_origin)->toString())
+            if (origin == "*"_s || (!m_hasCrossOriginRedirectTaint && origin == protect(m_origin)->toString()))
                 return true;
         }
     }

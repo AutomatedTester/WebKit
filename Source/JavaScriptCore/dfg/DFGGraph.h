@@ -275,7 +275,7 @@ public:
     void packNodeIndices();
     void clearAbstractValues();
 
-    void LEGACY_NODELETE dethread();
+    NODELETE void dethread();
     
     FrozenValue* freeze(JSValue); // We use weak freezing by default.
     FrozenValue* freezeStrong(JSValue); // Shorthand for freeze(value)->strengthenTo(StrongValue).
@@ -315,7 +315,7 @@ public:
 
     void dump(PrintStream&, DumpContext*);
 
-    bool LEGACY_NODELETE terminalsAreValid();
+    NODELETE bool terminalsAreValid();
     
     enum PhiNodeDumpMode { DumpLivePhisOnly, DumpAllPhis };
     void dumpBlockHeader(PrintStream&, const char* prefix, BasicBlock*, PhiNodeDumpMode, DumpContext*);
@@ -357,6 +357,99 @@ public:
             pass);
     }
     
+    // Tests if the absolute value is strictly less than the power of two.
+    template<int power>
+    bool isWithinPowerOfTwoForConstant(Node* node)
+    {
+        JSValue immediateValue = node->asJSValue();
+        if (!immediateValue.isNumber())
+            return false;
+        double immediate = immediateValue.asNumber();
+        return isInteger(immediate) && immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
+    }
+
+    template<int power>
+    bool isWithinPowerOfTwo(Node* node)
+    {
+        switch (node->op()) {
+        case DoubleConstant:
+        case JSConstant:
+        case Int52Constant: {
+            return isWithinPowerOfTwoForConstant<power>(node);
+        }
+
+        // Fixup wraps operands in these representation changes, which preserve the value.
+        case Identity:
+        case ValueRep:
+        case DoubleRep:
+        case Int52Rep:
+            return isWithinPowerOfTwo<power>(node->child1());
+
+        case GetByVal: {
+            // Before fixup the array mode is only a guess, which fixup can widen into a generic access.
+            if (!afterFixup())
+                return false;
+            ArrayMode arrayMode = node->arrayMode();
+            if (!arrayMode.isInBounds())
+                return false;
+            TypedArrayType arrayType = arrayMode.typedArrayType();
+            return isInt(arrayType) && elementSize(arrayType) * 8 <= power;
+        }
+
+        case ValueBitAnd:
+        case ArithBitAnd: {
+            if (power > 31)
+                return true;
+
+            // (x & mask) is only bounded by |mask| when mask is non-negative; a negative
+            // mask preserves the sign bit and the result can span the full int32 range.
+            auto isNonNegativeMaskWithinPower = [](Node* operand) {
+                if (!operand->isNumberConstant())
+                    return false;
+                double immediate = operand->asNumber();
+                return immediate >= 0 && immediate < (static_cast<int64_t>(1) << power);
+            };
+            return isNonNegativeMaskWithinPower(node->child1().node())
+                || isNonNegativeMaskWithinPower(node->child2().node());
+        }
+
+        case ArithBitOr:
+        case ArithBitXor:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ArithBitLShift: {
+            return power > 31;
+        }
+
+        case ArithBitRShift:
+        case ValueBitRShift:
+        case ArithBitURShift:
+        case ValueBitURShift: {
+            if (power > 31)
+                return true;
+
+            Node* shiftAmount = node->child2().node();
+            if (!shiftAmount->isNumberConstant())
+                return false;
+            JSValue immediateValue = shiftAmount->asJSValue();
+            if (!immediateValue.isInt32())
+                return false;
+            // Shifting right by k = (count & 31) leaves |result| < 2^(32 - k), for both >> and >>>.
+            return (immediateValue.asInt32() & 31) > 31 - power;
+        }
+
+        default:
+            return false;
+        }
+    }
+
+    template<int power>
+    bool isWithinPowerOfTwo(Edge edge)
+    {
+        return isWithinPowerOfTwo<power>(edge.node());
+    }
+
     AddSpeculationMode arithAddSpeculationMode(Node* add, PredictionPass pass)
     {
         return addSpeculationMode(
@@ -455,7 +548,20 @@ public:
         return Node::shouldSpeculateInt32OrBooleanForArithmetic(left, right)
             && node->canSpeculateInt32(node->sourceFor(pass));
     }
-    
+
+    // A wrapping int32 multiply matches ToInt32 of the double product only when that product is exact.
+    bool mulProductIsExact(Node* node)
+    {
+        return isWithinPowerOfTwo<22>(node->child1()) || isWithinPowerOfTwo<22>(node->child2());
+    }
+
+    bool mulShouldSpeculateInt32(Node* node, PredictionPass pass)
+    {
+        if (!binaryArithShouldSpeculateInt32(node, pass))
+            return false;
+        return !nodeMayOverflowInt32(node->arithNodeFlags(), node->sourceFor(pass)) || mulProductIsExact(node);
+    }
+
     bool binaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
     {
         Node* left = node->child1().node();
@@ -478,26 +584,6 @@ public:
             && node->canSpeculateInt52(pass)
             && !hasExitSite(node, Int52Overflow);
     }
-
-#if USE(BIGINT32)
-    bool binaryArithShouldSpeculateBigInt32(Node* node, PredictionPass pass)
-    {
-        if (!node->canSpeculateBigInt32(pass))
-            return false;
-        if (hasExitSite(node, BigInt32Overflow))
-            return false;
-        return Node::shouldSpeculateBigInt32(node->child1().node(), node->child2().node());
-    }
-
-    bool unaryArithShouldSpeculateBigInt32(Node* node, PredictionPass pass)
-    {
-        if (!node->canSpeculateBigInt32(pass))
-            return false;
-        if (hasExitSite(node, BigInt32Overflow))
-            return false;
-        return node->child1()->shouldSpeculateBigInt32();
-    }
-#endif
 
     bool binaryArithShouldSpeculateHeapBigInt(Node* node)
     {
@@ -525,7 +611,7 @@ public:
             return false;
 
         SpeculatedType prediction = node->child1()->prediction();
-        return prediction && !(prediction & ~(SpecHeapBigInt | SpecOther));
+        return isHeapBigIntSpeculation(prediction & ~SpecOther);
     }
 
     bool variadicArithShouldSpeculateInt32(Node* node, PredictionPass pass)
@@ -555,7 +641,7 @@ public:
         return arithRound->canSpeculateInt32(pass) && !hasExitSite(arithRound->origin.semantic, Overflow) && !hasExitSite(arithRound->origin.semantic, NegativeZero);
     }
     
-    static ASCIILiteral LEGACY_NODELETE opName(NodeType);
+    NODELETE static ASCIILiteral opName(NodeType);
     
     RegisteredStructureSet* addStructureSet(const StructureSet& structureSet)
     {
@@ -760,16 +846,16 @@ public:
     // any GetLocals in the basic block.
     // FIXME: it may be appropriate, in the future, to generalize this to handle GetLocals
     // introduced anywhere in the basic block.
-    void LEGACY_NODELETE substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
+    NODELETE void substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
     
     void invalidateCFG();
     void invalidateNodeLiveness();
     
-    void LEGACY_NODELETE clearFlagsOnAllNodes(NodeFlags);
+    NODELETE void clearFlagsOnAllNodes(NodeFlags);
     
-    void LEGACY_NODELETE clearReplacements();
-    void LEGACY_NODELETE clearEpochs();
-    void LEGACY_NODELETE initializeNodeOwners();
+    NODELETE void clearReplacements();
+    NODELETE void clearEpochs();
+    NODELETE void initializeNodeOwners();
     
     BlockList blocksInPreOrder();
     BlockList blocksInPostOrder();
@@ -1081,6 +1167,41 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::PromiseSpeciesWatchpointSet);
     }
 
+
+    enum class ProtocolWatchResult : uint8_t {
+        // Nothing can be proven about the relevant protocol for this value. We have to assume the
+        // worst and check at runtime.
+        Unwatchable,
+
+        // The relevant protocol has been proven to be the primordial one.
+        //
+        // For nodes that perform the protocol on some operand, the AbstractValue's proven
+        // StructureSet has been watched to prove the protocol is still intact. We have to use the
+        // AbstractValue for this because the runtime value could be from a different realm or have
+        // a structure where the protocol has been mutated.
+        //
+        // For nodes that operate on primitive operands or use the protocol for an allocation strategy
+        // they may not need the AbstractValue.
+        Proven,
+
+        // This only occurs for iteration protocols and only when canSpeculate is true.
+        //
+        // There is not enough AbstractValue information to prove statically that all structures
+        // have the original protocol. The realm of the iterable's semantic origin was watched so
+        // the caller can speculate on that realm's original structures at runtime. This is a true
+        // speculation because the iterable's semantic CodeOrigin might still be different from
+        // the runtime value. The most obvious case is that iterable could be a Phi or GetLocal.
+        RequiresSemanticStructureCheck,
+    };
+
+    std::pair<ProtocolWatchResult, RegisteredStructureSet> tryWatchArrayIteratorProtocol(Node* iterable, const AbstractValue&, bool canSpeculate = false);
+    std::pair<ProtocolWatchResult, RegisteredStructure> tryWatchSetIteratorProtocol(Node* iterable, const AbstractValue&, bool canSpeculate = false);
+
+    // NOTE: It's only safe to use this if:
+    // 1) The node is an allocation so we intrinsically know something about it's structure
+    // 2) It's used in a pass that has some sort of escape analysis to detect mutations (e.g. ArgumentsElimination or ObjectAllocationSinking)
+    bool isWatchingAllArrayIteratorProtocolWatchpointsForAllocation(Node* allocation);
+
     Profiler::Compilation* compilation() { return m_plan.compilation(); }
 
     DesiredIdentifiers& identifiers() LIFETIME_BOUND { return m_plan.identifiers(); }
@@ -1202,6 +1323,7 @@ public:
             auto instruction = codeBlock->instructions().at(bytecodeIndex.offset());
             switch (instruction->opcodeID()) {
             case op_call_varargs:
+            case op_call_varargs_with_spread:
             case op_tail_call_varargs:
             case op_construct_varargs:
             case op_super_construct_varargs:
@@ -1234,7 +1356,7 @@ public:
             functor(virtualRegisterForArgumentIncludingThis(argument));
     }
 
-    static unsigned LEGACY_NODELETE parameterSlotsForArgCount(unsigned);
+    NODELETE static unsigned parameterSlotsForArgCount(unsigned);
     
     unsigned frameRegisterCount();
     unsigned stackPointerOffset();
@@ -1258,8 +1380,6 @@ public:
 
     ObjectPropertyConditionSet tryEnsureAbsence(JSGlobalObject*, const StructureSet&, CacheableIdentifier);
 
-    bool canDoFastSpread(Node*, const AbstractValue&);
-    bool canDoFastSpreadWithStructureCheck(Node*);
     static constexpr IndexingType originalArrayShapesForSpread[] = {
         CopyOnWriteArrayWithContiguous, ArrayWithContiguous,
         ArrayWithInt32, CopyOnWriteArrayWithInt32,

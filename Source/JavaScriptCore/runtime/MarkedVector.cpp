@@ -195,7 +195,7 @@ auto MarkedVectorBase::expandCapacity(unsigned newCapacity) -> Status
     return Status::Success;
 }
 
-auto MarkedVectorBase::slowAppend(JSValue v) -> Status
+NEVER_INLINE auto MarkedVectorBase::slowAppend(JSValue v) -> Status
 {
     ASSERT(m_size <= m_capacity);
     if (m_size == m_capacity) {

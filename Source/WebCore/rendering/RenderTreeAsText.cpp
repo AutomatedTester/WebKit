@@ -58,7 +58,6 @@
 #include "RenderElementInlines.h"
 #include "RenderFileUploadControl.h"
 #include "RenderFragmentContainer.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerInlines.h"
@@ -67,7 +66,6 @@
 #include "RenderListItem.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
-#include "RenderQuote.h"
 #include "RenderSVGContainer.h"
 #include "RenderSVGGradientStop.h"
 #include "RenderSVGInlineText.h"
@@ -184,7 +182,7 @@ String quoteAndEscapeNonPrintables(StringView s)
     return result.toString();
 }
 
-inline bool LEGACY_NODELETE shouldEnableSubpixelPrecisionForTextDump(const Document& document)
+NODELETE inline bool shouldEnableSubpixelPrecisionForTextDump(const Document& document)
 {
     // If LBSE is activated and the document contains outermost <svg> elements, generate the text
     // representation with subpixel precision. It would be awkward to only see the SVG part of a
@@ -199,7 +197,9 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
     if (behavior.contains(RenderAsTextFlag::ShowAddresses))
         ts << ' ' << &o;
 
-    if (auto value = o.style().usedZIndex().tryValue(); value && value->value) // FIXME: This should log even when value->value is zero.
+    // Text dumps the z-index of its parent.
+    CheckedRef zIndexStyle = is<RenderText>(o) ? o.parent()->style() : o.style();
+    if (auto value = zIndexStyle->usedZIndex().tryValue(); value && value->value) // FIXME: This should log even when value->value is zero.
         ts << " zI: "_s << value->value;
 
     if (o.node()) {
@@ -222,8 +222,8 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
         r = text->linesBoundingBox();
     else if (auto* br = dynamicDowncast<RenderLineBreak>(o); br && br->isBR())
         r = br->linesBoundingBox();
-    else if (auto* inlineFlow = dynamicDowncast<RenderInline>(o))
-        r = inlineFlow->borderBoxRectInContainer();
+    else if (o.isInlineBox())
+        r = downcast<RenderBoxModelObject>(o).borderBoxRectInContainer();
     else if (auto* cell = dynamicDowncast<RenderTableCell>(o)) {
         // FIXME: Deliberately dump the "inner" box of table cells, since that is what current results reflect.  We'd like
         // to clean up the results to dump both the outer box and the intrinsic padding so that both bits of information are
@@ -475,13 +475,13 @@ static inline void writeTextRuns(TextStream& ts, auto& textRenderer)
     auto writeTextRun = [&] (auto& textRun) {
         ts << indent;
 
-        auto rect = textRun.visualRectIgnoringBlockDirection();
+        auto rect = textRun.blockStartRelativePhysicalRect();
         int x = rect.x();
         int y = rect.y();
         // FIXME: Use non-logical width. webkit.org/b/206809.
         int logicalWidth = ceilf(rect.x() + (textRun.isHorizontal() ? rect.width() : rect.height())) - x;
         // FIXME: Table cell adjustment is temporary until results can be updated.
-        if (auto* tableCell = dynamicDowncast<RenderTableCell>(*textRenderer.containingBlock()))
+        if (auto* tableCell = dynamicDowncast<RenderTableCell>(textRun.formattingContextRoot()))
             y -= floorToInt(tableCell->intrinsicPaddingBefore());
 
         ts << "text run at ("_s << x << ',' << y << ") width "_s << logicalWidth;
@@ -849,7 +849,7 @@ String externalRepresentation(LocalFrame* frame, OptionSet<RenderAsTextFlag> beh
     ASSERT(frame->document());
 
     if (!(behavior.contains(RenderAsTextFlag::DontUpdateLayout)) && frame->view())
-        protect(protect(frame)->view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
+        protect(frame->view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
 
     CheckedPtr renderer = frame->contentRenderer();
     if (!renderer)
@@ -880,7 +880,7 @@ String externalRepresentation(Element* element, OptionSet<RenderAsTextFlag> beha
     ASSERT(!(behavior.contains(RenderAsTextFlag::PrintingMode)));
 
     if (!(behavior.contains(RenderAsTextFlag::DontUpdateLayout)) && element->document().view())
-        protect(protect(element)->document().view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
+        protect(element->document().view())->updateLayoutAndStyleIfNeededRecursive({ LayoutOptions::IgnorePendingStylesheets, LayoutOptions::UpdateCompositingLayers });
 
     CheckedPtr renderer = dynamicDowncast<RenderBox>(element->renderer());
     if (!renderer)

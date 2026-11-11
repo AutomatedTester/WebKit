@@ -49,7 +49,7 @@ public:
     };
 
     using HTTPVersionProbe = Function<HTTPVersion()>;
-    WEBCORE_EXPORT static Ref<PendingStreamState> create();
+    NODELETE WEBCORE_EXPORT static Ref<PendingStreamState> create();
     WEBCORE_EXPORT ~PendingStreamState();
 
     // Data provider API
@@ -67,7 +67,7 @@ public:
     ReadResult readInto(std::span<uint8_t>);
     using TakeResult = std::expected<std::pair<Deque<Ref<SharedBuffer>>, bool>, int>;
     WEBCORE_EXPORT TakeResult takeAvailableChunks();
-    bool hasReadyData();
+    NODELETE bool hasReadyData();
     WEBCORE_EXPORT void cancel();
 
     WEBCORE_EXPORT void setHTTPVersionProbe(HTTPVersionProbe&&);

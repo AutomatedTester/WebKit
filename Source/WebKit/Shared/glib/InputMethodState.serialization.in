@@ -42,9 +42,11 @@ header: "InputMethodState.h"
     UppercaseWords,
     UppercaseSentences,
     InhibitOnScreenKeyboard,
+    Private,
 };
 
 struct WebKit::InputMethodState {
     WebKit::InputMethodState::Purpose purpose;
+    WebCore::EnterKeyHint enterKeyHint;
     OptionSet<WebKit::InputMethodState::Hint> hints;
 };

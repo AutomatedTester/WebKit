@@ -85,6 +85,7 @@
 #include "InspectorHistory.h"
 #include "InspectorIdentifierRegistry.h"
 #include "InspectorNodeFinder.h"
+#include "InspectorObjectIdentifier.h"
 #include "InspectorOverlayConfigParser.h"
 #include "InspectorPageAgent.h"
 #include "InstrumentingAgents.h"
@@ -113,6 +114,7 @@
 #include "RenderStyleConstants.h"
 #include "ScriptController.h"
 #include "SelectorChecker.h"
+#include "Settings.h"
 #include "ShadowRoot.h"
 #include "StaticNodeList.h"
 #include "StyleComputedStyle.h"
@@ -130,7 +132,6 @@
 #include "WebInjectedScriptManager.h"
 #include "XPathResult.h"
 #include "markup.h"
-#include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/InjectedScript.h>
 #include <JavaScriptCore/InjectedScriptManager.h>
 #include <JavaScriptCore/InspectorDebuggerAgent.h>
@@ -217,7 +218,7 @@ private:
 
 class EventFiredCallback final : public EventListener {
 public:
-    static Ref<EventFiredCallback> create(InspectorDOMAgent& domAgent)
+    NODELETE static Ref<EventFiredCallback> create(InspectorDOMAgent& domAgent)
     {
         return adoptRef(*new EventFiredCallback(domAgent));
     }
@@ -596,7 +597,7 @@ void InspectorDOMAgent::discardBindings()
     m_childrenRequested.clear();
 }
 
-static RefPtr<Element> LEGACY_NODELETE elementToPushForStyleable(const Styleable& styleable)
+NODELETE static RefPtr<Element> elementToPushForStyleable(const Styleable& styleable)
 {
     auto& element = styleable.element;
     // FIXME: We want to get rid of PseudoElement.
@@ -1235,7 +1236,7 @@ Inspector::Protocol::ErrorStringOr<std::tuple<String /* searchId */, int /* resu
         finder.performSearch(m_document.get());
     }
 
-    auto searchId = IdentifiersFactory::createIdentifier();
+    auto searchId = generateInspectorObjectIdentifierString();
 
     auto& resultsVector = m_searchResults.add(searchId, Vector<RefPtr<Node>>()).iterator->value;
     for (auto& result : finder.results())
@@ -1906,6 +1907,34 @@ Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> InspectorDO
     return nodeId;
 }
 
+Inspector::Protocol::ErrorStringOr<Inspector::Protocol::DOM::NodeId> InspectorDOMAgent::requestFrameOwner(const Inspector::Protocol::Network::FrameId& frameId)
+{
+    auto parsedFrameId = IdentifierRegistry::parseProtocolFrameId(frameId);
+    if (!parsedFrameId)
+        return makeUnexpected("Invalid frameId format"_s);
+
+    // Compare the FrameIdentifier only: the hosting process in a frame ID can be stale in a process that
+    // holds a RemoteFrame. Do not look below a RemoteFrame: the frames there are reached through their own
+    // FrameDOMAgent, and an owner element in their documents is not part of this agent's tree.
+    for (RefPtr frame = &m_inspectedPage->mainFrame(); frame; frame = is<LocalFrame>(*frame) ? frame->tree().traverseNext() : frame->tree().traverseNextSkippingChildren()) {
+        if (frame->frameID() != parsedFrameId->second)
+            continue;
+
+        RefPtr ownerElement = frame->ownerElement();
+        if (!ownerElement)
+            return makeUnexpected("Missing owner element for given frameId"_s);
+
+        Inspector::Protocol::ErrorString errorString;
+        auto nodeId = pushNodePathToFrontend(errorString, ownerElement.get());
+        if (!nodeId)
+            return makeUnexpected("Unable to push the owner element for given frameId"_s);
+
+        return nodeId;
+    }
+
+    return makeUnexpected("Missing frame for given frameId"_s);
+}
+
 String InspectorDOMAgent::documentURLString(Document* document)
 {
     if (!document || document->url().isNull())
@@ -1918,7 +1947,7 @@ String InspectorDOMAgent::documentBaseURLString(Document* document)
     return document->encodingParseURL(emptyString()).string();
 }
 
-static bool LEGACY_NODELETE pseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
+NODELETE static bool pseudoElementType(PseudoElementType pseudoElementType, Inspector::Protocol::DOM::PseudoType* type)
 {
     switch (pseudoElementType) {
     case PseudoElementType::Before:
@@ -1932,7 +1961,7 @@ static bool LEGACY_NODELETE pseudoElementType(PseudoElementType pseudoElementTyp
     }
 }
 
-static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE shadowRootType(ShadowRootMode mode)
+NODELETE static Inspector::Protocol::DOM::ShadowRootType shadowRootType(ShadowRootMode mode)
 {
     switch (mode) {
     case ShadowRootMode::UserAgent:
@@ -1947,7 +1976,7 @@ static Inspector::Protocol::DOM::ShadowRootType LEGACY_NODELETE shadowRootType(S
     return Inspector::Protocol::DOM::ShadowRootType::UserAgent;
 }
 
-static Inspector::Protocol::DOM::CustomElementState LEGACY_NODELETE customElementState(const Element& element)
+NODELETE static Inspector::Protocol::DOM::CustomElementState customElementState(const Element& element)
 {
     if (element.isDefinedCustomElement())
         return Inspector::Protocol::DOM::CustomElementState::Custom;
@@ -2030,6 +2059,8 @@ Ref<Inspector::Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* 
     if (RefPtr element = dynamicDowncast<Element>(*node)) {
         value->setAttributes(buildArrayForElementAttributes(element.get()));
         if (RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(*element)) {
+            if (RefPtr contentFrame = frameOwner->contentFrame(); contentFrame && protect(frameOwner->document())->settings().siteIsolationEnabled())
+                value->setContentFrameId(IdentifierRegistry::protocolFrameId(*contentFrame));
             if (RefPtr document = frameOwner->contentDocument())
                 value->setContentDocument(buildObjectForNode(document.get(), 0));
         }
@@ -2564,7 +2595,7 @@ Ref<Inspector::Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildO
     return value;
 }
 
-static bool LEGACY_NODELETE containsOnlyASCIIWhitespace(Node* node)
+NODELETE static bool containsOnlyASCIIWhitespace(Node* node)
 {
     // FIXME: Respect ignoreWhitespace setting from inspector front end?
     // This static is invoked during node deletion so cannot use RefPtr.
@@ -2627,21 +2658,28 @@ void InspectorDOMAgent::didCommitLoad(Document* document)
     if (m_inspectedNode && &m_inspectedNode->document() == document)
         m_inspectedNode = nullptr;
 
-    RefPtr<Element> frameOwner = document->ownerElement();
-    if (!frameOwner)
-        return;
+    if (RefPtr frameOwner = document->ownerElement())
+        resendFrameOwner(*frameOwner);
+}
 
-    auto frameOwnerId = boundNodeId(frameOwner.get());
+void InspectorDOMAgent::frameOwnerContentFrameChanged(HTMLFrameOwnerElement& frameOwner)
+{
+    resendFrameOwner(frameOwner);
+}
+
+void InspectorDOMAgent::resendFrameOwner(HTMLFrameOwnerElement& frameOwner)
+{
+    auto frameOwnerId = boundNodeId(&frameOwner);
     if (!frameOwnerId)
         return;
 
     // Re-add frame owner element together with its new children.
-    auto parentId = boundNodeId(protect(innerParentNode(frameOwner.get())));
+    auto parentId = boundNodeId(protect(innerParentNode(&frameOwner)));
     m_frontendDispatcher->childNodeRemoved(parentId, frameOwnerId);
-    unbind(*frameOwner);
+    unbind(frameOwner);
 
-    auto value = buildObjectForNode(frameOwner.get(), 0);
-    RefPtr previousSibling = innerPreviousSibling(frameOwner.get());
+    auto value = buildObjectForNode(&frameOwner, 0);
+    RefPtr previousSibling = innerPreviousSibling(&frameOwner);
     auto prevId = boundNodeId(previousSibling.get());
     m_frontendDispatcher->childNodeInserted(parentId, prevId, WTF::move(value));
 }
@@ -2779,9 +2817,6 @@ void InspectorDOMAgent::didModifyDOMAttr(Element& element, const AtomString& nam
     if (!id)
         return;
 
-    if (CheckedPtr cssAgent = Ref { m_instrumentingAgents.get() }->enabledCSSAgent())
-        cssAgent->didModifyDOMAttr(element);
-
     m_frontendDispatcher->attributeModified(id, name, value);
 }
 
@@ -2790,9 +2825,6 @@ void InspectorDOMAgent::didRemoveDOMAttr(Element& element, const AtomString& nam
     auto id = boundNodeId(&element);
     if (!id)
         return;
-
-    if (CheckedPtr cssAgent = Ref { m_instrumentingAgents.get() }->enabledCSSAgent())
-        cssAgent->didModifyDOMAttr(element);
 
     m_frontendDispatcher->attributeRemoved(id, name);
 }
@@ -3158,7 +3190,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::setAllowEditingUserA
 }
 
 #if ENABLE(VIDEO)
-static Inspector::Protocol::DOM::VideoProjectionMetadataKind LEGACY_NODELETE videoProjectionMetadataKind(VideoProjectionMetadataKind kind)
+NODELETE static Inspector::Protocol::DOM::VideoProjectionMetadataKind videoProjectionMetadataKind(VideoProjectionMetadataKind kind)
 {
     switch (kind) {
     case VideoProjectionMetadataKind::Unknown:

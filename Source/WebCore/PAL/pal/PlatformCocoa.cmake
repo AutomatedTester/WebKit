@@ -33,6 +33,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     cocoa/MediaToolboxSoftLink.h
     cocoa/NaturalLanguageSoftLink.h
     cocoa/OpenGLSoftLinkCocoa.h
+    cocoa/PDFKitSoftLink.h
     cocoa/PassKitSoftLink.h
     cocoa/QuartzCoreSoftLink.h
     cocoa/RevealSoftLink.h
@@ -80,6 +81,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     spi/cg/CoreGraphicsSPI.h
     spi/cg/ImageIOSPI.h
 
+    spi/cocoa/ARKitSPI.h
     spi/cocoa/AVAssetWriterSPI.h
     spi/cocoa/AVFoundationSPI.h
     spi/cocoa/AVKitSPI.h
@@ -91,6 +93,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     spi/cocoa/AudioToolboxSPI.h
     spi/cocoa/AuthKitSPI.h
     spi/cocoa/CommonCryptoSPI.h
+    spi/cocoa/CompositorServicesSPI.h
     spi/cocoa/ContactsSPI.h
     spi/cocoa/CoreCryptoSPI.h
     spi/cocoa/CoreMaterialSPI.h
@@ -236,7 +239,9 @@ list(APPEND PAL_UNIFIED_SOURCE_LIST_FILES
     "SourcesMac.txt"
 )
 
-else ()
+endif ()
+
+if (WEBKIT_SDK_IS_IOS_FAMILY)
 
 
 list(APPEND PAL_PUBLIC_HEADERS

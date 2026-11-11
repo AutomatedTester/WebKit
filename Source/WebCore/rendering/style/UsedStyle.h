@@ -25,15 +25,12 @@
 
 #pragma once
 
+#include <WebCore/RenderObjectStyle.h>
 #include <WebCore/StyleComputedStyle+GettersInlines.h>
 #include <WebCore/StylePrimitiveNumericTypes+Evaluation.h>
 #include <WebCore/UsedStyleProperties.h>
 
 namespace WebCore {
-
-namespace Layout {
-class Box;
-}
 
 // A lightweight, non-owning view of a renderer's used values, as defined by CSS Cascade &
 // Inheritance: the computed value with any remaining layout-time calculations completed. It wraps
@@ -45,13 +42,10 @@ class Box;
 // values needing bespoke logic (float/clear) are hand-written here.
 class UsedStyle final : public UsedStyleProperties {
 public:
-    explicit UsedStyle(const RenderElement& renderer LIFETIME_BOUND)
+    explicit UsedStyle(const RenderObject& renderer LIFETIME_BOUND)
         : UsedStyleProperties(renderer, renderer.style())
     {
     }
-
-    // For layout-tree (LFC) code. Wraps the renderer the box was built from.
-    explicit UsedStyle(const Layout::Box& layoutBox LIFETIME_BOUND);
 
     // Used values that need bespoke logic, defined out-of-line in UsedStyle.cpp.
     // float/clear map logical and writing-mode-relative values to physical
@@ -65,22 +59,29 @@ public:
     // adjustments, like collapsed table borders, are applied by RenderBoxModelObject::borderTop()
     // and friends.
     template<typename T = LayoutUnit> RectEdges<T> borderWidths() const;
-    LayoutUnit borderTopWidth() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).top()); }
-    LayoutUnit borderRightWidth() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).right()); }
-    LayoutUnit borderBottomWidth() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).bottom()); }
-    LayoutUnit borderLeftWidth() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).left()); }
-    LayoutUnit borderWidthStart() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).start(computedStyle().writingMode())); }
-    LayoutUnit borderWidthEnd() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).end(computedStyle().writingMode())); }
-    LayoutUnit borderWidthBefore() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).before(computedStyle().writingMode())); }
-    LayoutUnit borderWidthAfter() const { return evaluateBorderWidth(Style::effectiveBorderWidths(computedStyle()).after(computedStyle().writingMode())); }
+    LayoutUnit borderTopWidth() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).top()); }
+    LayoutUnit borderRightWidth() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).right()); }
+    LayoutUnit borderBottomWidth() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).bottom()); }
+    LayoutUnit borderLeftWidth() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).left()); }
+    LayoutUnit borderWidthStart() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).start(computedStyle().writingMode())); }
+    LayoutUnit borderWidthEnd() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).end(computedStyle().writingMode())); }
+    LayoutUnit borderWidthBefore() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).before(computedStyle().writingMode())); }
+    LayoutUnit borderWidthAfter() const { return computedStyle().hasZeroEffectiveBorderWidths() ? 0_lu : evaluateZoomed<LayoutUnit>(Style::effectiveBorderWidths(computedStyle()).after(computedStyle().writingMode())); }
+
+    // Zoomed and snapped to device pixels, like the border widths.
+    template<typename T = LayoutUnit> T outlineWidth() const { return evaluateZoomed<T>(Style::effectiveOutlineWidth(computedStyle())); }
+    template<typename T = LayoutUnit> T outlineOffset() const { return evaluateZoomed<T>(Style::effectiveOutlineOffset(computedStyle())); }
+    // How far the outline reaches outside the border box.
+    float outlineSize() const { return Style::effectiveOutlineSize(computedStyle(), computedStyle().usedZoomForLength(), deviceScaleFactor()); }
+    template<typename T = LayoutUnit> T columnRuleWidth() const { return evaluateZoomed<T>(Style::effectiveColumnRuleWidth(computedStyle())); }
 
 private:
-    friend class RenderElement;
+    friend class RenderObject;
 
-    LayoutUnit evaluateBorderWidth(const Style::LineWidth& width) const { return Style::evaluate<LayoutUnit>(width, computedStyle().usedZoomForLength(), computedStyle().deviceScaleFactor()); }
+    float deviceScaleFactor() const { return computedStyle().deviceScaleFactor(); }
+    template<typename T, typename Value> T evaluateZoomed(const Value& value) const { return Style::evaluate<T>(value, computedStyle().usedZoomForLength(), deviceScaleFactor()); }
 
-    // The style must belong to the renderer, as returned by RenderElement::firstLineStyle().
-    UsedStyle(const RenderElement& renderer LIFETIME_BOUND, const Style::ComputedStyle& pseudoElementStyle LIFETIME_BOUND)
+    UsedStyle(const RenderObject& renderer LIFETIME_BOUND, const Style::ComputedStyle& pseudoElementStyle LIFETIME_BOUND)
         : UsedStyleProperties(renderer, pseudoElementStyle)
     {
     }
@@ -88,16 +89,19 @@ private:
 
 template<typename T> RectEdges<T> UsedStyle::borderWidths() const
 {
-    auto zoom = computedStyle().usedZoomForLength();
-    auto deviceScaleFactor = computedStyle().deviceScaleFactor();
+    if (computedStyle().hasZeroEffectiveBorderWidths())
+        return { };
     return RectEdges<T>::map(Style::effectiveBorderWidths(computedStyle()), [&](const auto& width) {
-        return Style::evaluate<T>(width, zoom, deviceScaleFactor);
+        return evaluateZoomed<T>(width);
     });
 }
 
 inline UsedVisibility UsedStyle::visibility() const
 {
-    if (m_renderer->isForceHiddenByLineClamp() || computedStyle().isForceHidden()) [[unlikely]]
+    // Text is hidden with its parent.
+    const RenderObject& renderer = m_renderer;
+    auto& element = renderer.isRenderElement() ? uncheckedDowncast<RenderElement>(renderer) : *renderer.parent();
+    if (element.isForceHiddenByLineClamp() || computedStyle().isForceHidden()) [[unlikely]]
         return UsedVisibility::Hidden;
     return computedStyle().visibility() == Visibility::Visible ? UsedVisibility::Visible : UsedVisibility::Hidden;
 }

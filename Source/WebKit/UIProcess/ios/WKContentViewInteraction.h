@@ -46,6 +46,7 @@
 #import "TransactionID.h"
 #import "UIKitSPI.h"
 #import "WKBrowserEngineDefinitions.h"
+#import "WKClickHighlightController.h"
 #import "WKMouseInteraction.h"
 #import "WKTextAnimationManagerIOS.h"
 #import "WKTextSelectionRect.h"
@@ -98,6 +99,7 @@ class TextStream;
 
 namespace WebCore {
 class Color;
+class CornerRadii;
 class FloatQuad;
 class FloatRect;
 class IntSize;
@@ -153,7 +155,6 @@ enum class PickerDismissalReason : uint8_t;
 @class WKHighlightLongPressGestureRecognizer;
 @class WKImageAnalysisGestureRecognizer;
 @class WKInspectorNodeSearchGestureRecognizer;
-@class WKTapHighlightView;
 @class WKTargetedPreviewContainer;
 @class WKTextInteractionWrapper;
 @class WKTextRange;
@@ -429,7 +430,7 @@ struct ImageAnalysisContextMenuActionData {
     RetainPtr<UITextInputTraits> _legacyTextInputTraits;
     RetainPtr<WKExtendedTextInputTraits> _extendedTextInputTraits;
     RetainPtr<WKFormAccessoryView> _formAccessoryView;
-    RetainPtr<WKTapHighlightView> _tapHighlightView;
+    RetainPtr<WKClickHighlightController> _clickHighlightController;
     RetainPtr<UIView> _interactionViewsContainerView;
     RetainPtr<WKTargetedPreviewContainer> _contextMenuHintContainerView;
     WeakObjCPtr<UIScrollView> _scrollViewForTargetedPreview;
@@ -524,16 +525,6 @@ struct ImageAnalysisContextMenuActionData {
     WeakObjCPtr<id <UITextInputDelegate>> _inputDelegate;
 
     Markable<WebKit::TapIdentifier> _latestTapID;
-    struct TapHighlightInformation {
-        BOOL nodeHasBuiltInClickHandling { false };
-        WebCore::Color color;
-        Vector<WebCore::FloatQuad> quads;
-        WebCore::IntSize topLeftRadius;
-        WebCore::IntSize topRightRadius;
-        WebCore::IntSize bottomLeftRadius;
-        WebCore::IntSize bottomRightRadius;
-    };
-    TapHighlightInformation _tapHighlightInformation;
 
     WebKit::WebAutocorrectionContext _lastAutocorrectionContext;
     WebKit::WKAutoCorrectionData _autocorrectionData;
@@ -571,12 +562,9 @@ struct ImageAnalysisContextMenuActionData {
 
     BOOL _isEditable;
     BOOL _hasValidPositionInformation;
-    BOOL _isTapHighlightIDValid;
-    BOOL _isTapHighlightFading;
     BOOL _potentialTapInProgress;
     BOOL _isDoubleTapPending;
     BOOL _longPressCanClick;
-    BOOL _hasTapHighlightForPotentialTap;
     BOOL _selectionNeedsUpdate;
     BOOL _shouldRestoreSelection;
     BOOL _usingGestureForSelection;
@@ -584,7 +572,6 @@ struct ImageAnalysisContextMenuActionData {
     BOOL _inspectorNodeSearchEnabled;
     BOOL _isChangingFocusUsingAccessoryTab;
     BOOL _didAccessoryTabInitiateFocus;
-    BOOL _isExpectingFastSingleTapCommit;
     BOOL _showDebugTapHighlightsForFastClicking;
     BOOL _textInteractionDidChangeFocusedElement;
     BOOL _treatAsContentEditableUntilNextEditorStateUpdate;
@@ -613,6 +600,7 @@ struct ImageAnalysisContextMenuActionData {
     BOOL _isUnsuppressingSoftwareKeyboardUsingLastAutocorrectionContext;
     BOOL _waitingForKeyboardAppearanceAnimationToStart;
     BOOL _isHidingKeyboard;
+    BOOL _isResettingTextInteractionGestureRecognizers;
     BOOL _isInterpretingKeyEvent;
     BOOL _isPresentingEditMenu;
     BOOL _isHandlingActiveKeyEvent;
@@ -725,6 +713,7 @@ struct ImageAnalysisContextMenuActionData {
     , UIDropInteractionDelegate
 #endif
     , WKTouchActionGestureRecognizerDelegate
+    , WKClickHighlightControllerDelegate
 #if HAVE(UIFINDINTERACTION)
     , UITextSearching
 #endif
@@ -797,6 +786,7 @@ struct ImageAnalysisContextMenuActionData {
 @property (nonatomic, readonly, getter=_isSuppressingSelectionAssistant) BOOL _suppressingSelectionAssistant;
 
 - (BOOL)_hasFocusedElement;
+- (BOOL)_focusedElementUsesSoftwareKeyboard;
 - (BOOL)_isSameAsFocusedElement:(const WebCore::ElementContext&)context;
 - (void)_zoomToRevealFocusedElement;
 @property (nonatomic, readonly) WebCore::FloatRect rectToRevealWhenZoomingToFocusedElement;
@@ -833,7 +823,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_didCompleteSyntheticClick;
 - (void)_provideSuggestionsToInputDelegate:(NSArray<WKBETextSuggestion *> *)suggestions;
 
-- (void)_didGetTapHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+- (void)_didGetTapHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
 
 - (BOOL)_mayDisableDoubleTapGesturesDuringSingleTap;
 - (void)_disableDoubleTapGesturesDuringTapIfNecessary:(WebKit::TapIdentifier)requestID;
@@ -859,7 +849,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_scrollingNodeScrollingWillBegin:(std::optional<WebCore::ScrollingNodeID>)nodeID;
 - (void)_scrollingNodeScrollingDidEnd:(std::optional<WebCore::ScrollingNodeID>)nodeID;
 - (void)_showPlaybackTargetPicker:(BOOL)hasVideo fromRect:(const WebCore::IntRect&)elementRect routeSharingPolicy:(WebCore::RouteSharingPolicy)policy routingContextUID:(NSString *)contextUID;
-- (void)_showRunOpenPanel:(API::OpenPanelParameters*)parameters frameInfo:(const WebKit::FrameInfoData&)frameInfo resultListener:(WebKit::WebOpenPanelResultListenerProxy*)listener;
+- (BOOL)_showRunOpenPanel:(API::OpenPanelParameters*)parameters frameInfo:(const WebKit::FrameInfoData&)frameInfo resultListener:(WebKit::WebOpenPanelResultListenerProxy*)listener;
 - (void)_showShareSheet:(const WebCore::ShareDataWithParsedURL&)shareData inRect:(std::optional<WebCore::FloatRect>)rect completionHandler:(WTF::CompletionHandler<void(bool)>&&)completionHandler;
 - (void)_showContactPicker:(const WebCore::ContactsRequestData&)requestData completionHandler:(WTF::CompletionHandler<void(std::optional<Vector<WebCore::ContactInfo>>&&)>&&)completionHandler;
 
@@ -937,7 +927,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)modelInteractionPanGestureDidBeginAtPoint:(CGPoint)inputPoint;
 - (void)modelInteractionPanGestureDidUpdateWithPoint:(CGPoint)inputPoint;
 - (void)modelInteractionPanGestureDidEnd;
-- (void)didReceiveInteractiveModelElement:(std::optional<WebCore::NodeIdentifier>)nodeID;
+- (void)didReceiveInteractiveModelElement:(std::optional<WebCore::NodeIdentifier>)nodeID frameID:(std::optional<WebCore::FrameIdentifier>)frameID;
 #endif
 
 - (void)reloadContextViewForPresentedListViewController;

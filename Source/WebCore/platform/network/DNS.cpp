@@ -38,11 +38,8 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-#if OS(UNIX)
+#if OS(UNIX) || OS(QNX)
 #include <arpa/inet.h>
-#endif
-
-#if OS(QNX)
 #include <sys/socket.h>
 #endif
 
@@ -69,6 +66,11 @@ void resolveDNS(const String& hostname, uint64_t identifier, DNSCompletionHandle
 void stopResolveDNS(uint64_t identifier)
 {
     WebCore::DNSResolveQueue::singleton().stopResolve(identifier);
+}
+
+uint64_t prefetchedHostnameCountForTesting()
+{
+    return DNSResolveQueue::singleton().prefetchedHostnameCountForTesting();
 }
 
 // FIXME: Temporary fix until we have rdar://63797758

@@ -113,20 +113,20 @@ Vector<String> IntlNumberFormat::localeData(const String& locale, RelevantExtens
     return numberingSystemsForLocale(locale);
 }
 
-static inline unsigned LEGACY_NODELETE computeCurrencySortKey(const String& currency)
+NODELETE static inline unsigned computeCurrencySortKey(const String& currency)
 {
     ASSERT(currency.length() == 3);
     ASSERT(currency.containsOnly<isASCIIUpper>());
     return (currency[0] << 16) + (currency[1] << 8) + currency[2];
 }
 
-static inline unsigned LEGACY_NODELETE computeCurrencySortKey(const std::array<const char, 3>& currency)
+NODELETE static inline unsigned computeCurrencySortKey(const std::array<const char, 3>& currency)
 {
     ASSERT(containsOnly<isASCIIUpper>(std::span { currency }));
     return (currency[0] << 16) + (currency[1] << 8) + currency[2];
 }
 
-static unsigned LEGACY_NODELETE extractCurrencySortKey(std::pair<std::array<const char, 3>, unsigned>* currencyMinorUnit)
+NODELETE static unsigned extractCurrencySortKey(std::pair<std::array<const char, 3>, unsigned>* currencyMinorUnit)
 {
     return computeCurrencySortKey(currencyMinorUnit->first);
 }
@@ -1448,11 +1448,6 @@ IntlMathematicalValue IntlMathematicalValue::parseString(JSGlobalObject* globalO
             JSValue bigInt = JSBigInt::parseInt(globalObject, vm, remaining, radix, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
             if (!bigInt)
                 return IntlMathematicalValue { PNaN };
-
-#if USE(BIGINT32)
-            if (bigInt.isBigInt32())
-                return IntlMathematicalValue { value.bigInt32AsInt32() };
-#endif
 
             auto* heapBigInt = bigInt.asHeapBigInt();
             auto string = heapBigInt->toString(globalObject, 10);

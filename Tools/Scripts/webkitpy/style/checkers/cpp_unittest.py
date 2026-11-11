@@ -2340,6 +2340,92 @@ class CppStyleTest(CppStyleTestBase):
         self.assert_lint('while (  foo) {', 'Extra space after ( in while'
                          '  [whitespace/parens] [5]')
 
+    def test_raw_strings(self):
+        # The contents of a multi-line raw string with a delimiter are not checked.
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"DL(\n'
+            '(set-state\n'
+            '  (change-flags [should-antialias])\n'
+            '  (should-antialias 0))\n'
+            '(clip-to-native-image\n'
+            '  (dest-rect at (0,1) size 77x99)))DL"_s;\n'
+            '}\n',
+            '', 'foo.cpp')
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"(\n'
+            '  (a,b)\n'
+            ')";\n'
+            '}\n',
+            '', 'foo.cpp')
+
+        # Raw strings that start and end on the same line, with all prefixes.
+        self.assert_lint('foo(R"(a,b [c] (d))", 1);', '')
+        self.assert_lint('foo(R"DL(a,b [c] (d))DL", 1);', '')
+        self.assert_lint('foo(u8R"(a,b)", uR"(a,b)", UR"(a,b)", LR"(a,b)");', '')
+        self.assert_lint('foo(R"(a,b)", R"x(c,d)x");', '')
+
+        # Code before the start and after the end of a raw string is checked.
+        self.assert_lint('foo(bar,R"(a, b)");', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_lint('foo(R"(a, b)",bar);', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_lint('foo(R"DL(a, b)DL",bar);', 'Missing space after ,  [whitespace/comma] [3]')
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar(R"DL(\n'
+            '  (a,b)\n'
+            '  (c,d))DL",baz);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
+        # Code after a multi-line raw string is checked, and line numbers are preserved.
+        code = ('void foo()\n'
+                '{\n'
+                '    bar(R"DL(\n'
+                '  (a,b)\n'
+                '  (c,d))DL");\n'
+                '    baz (1);\n'
+                '}\n')
+        expected = 'Extra space before ( in function call  [whitespace/parens] [4]'
+        self.assert_multi_line_lint(code, expected, 'foo.cpp')
+        self.assertEqual(expected, self.perform_lint(code, 'foo.cpp', [], lines_to_check=[6]))
+        self.assertEqual('', self.perform_lint(code, 'foo.cpp', [], lines_to_check=[3, 4, 5]))
+
+        # )" does not end a raw string with a different delimiter.
+        self.assert_multi_line_lint(
+            'String description()\n'
+            '{\n'
+            '    return R"DL(\n'
+            '(a)"\n'
+            '  (b,c) [d]\n'
+            ')DL";\n'
+            '}\n',
+            '', 'foo.cpp')
+
+        # A raw string content line starting with /* does not start a multi-line comment.
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar(R"DL(\n'
+            '/* (a,b)\n'
+            ')DL");\n'
+            '    baz(a,b);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
+        # R"( inside a string or a comment does not start a raw string.
+        self.assert_multi_line_lint(
+            'void foo()\n'
+            '{\n'
+            '    bar("R\\"(");\n'
+            '    bar(1); // R"(\n'
+            '    baz(a,b);\n'
+            '}\n',
+            'Missing space after ,  [whitespace/comma] [3]', 'foo.cpp')
+
     def test_spacing_for_fncall(self):
         self.assert_lint('if (foo) {', '')
         self.assert_lint('for (foo;bar;baz) {', '')
@@ -3463,25 +3549,62 @@ class CleansedLinesTest(unittest.TestCase):
                  'Line 4 "foo"']
 
         clean_lines = cpp_style.CleansedLines(lines)
-        self.assertEqual(lines, clean_lines.raw_lines)
+        self.assertEqual(lines, clean_lines.lines_without_raw_strings)
         self.assertEqual(4, clean_lines.num_lines())
 
         self.assertEqual(['Line 1',
-                           'Line 2',
-                           'Line 3 ',
-                           'Line 4 "foo"'],
-                          clean_lines.lines)
+                          'Line 2',
+                          'Line 3 ',
+                          'Line 4 "foo"'],
+                         clean_lines.lines)
 
         self.assertEqual(['Line 1',
-                           'Line 2',
-                           'Line 3 ',
-                           'Line 4 ""'],
-                          clean_lines.elided)
+                          'Line 2',
+                          'Line 3 ',
+                          'Line 4 ""'],
+                         clean_lines.elided)
 
     def test_init_empty(self):
         clean_lines = cpp_style.CleansedLines([])
-        self.assertEqual([], clean_lines.raw_lines)
+        self.assertEqual([], clean_lines.lines_without_raw_strings)
         self.assertEqual(0, clean_lines.num_lines())
+
+    def test_init_raw_strings(self):
+        lines = ['    return R"DL(',
+                 '(a,b) // c',
+                 '(d)"',
+                 '  (e)))DL" + f; // g',
+                 'h(R"(i)", 1, u8R"x(j)x"); // k',
+                 'l();']
+
+        clean_lines = cpp_style.CleansedLines(cpp_style.cleanse_raw_strings(lines))
+        self.assertEqual(6, clean_lines.num_lines())
+
+        self.assertEqual(['    return ""',
+                          '    ""',
+                          '    ""',
+                          '    "" + f; // g',
+                          'h("", 1, ""); // k',
+                          'l();'],
+                         clean_lines.lines_without_raw_strings)
+
+        self.assertEqual(['    return ""',
+                          '    ""',
+                          '    ""',
+                          '    "" + f; ',
+                          'h("", 1, ""); ',
+                          'l();'],
+                         clean_lines.elided)
+
+    def test_cleanse_raw_strings(self):
+        cleanse = cpp_style.cleanse_raw_strings
+        self.assertEqual(['f("");'], cleanse(['f(R"(a)");']))
+        self.assertEqual(['f("", "");'], cleanse(['f(R"(a)", R"(b)");']))
+        self.assertEqual(['f("");'], cleanse(['f(LR"(a)");']))
+        self.assertEqual(['f("R\\"(");', 'g();'], cleanse(['f("R\\"(");', 'g();']))
+        self.assertEqual(['f(); // R"(', 'g();'], cleanse(['f(); // R"(', 'g();']))
+        self.assertEqual(['f(FOOR"(a)");'], cleanse(['f(FOOR"(a)");']))
+        self.assertEqual(['f(""', '""', '""'], cleanse(['f(R"(', 'a', 'b']))
 
     def test_collapse_strings(self):
         collapse = cpp_style.CleansedLines.collapse_strings
@@ -6327,6 +6450,43 @@ class WebKitStyleTest(CppStyleTestBase):
             '',
             'foo.cpp')
 
+    def test_likelihood_attribute_placement(self):
+        message = "[[unlikely]] after '{' applies to the first statement in the block, not to the branch. Put it before the '{', e.g. 'if (condition) [[unlikely]] {'.  [readability/braces] [4]"
+        # The existing whitespace checks also complain about this form, so only look for the new error.
+        self.assertIn(message, self.perform_multi_line_lint(
+            '''void f()
+{
+    if (x) { [[unlikely]]
+        g();
+        h();
+    }
+}
+''', 'h'))
+        self.assert_multi_line_lint(
+            '''void f()
+{
+    if (x) {
+        [[unlikely]]
+        g();
+        h();
+    }
+}
+''',
+            message)
+        # Inside a macro definition, where every line ends with a backslash.
+        self.assertIn(message, self.perform_multi_line_lint(
+            '''#define CHECK_THING(x) \\
+    do { \\
+        if (!(x)) { [[unlikely]] \\
+            handleFailure(); \\
+            return; \\
+        } \\
+    } while (0)
+''', 'h'))
+        self.assert_lint('if (x) [[unlikely]] {', '', 'foo.cpp')
+        self.assert_lint('else [[likely]] {', '', 'foo.cpp')
+        self.assert_lint('case 1: [[likely]] {', '', 'foo.cpp')
+
     def test_wtf_make_unique(self):
         self.assert_lint(
              'std::unique_ptr<Foo> foo = WTF::makeUnique<Foo>();',
@@ -6662,6 +6822,90 @@ class WebKitStyleTest(CppStyleTestBase):
             "Avoid using 'unsafePtr()' by extending the lifetime of the Ref."
             "  [runtime/unsafe_get_ptr] [5]",
             'foo.mm')
+
+    def test_redundant_get(self):
+        construct_ref_ptr = "Omit '.get()': construct the 'RefPtr' from the smart pointer itself.  [readability/redundant_get] [4]"
+        construct_ref = "Omit '.get()': construct the 'Ref' from the smart pointer itself.  [readability/redundant_get] [4]"
+        dynamic_downcast = "Omit '.get()': 'dynamicDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        downcast = "Omit '.get()': 'downcast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        is_ = "Omit '.get()': 'is<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        unchecked_downcast = "Omit '.get()': 'uncheckedDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr)
+        self.assert_lint('    RefPtr<Frame> frame = protectedThis->m_frame.get();', construct_ref_ptr)
+        self.assert_lint('    if (RefPtr page = m_page.get())', construct_ref_ptr)
+        self.assert_lint('    if (RefPtr page = m_page.get(); page && !page->isClosed())', construct_ref_ptr)
+        self.assert_lint('    for (RefPtr node = m_nodes[0].get(); node; node = node->parentNode())', construct_ref_ptr)
+        self.assert_lint('    RefPtr connection = m_connections.get(identifier).get();', construct_ref_ptr)
+        self.assert_lint('    WTF::RefPtr<Node> node(m_node.get());', construct_ref_ptr)
+        self.assert_lint('    completionHandler(RefPtr { m_node.get() });', construct_ref_ptr)
+        self.assert_lint('    Ref document = m_document.get();', construct_ref)
+        self.assert_lint('    Ref { m_instrumentingAgents.get() }->enable();', construct_ref)
+        self.assert_lint('    if (RefPtr element = dynamicDowncast<Element>(m_node.get()))', dynamic_downcast)
+        self.assert_lint('    auto& input = downcast<HTMLInputElement>(m_element.get());', downcast)
+        self.assert_lint('    if (is<HTMLInputElement>(m_element.get()))', is_)
+        self.assert_lint('    auto& input = uncheckedDowncast<HTMLInputElement>(m_element.get());', unchecked_downcast)
+        self.assert_lint('    RefPtr element = dynamicDowncast<Element>(m_node.get());', dynamic_downcast)
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr, 'foo.mm')
+        self.assert_lint('    RefPtr protectedThis = weakThis;', '')
+        self.assert_lint('    if (RefPtr element = dynamicDowncast<Element>(m_node))', '')
+        self.assert_lint('    auto ptr = obj.get();', '')
+        self.assert_lint('    auto* node = m_node.get();', '')
+        self.assert_lint('    const RefPtr<Node>& node = m_node.get();', '')
+        self.assert_lint('    append(Vector<RefPtr<Node>> { m_node.get() });', '')
+        self.assert_lint('    append(HashMap<String, RefPtr<Node>> { { name, m_node.get() } });', '')
+        self.assert_lint('    RefPtr frame = m_page.get()->mainFrame();', '')
+        self.assert_lint('    RefPtr node = m_node.get() ? m_node.get() : m_parent.get();', '')
+        self.assert_lint('    RefPtr node = *m_node.get();', '')
+        self.assert_lint('    CheckedPtr renderer = m_renderer.get();', '')
+        self.assert_lint('    process(m_node.get());', '')
+        self.assert_lint('    return m_node.get();', '')
+        self.assert_lint('    if (m_node.get() == node)', '')
+        self.assert_lint('    auto* element = dynamicDowncast<Element>(m_node.get()->parentNode());', '')
+        self.assert_lint('    auto* title = dynamic_objc_cast<NSString>(m_object.get());', '', 'foo.mm')
+        self.assert_lint('    RefPtr page = [webView _page].get();', '', 'foo.mm')
+        self.assert_lint('    if (value.is<String>(m_node.get()))', '')
+        self.assert_lint('    // RefPtr protectedThis = weakThis.get();', '')
+        self.assert_lint('    RefPtr protectedThis = weakThis.get();', construct_ref_ptr, 'Source/JavaScriptCore/runtime/Foo.cpp')
+        self.assert_lint('    auto* function = dynamicDowncast<JSFunction>(m_callee.get());', '', 'Source/JavaScriptCore/runtime/Foo.cpp')
+        self.assert_lint('    return downcast<Target>(source.get());', '', 'Source/WTF/wtf/Foo.h')
+
+    def test_redundant_get_declared_source(self):
+        def assert_redundant_get(code, expected, header=None):
+            unit_test_config = {cpp_style.INCLUDE_IO_INJECTION_KEY: MockIo(header.split('\n'))} if header is not None else {}
+            self.assertEqual(expected, self.perform_lint(code, 'foo.cpp', ('-', '+readability/redundant_get'), unit_test_config))
+
+        def construct(type):
+            return "Omit '.get()': construct the '%s' from the smart pointer itself.  [readability/redundant_get] [4]" % type
+
+        assert_redundant_get('CheckedPtr<RenderObject> m_renderer;\nCheckedPtr renderer = m_renderer.get();', construct('CheckedPtr'))
+        assert_redundant_get('CheckedPtr renderer = m_renderer.get();', construct('CheckedPtr'), '    std::unique_ptr<RenderObject> m_renderer;')
+        assert_redundant_get('CheckedRef layer = m_layer.get();', construct('CheckedRef'), '    const UniqueRef<RenderLayer> m_layer;')
+        assert_redundant_get('void run(const RefPtr<Node>& node)\n{\n    WeakPtr weakNode = node.get();\n}', construct('WeakPtr'))
+        assert_redundant_get('void run(Ref<Node>&& node)\n{\n    SingleThreadWeakPtr weakNode = node.get();\n}', construct('SingleThreadWeakPtr'))
+        assert_redundant_get('ThreadSafeWeakPtr<Client> m_client;\nThreadSafeWeakPtr<Client> client = m_client.get();', construct('ThreadSafeWeakPtr'))
+        assert_redundant_get('auto task = [weakThis = WeakPtr { *this }] {\n    CheckedPtr checkedThis = weakThis.get();\n};', construct('CheckedPtr'))
+        assert_redundant_get('CheckedPtr layer = m_layer.get();', '')
+        assert_redundant_get('CheckedPtr layer = m_layer.get();', '', '    InlineWeakPtr<RenderLayer> m_layer;')
+        assert_redundant_get('CheckedPtr<Frame> m_frame;\nWeakPtr frame = m_frame.get();', '')
+        assert_redundant_get('RefPtr<Node> m_node;\nWeakPtr<Node> m_node;\nCheckedPtr node = m_node.get();', '')
+        assert_redundant_get('RefPtr document = m_document.get();', '', '    WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;')
+        assert_redundant_get('RefPtr document = m_document.get();', construct('RefPtr'), '    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;')
+        assert_redundant_get('Ref page = m_page.get();', '', '    RefPtr<Page> m_page;')
+        assert_redundant_get('RetainPtr<NSString> m_title;\nRetainPtr title = m_title.get();', construct('RetainPtr'))
+        assert_redundant_get('RetainPtr view = m_view.get();', '', '    WeakObjCPtr<NSView> m_view;')
+        assert_redundant_get('void run(Ref<Client>&& client)\n{\n    ThreadSafeWeakPtr<Client> weakClient { client.get() };\n}', construct('ThreadSafeWeakPtr'))
+        assert_redundant_get('void run(Ref<Client>&& client)\n{\n    ThreadSafeWeakPtr weakClient { client.get() };\n}', '')
+        dynamic_downcast = "Omit '.get()': 'dynamicDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        is_ = "Omit '.get()': 'is<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        downcast = "Omit '.get()': 'downcast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        unchecked_downcast = "Omit '.get()': 'uncheckedDowncast<>()' takes the smart pointer itself.  [readability/redundant_get] [4]"
+        assert_redundant_get('auto* context = dynamicDowncast<GPUCanvasContext>(m_context.get());', dynamic_downcast, '    std::unique_ptr<CanvasRenderingContext> m_context;')
+        assert_redundant_get('auto& runLoop = downcast<WorkerMainRunLoop>(m_runLoop.get());', downcast, '    const UniqueRef<WorkerRunLoop> m_runLoop;')
+        assert_redundant_get('auto& node = uncheckedDowncast<Expression>(m_node.get());', unchecked_downcast, '    std::unique_ptr<Node> m_node;')
+        assert_redundant_get('bool isGPU = is<GPUCanvasContext>(m_context.get());', is_, '    std::unique_ptr<CanvasRenderingContext> m_context;')
+        assert_redundant_get('auto* element = dynamicDowncast<Element>(m_node.get());', dynamic_downcast, '    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_node;')
+        assert_redundant_get('auto& element = uncheckedDowncast<Element>(m_node.get());', '', '    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_node;')
+        assert_redundant_get('auto& part = downcast<ButtonPart>(m_owningPart.get());', '', '    ThreadSafeWeakRef<ControlPart> m_owningPart;')
 
     def test_wtf_never_destroyed(self):
         self.assert_lint(

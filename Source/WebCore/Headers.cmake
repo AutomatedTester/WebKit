@@ -144,178 +144,43 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/WebGPU/GPUVertexFormat.h
     Modules/WebGPU/GPUVertexState.h
     Modules/WebGPU/GPUVertexStepMode.h
+    Modules/WebGPU/WebGPU.h
+    Modules/WebGPU/WebGPUCanvasConfiguration.h
+    Modules/WebGPU/WebGPUColorTargetState.h
+    Modules/WebGPU/WebGPUCompositorIntegration.h
+    Modules/WebGPU/WebGPUComputePipelineDescriptor.h
+    Modules/WebGPU/WebGPUCppAPI.h
+    Modules/WebGPU/WebGPUDepthStencilState.h
+    Modules/WebGPU/WebGPUDevice.h
+    Modules/WebGPU/WebGPUDeviceDescriptor.h
+    Modules/WebGPU/WebGPUDeviceLostInfo.h
+    Modules/WebGPU/WebGPUError.h
+    Modules/WebGPU/WebGPUExternalTextureDescriptor.h
+    Modules/WebGPU/WebGPUFragmentState.h
+    Modules/WebGPU/WebGPUImageCopyExternalImage.h
+    Modules/WebGPU/WebGPUImageCopyTextureTagged.h
+    Modules/WebGPU/WebGPUInternalError.h
+    Modules/WebGPU/WebGPUObjectDescriptorBase.h
+    Modules/WebGPU/WebGPUOutOfMemoryError.h
+    Modules/WebGPU/WebGPUPipelineDescriptorBase.h
+    Modules/WebGPU/WebGPUPredefinedColorSpace.h
+    Modules/WebGPU/WebGPUPresentationContextDescriptor.h
+    Modules/WebGPU/WebGPUProgrammableStage.h
+    Modules/WebGPU/WebGPURenderBundleEncoderDescriptor.h
+    Modules/WebGPU/WebGPURenderPassLayout.h
+    Modules/WebGPU/WebGPURenderPipelineDescriptor.h
+    Modules/WebGPU/WebGPUShaderModuleCompilationHint.h
+    Modules/WebGPU/WebGPUShaderModuleDescriptor.h
+    Modules/WebGPU/WebGPUSupportedFeatures.h
+    Modules/WebGPU/WebGPUSupportedLimits.h
+    Modules/WebGPU/WebGPUValidationError.h
+    Modules/WebGPU/WebGPUVertexBufferLayout.h
+    Modules/WebGPU/WebGPUVertexState.h
+    Modules/WebGPU/WebGPUXRLayerBacking.h
 
-    Modules/WebGPU/Implementation/WebGPUAPIUtilities.h
-    Modules/WebGPU/Implementation/WebGPUAdapterImpl.h
-    Modules/WebGPU/Implementation/WebGPUBindGroupImpl.h
-    Modules/WebGPU/Implementation/WebGPUBindGroupLayoutImpl.h
-    Modules/WebGPU/Implementation/WebGPUBufferImpl.h
-    Modules/WebGPU/Implementation/WebGPUCommandBufferImpl.h
-    Modules/WebGPU/Implementation/WebGPUCommandEncoderImpl.h
     Modules/WebGPU/Implementation/WebGPUCompositorIntegrationImpl.h
-    Modules/WebGPU/Implementation/WebGPUComputePassEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPUComputePipelineImpl.h
-    Modules/WebGPU/Implementation/WebGPUConvertToBackingContext.h
     Modules/WebGPU/Implementation/WebGPUCreateImpl.h
-    Modules/WebGPU/Implementation/WebGPUDeviceImpl.h
-    Modules/WebGPU/Implementation/WebGPUDowncastConvertToBackingContext.h
-    Modules/WebGPU/Implementation/WebGPUExternalTextureImpl.h
     Modules/WebGPU/Implementation/WebGPUImpl.h
-    Modules/WebGPU/Implementation/WebGPUPipelineLayoutImpl.h
-    Modules/WebGPU/Implementation/WebGPUPresentationContextImpl.h
-    Modules/WebGPU/Implementation/WebGPUPtr.h
-    Modules/WebGPU/Implementation/WebGPUQuerySetImpl.h
-    Modules/WebGPU/Implementation/WebGPUQueueImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderBundleEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderBundleImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderPassEncoderImpl.h
-    Modules/WebGPU/Implementation/WebGPURenderPipelineImpl.h
-    Modules/WebGPU/Implementation/WebGPUSamplerImpl.h
-    Modules/WebGPU/Implementation/WebGPUShaderModuleImpl.h
-    Modules/WebGPU/Implementation/WebGPUTextureImpl.h
-    Modules/WebGPU/Implementation/WebGPUTextureViewImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRBindingImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRProjectionLayerImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRSubImageImpl.h
-    Modules/WebGPU/Implementation/WebGPUXRViewImpl.h
-
-    Modules/WebGPU/InternalAPI/WebGPU.h
-    Modules/WebGPU/InternalAPI/WebGPUAdapter.h
-    Modules/WebGPU/InternalAPI/WebGPUAddressMode.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroup.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroupDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroupEntry.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroupLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroupLayoutDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUBindGroupLayoutEntry.h
-    Modules/WebGPU/InternalAPI/WebGPUBlendComponent.h
-    Modules/WebGPU/InternalAPI/WebGPUBlendFactor.h
-    Modules/WebGPU/InternalAPI/WebGPUBlendOperation.h
-    Modules/WebGPU/InternalAPI/WebGPUBlendState.h
-    Modules/WebGPU/InternalAPI/WebGPUBuffer.h
-    Modules/WebGPU/InternalAPI/WebGPUBufferBinding.h
-    Modules/WebGPU/InternalAPI/WebGPUBufferBindingLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUBufferBindingType.h
-    Modules/WebGPU/InternalAPI/WebGPUBufferDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUBufferUsage.h
-    Modules/WebGPU/InternalAPI/WebGPUCanvasAlphaMode.h
-    Modules/WebGPU/InternalAPI/WebGPUCanvasConfiguration.h
-    Modules/WebGPU/InternalAPI/WebGPUCanvasToneMappingMode.h
-    Modules/WebGPU/InternalAPI/WebGPUColor.h
-    Modules/WebGPU/InternalAPI/WebGPUColorTargetState.h
-    Modules/WebGPU/InternalAPI/WebGPUColorWrite.h
-    Modules/WebGPU/InternalAPI/WebGPUCommandBuffer.h
-    Modules/WebGPU/InternalAPI/WebGPUCommandBufferDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUCommandEncoder.h
-    Modules/WebGPU/InternalAPI/WebGPUCommandEncoderDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUCompareFunction.h
-    Modules/WebGPU/InternalAPI/WebGPUCompilationInfo.h
-    Modules/WebGPU/InternalAPI/WebGPUCompilationMessage.h
-    Modules/WebGPU/InternalAPI/WebGPUCompilationMessageType.h
-    Modules/WebGPU/InternalAPI/WebGPUCompositorIntegration.h
-    Modules/WebGPU/InternalAPI/WebGPUComputePassDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUComputePassEncoder.h
-    Modules/WebGPU/InternalAPI/WebGPUComputePassTimestampWrites.h
-    Modules/WebGPU/InternalAPI/WebGPUComputePipeline.h
-    Modules/WebGPU/InternalAPI/WebGPUComputePipelineDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUCullMode.h
-    Modules/WebGPU/InternalAPI/WebGPUDepthStencilState.h
-    Modules/WebGPU/InternalAPI/WebGPUDevice.h
-    Modules/WebGPU/InternalAPI/WebGPUDeviceDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUDeviceLostInfo.h
-    Modules/WebGPU/InternalAPI/WebGPUDeviceLostReason.h
-    Modules/WebGPU/InternalAPI/WebGPUError.h
-    Modules/WebGPU/InternalAPI/WebGPUErrorFilter.h
-    Modules/WebGPU/InternalAPI/WebGPUExtent3D.h
-    Modules/WebGPU/InternalAPI/WebGPUExternalTexture.h
-    Modules/WebGPU/InternalAPI/WebGPUExternalTextureBindingLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUExternalTextureDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUFeatureName.h
-    Modules/WebGPU/InternalAPI/WebGPUFilterMode.h
-    Modules/WebGPU/InternalAPI/WebGPUFragmentState.h
-    Modules/WebGPU/InternalAPI/WebGPUFrontFace.h
-    Modules/WebGPU/InternalAPI/WebGPUImageCopyBuffer.h
-    Modules/WebGPU/InternalAPI/WebGPUImageCopyExternalImage.h
-    Modules/WebGPU/InternalAPI/WebGPUImageCopyTexture.h
-    Modules/WebGPU/InternalAPI/WebGPUImageCopyTextureTagged.h
-    Modules/WebGPU/InternalAPI/WebGPUImageDataLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUIndexFormat.h
-    Modules/WebGPU/InternalAPI/WebGPUIntegralTypes.h
-    Modules/WebGPU/InternalAPI/WebGPUInternalError.h
-    Modules/WebGPU/InternalAPI/WebGPULoadOp.h
-    Modules/WebGPU/InternalAPI/WebGPUMapMode.h
-    Modules/WebGPU/InternalAPI/WebGPUMultisampleState.h
-    Modules/WebGPU/InternalAPI/WebGPUObjectDescriptorBase.h
-    Modules/WebGPU/InternalAPI/WebGPUOrigin2D.h
-    Modules/WebGPU/InternalAPI/WebGPUOrigin3D.h
-    Modules/WebGPU/InternalAPI/WebGPUOutOfMemoryError.h
-    Modules/WebGPU/InternalAPI/WebGPUPipelineDescriptorBase.h
-    Modules/WebGPU/InternalAPI/WebGPUPipelineLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUPipelineLayoutDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUPowerPreference.h
-    Modules/WebGPU/InternalAPI/WebGPUPredefinedColorSpace.h
-    Modules/WebGPU/InternalAPI/WebGPUPresentationContext.h
-    Modules/WebGPU/InternalAPI/WebGPUPresentationContextDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUPrimitiveState.h
-    Modules/WebGPU/InternalAPI/WebGPUPrimitiveTopology.h
-    Modules/WebGPU/InternalAPI/WebGPUProgrammableStage.h
-    Modules/WebGPU/InternalAPI/WebGPUQuerySet.h
-    Modules/WebGPU/InternalAPI/WebGPUQuerySetDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUQueryType.h
-    Modules/WebGPU/InternalAPI/WebGPUQueue.h
-    Modules/WebGPU/InternalAPI/WebGPURenderBundle.h
-    Modules/WebGPU/InternalAPI/WebGPURenderBundleDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPURenderBundleEncoder.h
-    Modules/WebGPU/InternalAPI/WebGPURenderBundleEncoderDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassColorAttachment.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassDepthStencilAttachment.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassEncoder.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassLayout.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPassTimestampWrites.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPipeline.h
-    Modules/WebGPU/InternalAPI/WebGPURenderPipelineDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPURequestAdapterOptions.h
-    Modules/WebGPU/InternalAPI/WebGPUSampler.h
-    Modules/WebGPU/InternalAPI/WebGPUSamplerBindingLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUSamplerBindingType.h
-    Modules/WebGPU/InternalAPI/WebGPUSamplerDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUShaderModule.h
-    Modules/WebGPU/InternalAPI/WebGPUShaderModuleCompilationHint.h
-    Modules/WebGPU/InternalAPI/WebGPUShaderModuleDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUShaderStage.h
-    Modules/WebGPU/InternalAPI/WebGPUStencilFaceState.h
-    Modules/WebGPU/InternalAPI/WebGPUStencilOperation.h
-    Modules/WebGPU/InternalAPI/WebGPUStorageTextureAccess.h
-    Modules/WebGPU/InternalAPI/WebGPUStorageTextureBindingLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUStoreOp.h
-    Modules/WebGPU/InternalAPI/WebGPUSupportedFeatures.h
-    Modules/WebGPU/InternalAPI/WebGPUSupportedLimits.h
-    Modules/WebGPU/InternalAPI/WebGPUTexture.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureAspect.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureBindingLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureComponentSwizzle.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureDimension.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureFormat.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureSampleType.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureUsage.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureView.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureViewDescriptor.h
-    Modules/WebGPU/InternalAPI/WebGPUTextureViewDimension.h
-    Modules/WebGPU/InternalAPI/WebGPUUncapturedErrorEventInit.h
-    Modules/WebGPU/InternalAPI/WebGPUValidationError.h
-    Modules/WebGPU/InternalAPI/WebGPUVertexAttribute.h
-    Modules/WebGPU/InternalAPI/WebGPUVertexBufferLayout.h
-    Modules/WebGPU/InternalAPI/WebGPUVertexFormat.h
-    Modules/WebGPU/InternalAPI/WebGPUVertexState.h
-    Modules/WebGPU/InternalAPI/WebGPUVertexStepMode.h
-    Modules/WebGPU/InternalAPI/WebGPUXRBinding.h
-    Modules/WebGPU/InternalAPI/WebGPUXREye.h
-    Modules/WebGPU/InternalAPI/WebGPUXRLayerBacking.h
-    Modules/WebGPU/InternalAPI/WebGPUXRProjectionLayer.h
-    Modules/WebGPU/InternalAPI/WebGPUXRSubImage.h
-    Modules/WebGPU/InternalAPI/WebGPUXRView.h
 
     Modules/airplay/PlaybackTargetClientContextIdentifier.h
     Modules/airplay/WebMediaSessionManager.h
@@ -478,8 +343,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/identity/DigitalCredentialGetRequest.h
     Modules/identity/DigitalCredentialPresentationProtocol.h
     Modules/identity/DigitalCredentialRequestOptions.h
-    Modules/identity/DigitalCredentialsMobileDocumentRequestData.h
-    Modules/identity/DigitalCredentialsOpenID4VPRequestData.h
     Modules/identity/DigitalCredentialsRequestData.h
     Modules/identity/DigitalCredentialsRequestDataBuilder.h
     Modules/identity/DigitalCredentialsResponseData.h
@@ -566,6 +429,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/indexeddb/shared/IDBTransactionInfo.h
     Modules/indexeddb/shared/IndexKey.h
 
+    Modules/mediasession/CallToActionLabel.h
     Modules/mediasession/MediaImage.h
     Modules/mediasession/MediaMetadata.h
     Modules/mediasession/MediaMetadataInit.h
@@ -574,6 +438,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/mediasession/MediaSessionAction.h
     Modules/mediasession/MediaSessionActionDetails.h
     Modules/mediasession/MediaSessionActionHandler.h
+    Modules/mediasession/MediaSessionActionHandlerOptions.h
     Modules/mediasession/MediaSessionArtworkSizing.h
     Modules/mediasession/MediaSessionCoordinator.h
     Modules/mediasession/MediaSessionCoordinatorPrivate.h
@@ -633,6 +498,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/model-element/ModelPlayerTransformState.h
     Modules/model-element/ModelPresentationMode.h
     Modules/model-element/PortalAction.h
+    Modules/model-element/PortalInteractionGesture.h
     Modules/model-element/PortalTransform.h
     Modules/model-element/SpatialPortalController.h
 
@@ -663,14 +529,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/permissions/PermissionState.h
     Modules/permissions/Permissions.h
 
+    Modules/phonenumberpossession/PhoneNumberPossessionCoordinatorClient.h
+    Modules/phonenumberpossession/PhoneNumberPossessionRequest.h
+    Modules/phonenumberpossession/PhoneNumberPossessionResponse.h
+    Modules/phonenumberpossession/PhoneNumberPossessionResponseType.h
+
     Modules/plugins/PluginReplacement.h
     Modules/plugins/YouTubePluginReplacement.h
-
-    Modules/proofofpossession/ProofOfPossessionCoordinatorClient.h
-    Modules/proofofpossession/ProofOfPossessionProviderData.h
-    Modules/proofofpossession/ProofOfPossessionRequest.h
-    Modules/proofofpossession/ProofOfPossessionResponse.h
-    Modules/proofofpossession/ProofOfPossessionResponseScope.h
 
     Modules/push-api/PushCrypto.h
     Modules/push-api/PushDatabase.h
@@ -774,6 +639,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/webauthn/UserVerificationRequirement.h
     Modules/webauthn/WebAuthenticationConstants.h
     Modules/webauthn/WebAuthenticationUtils.h
+    Modules/webauthn/WebAuthnOperationErrorCode.h
     Modules/webauthn/WellKnownOriginList.h
 
     Modules/webauthn/apdu/ApduCommand.h
@@ -817,7 +683,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     Modules/webdriver/NavigatorWebDriverActivePolicy.h
 
-    Modules/websockets/IsInitiatedByDedicatedWorker.h
+    Modules/websockets/IsInitiatedByWorker.h
     Modules/websockets/ThreadableWebSocketChannel.h
     Modules/websockets/WebSocketChannelClient.h
     Modules/websockets/WebSocketChannelInspector.h
@@ -1236,11 +1102,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/values/grid/CSSGridTrackSize.h
 
     css/values/images/CSSGradient.h
+    css/values/images/CSSGradientColorInterpolationMethod.h
 
     css/values/link-params/CSSLinkParameter.h
 
     css/values/motion/CSSRayFunction.h
 
+    css/values/primitives/CSSCoordinatePair.h
     css/values/primitives/CSSCustomIdent.h
     css/values/primitives/CSSDeclarationValue.h
     css/values/primitives/CSSKeyword.h
@@ -1388,6 +1256,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/FullscreenOptions.h
     dom/GCReachableRef.h
     dom/ImageOverlay.h
+    dom/ImmersiveElement.h
     dom/ImportNodeOptions.h
     dom/InlineStyleSheetOwner.h
     dom/IsSecureContext.h
@@ -1764,6 +1633,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/track/WebVTTParser.h
 
     inspector/CommandLineAPIHost.h
+    inspector/DebuggerPauseSessionIdentifier.h
     inspector/FrameInspectorController.h
     inspector/InspectorBackendClient.h
     inspector/InspectorDebuggableType.h
@@ -1998,6 +1868,27 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/cache/MemoryCache.h
     loader/cache/TrustedFonts.h
 
+    loader/images/Image.h
+    loader/images/ImageAdapter.h
+    loader/images/ImageAnimationTimeline.h
+    loader/images/ImageContentSettings.h
+    loader/images/ImageDrawDescriptor.h
+    loader/images/ImageDrawDescriptorTypes.h
+    loader/images/ImageObserver.h
+    loader/images/ImageRenditionOptions.h
+    loader/images/SizedImage.h
+
+    loader/images/bitmap/BitmapImage.h
+    loader/images/bitmap/ImageSource.h
+
+    loader/images/sizing/ConcreteObjectSize.h
+    loader/images/sizing/DefaultSizing.h
+    loader/images/sizing/ImageSizingContext.h
+    loader/images/sizing/NaturalDimensions.h
+    loader/images/sizing/ObjectSizeNegotiation.h
+
+    loader/images/svg/SVGImage.h
+
     page/ActivityState.h
     page/ActivityStateChangeObserver.h
     page/AdjustViewSize.h
@@ -2013,6 +1904,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/CaptionUserPreferencesMediaAF.h
     page/Chrome.h
     page/ChromeClient.h
+    page/ColorAppearance.h
     page/ClientOrigin.h
     page/ContextMenuClient.h
     page/ContextMenuContext.h
@@ -2038,6 +1930,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/DragActions.h
     page/DragClient.h
     page/DragController.h
+    page/DragItem.h
     page/DummySpeechRecognitionProvider.h
     page/EditorClient.h
     page/ElementTargetingController.h
@@ -2065,6 +1958,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/ImageAnalysisQueue.h
     page/ImmediateActionStage.h
     page/InteractionRegion.h
+    page/InteractiveModelElementHitTestResult.h
     page/IntersectionObserverMarginBox.h
     page/IsLoggedIn.h
     page/LayoutMilestone.h
@@ -2124,7 +2018,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteFrameLayoutInfo.h
     page/RemoteFrameView.h
     page/RemoteUserInputEventData.h
-    page/RuntimeQuirkTable.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
     page/ScriptTrackingPrivacyCategory.h
@@ -2268,7 +2161,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/DragData.h
     platform/DragEventTargetData.h
     platform/DragImage.h
-    platform/DragItem.h
     platform/EventTrackingRegions.h
     platform/FileChooser.h
     platform/FileMonitor.h
@@ -2294,10 +2186,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/LowPowerModeNotifier.h
     platform/MIMETypeRegistry.h
     platform/MainThreadSharedTimer.h
+    platform/MediaChannelLayout.h
     platform/MediaDescription.h
     platform/MediaPromiseTypes.h
     platform/MediaSample.h
     platform/MediaSamplesBlock.h
+    platform/MediaSamplesDecoder.h
     platform/MediaSelectionOption.h
     platform/MediaSessionGroupIdentifier.h
     platform/MediaSessionIdentifier.h
@@ -2313,6 +2207,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/PODInterval.h
     platform/PODIntervalTree.h
     platform/PODRedBlackTree.h
+    platform/PacedMediaSamplesDecoder.h
     platform/PageIdentifier.h
     platform/Pasteboard.h
     platform/PasteboardContext.h
@@ -2519,7 +2414,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/AudioVideoRenderer.h
     platform/graphics/BezierUtilities.h
     platform/graphics/BifurcatedGraphicsContext.h
-    platform/graphics/BitmapImage.h
     platform/graphics/CachedSubimage.h
     platform/graphics/Color.h
     platform/graphics/ColorBlending.h
@@ -2538,7 +2432,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ColorTypes.h
     platform/graphics/ColorUtilities.h
     platform/graphics/ComplexTextController.h
-    platform/graphics/ConcreteObjectSize.h
     platform/graphics/ContentTypeUtilities.h
     platform/graphics/ContentsFormat.h
     platform/graphics/CopyImageOptions.h
@@ -2547,7 +2440,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/Damage.h
     platform/graphics/DashArray.h
     platform/graphics/DecodingOptions.h
-    platform/graphics/DefaultSizing.h
     platform/graphics/DisplayRefreshMonitor.h
     platform/graphics/DisplayRefreshMonitorClient.h
     platform/graphics/DisplayRefreshMonitorFactory.h
@@ -2636,8 +2528,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/HEVCUtilities.h
     platform/graphics/HostingContext.h
     platform/graphics/Icon.h
-    platform/graphics/Image.h
-    platform/graphics/ImageAdapter.h
     platform/graphics/ImageBackingStore.h
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
@@ -2649,14 +2539,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBufferTransferIdentifier.h
     platform/graphics/ImageDecoder.h
     platform/graphics/ImageDecoderIdentifier.h
-    platform/graphics/ImageDrawingExtras.h
     platform/graphics/ImageFrame.h
-    platform/graphics/ImageObserver.h
     platform/graphics/ImageOrientation.h
-    platform/graphics/ImagePaintingOptions.h
     platform/graphics/ImageResolution.h
-    platform/graphics/ImageSizingContext.h
-    platform/graphics/ImageSource.h
     platform/graphics/ImageTypes.h
     platform/graphics/ImageUtilities.h
     platform/graphics/ImmersiveVideoMetadata.h
@@ -2697,13 +2582,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/MediaSourcePrivateClient.h
     platform/graphics/MediaTimeUpdateData.h
     platform/graphics/MediaUsageInfo.h
+    platform/graphics/MeshGradient.h
+    platform/graphics/MeshGradientRenderer.h
+    platform/graphics/MeshGradientRendererCPU.h
     platform/graphics/Model.h
     platform/graphics/ModelContext.h
     platform/graphics/NativeImage.h
-    platform/graphics/NaturalDimensions.h
     platform/graphics/NullGraphicsContext.h
     platform/graphics/NullImageBufferBackend.h
-    platform/graphics/ObjectSizeNegotiation.h
     platform/graphics/Path.h
     platform/graphics/PathElement.h
     platform/graphics/PathImpl.h
@@ -2740,6 +2626,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/PlatformVideoTrackConfiguration.h
     platform/graphics/PlatformVideoTransferCharacteristics.h
     platform/graphics/Polygon4D.h
+    platform/graphics/RasterDrawingOptions.h
     platform/graphics/Region.h
     platform/graphics/RenderingMode.h
     platform/graphics/RenderingResource.h
@@ -2750,7 +2637,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ShareableBitmapHandle.h
 
     platform/graphics/ShouldLocalizeAxisNames.h
-    platform/graphics/SizedImage.h
     platform/graphics/SourceBrush.h
     platform/graphics/SourceBrushLogicalGradient.h
     platform/graphics/SourceBufferPrivate.h
@@ -2813,7 +2699,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/coretext/DrawGlyphsRecorder.h
 
     platform/graphics/cv/CVUtilities.h
-    platform/graphics/cv/GraphicsContextGLCV.h
     platform/graphics/cv/ImageRotationSessionVT.h
     platform/graphics/cv/ImageTransferSessionVT.h
     platform/graphics/cv/PixelBufferConformerCV.h
@@ -3130,7 +3015,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/RenderIFrame.h
     rendering/RenderImage.h
     rendering/RenderImageResource.h
-    rendering/RenderInline.h
     rendering/RenderLayer.h
     rendering/ScrollbarUpdateScope.h
     rendering/RenderLayerBacking.h
@@ -3197,7 +3081,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/svg/RenderSVGModelObject.h
     rendering/svg/SVGBoundingBoxComputation.h
     rendering/svg/SVGRenderSupport.h
-    rendering/svg/SVGTextLayoutAttributes.h
     rendering/svg/SVGTextMetrics.h
 
     rendering/svg/legacy/LegacyRenderSVGModelObject.h
@@ -3350,6 +3233,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/color/StyleCurrentColor.h
     style/values/color/StyleDynamicRangeLimit.h
     style/values/color/StyleDynamicRangeLimitMix.h
+    style/values/color/StyleKeywordColor.h
     style/values/color/StyleOpacity.h
     style/values/color/StyleResolvedColor.h
     style/values/color/StyleResolvedColors.h
@@ -3428,7 +3312,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     style/values/grid/StyleGridTrackSizingDirection.h
 
     style/values/images/StyleGradient.h
-    style/values/images/StyleImageDrawingExtras.h
+    style/values/images/StyleGradientColorInterpolationMethod.h
     style/values/images/StyleImageOrNone.h
     style/values/images/StyleImageOrientation.h
     style/values/images/StyleImageWrapper.h
@@ -3508,6 +3392,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     style/values/primitives/StyleCalcSizeValue+Evaluation.h
     style/values/primitives/StyleCalcSizeValue.h
+    style/values/primitives/StyleCoordinatePair.h
     style/values/primitives/StyleCustomIdent.h
     style/values/primitives/StyleDeclarationValue.h
     style/values/primitives/StyleCoordinatedValueList.h
@@ -3676,9 +3561,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     svg/SVGTests.h
     svg/SVGUnitTypes.h
 
-
-    svg/graphics/SVGImage.h
-
     svg/graphics/filters/SVGFilterExpression.h
     svg/graphics/filters/SVGFilterRenderer.h
 
@@ -3694,9 +3576,11 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     testing/MockGamepad.h
     testing/MockGamepadProvider.h
     testing/MockParentalControlsURLFilter.h
+    testing/MockPhoneNumberPossessionConfiguration.h
     testing/MockWebAuthenticationConfiguration.h
     testing/js/WebCoreTestSupport.h
 
+    workers/CanBeCrossOriginIsolated.h
     workers/FetchingWorkerIdentifier.h
     workers/ScriptBuffer.h
     workers/WorkerAnimationController.h
@@ -3851,7 +3735,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/MathMLNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/Namespace.h
     ${WebCore_DERIVED_SOURCES_DIR}/NodeName.h
-    ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorDefinitions.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirkBehaviorID.h
     ${WebCore_DERIVED_SOURCES_DIR}/QuirksAccessors.h
     ${WebCore_DERIVED_SOURCES_DIR}/SVGNames.h
@@ -3873,7 +3756,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 # FIXME: Eventually add all non-installed headers to this list, so that the
 # per-directory -I paths can be removed.
 set(WebCore_PROJECT_HEADERS
+    Modules/webauthn/WebAuthnOperationException.h
     loader/cache/CachedCSSStyleSheet.h
-
     platform/graphics/FloatPolygon.h
 )

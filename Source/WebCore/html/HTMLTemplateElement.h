@@ -47,14 +47,14 @@ public:
 
     DocumentFragment& fragmentForInsertion() const;
     DocumentFragment& content() const;
-    DocumentFragment* LEGACY_NODELETE contentIfAvailable() const;
+    NODELETE DocumentFragment* contentIfAvailable() const;
 
     const AtomString& shadowRootMode() const;
     const AtomString& shadowRootSlotAssignment() const;
 
-    void setDeclarativeShadowRoot(ShadowRoot&);
+    NODELETE void setDeclarativeShadowRoot(ShadowRoot&);
 
-    void adoptDeserializedContent(Ref<TemplateContentDocumentFragment>&&);
+    NODELETE void adoptDeserializedContent(Ref<TemplateContentDocumentFragment>&&);
 
 private:
     HTMLTemplateElement(const QualifiedName&, Document&);

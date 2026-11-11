@@ -86,7 +86,7 @@ class PrintStream;
 
 WTF_EXPORT_PRIVATE void initialize();
 
-WTF_EXPORT_PRIVATE bool processIsShuttingDown();
+NODELETE WTF_EXPORT_PRIVATE bool processIsShuttingDown();
 
 class ThreadSuspendLocker {
     WTF_MAKE_NONCOPYABLE(ThreadSuspendLocker);
@@ -129,18 +129,19 @@ public:
     static constexpr SchedulingPolicy defaultSchedulingPolicy = defaultThreadSchedulingPolicy;
 
 #if HAVE(QOS_CLASSES)
-    static dispatch_qos_class_t dispatchQOSClass(QOS);
+    NODELETE static dispatch_qos_class_t dispatchQOSClass(QOS);
 #endif
 
-    // Returns nullptr if thread creation failed.
     // The thread name must be a literal since on some platforms it's passed in to the thread.
     WTF_EXPORT_PRIVATE static Ref<Thread> create(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
+    // Returns nullptr if thread creation failed.
+    WTF_EXPORT_PRIVATE static RefPtr<Thread> tryCreate(ASCIILiteral threadName, Function<void()>&&, ThreadType = ThreadType::Unknown, QOS = defaultQOS, SchedulingPolicy = defaultSchedulingPolicy, StackAllocationSpecification = { });
 
     // Returns Thread object.
     static Thread& currentSingleton();
 
     // Set of all WTF::Thread created threads.
-    WTF_EXPORT_PRIVATE static ThreadSafeWeakHashSet<Thread>& LEGACY_NODELETE allThreads();
+    NODELETE WTF_EXPORT_PRIVATE static ThreadSafeWeakHashSet<Thread>& allThreads();
 
     WTF_EXPORT_PRIVATE unsigned numberOfThreadGroups();
 
@@ -209,7 +210,8 @@ public:
     // relativePriority is a value in the range [-15, 0] where a lower value indicates a lower priority.
     WTF_EXPORT_PRIVATE static void setCurrentThreadIsUserInteractive(int relativePriority = 0);
     WTF_EXPORT_PRIVATE static void setCurrentThreadIsUserInitiated(int relativePriority = 0);
-    WTF_EXPORT_PRIVATE static QOS currentThreadQOS();
+    // Returns std::nullopt if the current thread has QOS_CLASS_UNSPECIFIED.
+    WTF_EXPORT_PRIVATE static std::optional<QOS> currentThreadQOS();
     WTF_EXPORT_PRIVATE static bool currentThreadIsRealtime();
     bool isRealtime() const { return m_schedulingPolicy == SchedulingPolicy::Realtime; }
 
@@ -228,7 +230,7 @@ public:
     // Called in the thread during initialization.
     // Helpful for platforms where the thread name must be set from within the thread.
     static void initializeCurrentThreadInternal(const char* threadName);
-    static void LEGACY_NODELETE initializeCurrentThreadEvenIfNonWTFCreated();
+    NODELETE static void initializeCurrentThreadEvenIfNonWTFCreated();
 
     WTF_EXPORT_PRIVATE static void yield();
 
@@ -236,7 +238,7 @@ public:
     WTF_EXPORT_PRIVATE static void registerGCThread(GCThreadType);
     WTF_EXPORT_PRIVATE static bool mayBeGCThread();
 
-    WTF_EXPORT_PRIVATE static void LEGACY_NODELETE registerJSThread(Thread&);
+    NODELETE WTF_EXPORT_PRIVATE static void registerJSThread(Thread&);
 
     WTF_EXPORT_PRIVATE void dump(PrintStream& out) const;
 
@@ -306,9 +308,9 @@ public:
 #endif
 
 private:
-    void updateSchedulingAttributes(SchedulingState) const;
+    NODELETE void updateSchedulingAttributes(SchedulingState) const;
     // updateSchedulingAttributes for the first time + initialization bookkeeping
-    void initializeSchedulingAttributes();
+    NODELETE void initializeSchedulingAttributes();
 
     static void setCurrentThreadQOS(QOS);
 
@@ -338,10 +340,10 @@ protected:
 #endif
 
 #if HAVE(QOS_CLASSES)
-    static qos_class_t adjustedQOSClass(qos_class_t);
+    NODELETE static qos_class_t adjustedQOSClass(qos_class_t);
 #endif
 
-    static const char* LEGACY_NODELETE normalizeThreadName(const char* threadName);
+    NODELETE static const char* normalizeThreadName(const char* threadName);
 
     enum JoinableState : uint8_t {
         // The default thread state. The thread can be joined on.
@@ -402,7 +404,11 @@ protected:
     WordLock m_mutex;
     StackBounds m_stack { StackBounds::emptyBounds() };
     ThreadSafeWeakHashSet<ThreadGroup> m_threadGroups;
-    PlatformThreadHandle m_handle;
+#if OS(WINDOWS)
+    PlatformThreadHandle m_handle { INVALID_HANDLE_VALUE };
+#else
+    PlatformThreadHandle m_handle { };
+#endif
     const uint32_t m_uid;
 #if OS(WINDOWS)
     ThreadIdentifier m_id { 0 };

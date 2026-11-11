@@ -232,7 +232,7 @@ protected:
 private:
     inline void finishCreation(VM&, CreatingEarlyCellTag); // Defined in StructureInlines.h
 
-    void LEGACY_NODELETE validateFlags();
+    NODELETE void validateFlags();
 
 public:
     StructureID id() const { return StructureID::encode(this); }
@@ -365,6 +365,14 @@ public:
     bool hasNonReifiedStaticProperties() const
     {
         return typeInfo().hasStaticPropertyTable() && !staticPropertiesReified();
+    }
+
+    // Because get and getConcurrently consult only the property table, a structure whose static
+    // property table has not been reified can still own the property. Any lookup that concludes
+    // the property is absent from this structure must consult the static property table too.
+    bool hasNonReifiedStaticProperty(PropertyName propertyName) const
+    {
+        return hasNonReifiedStaticProperties() && findPropertyHashEntry(propertyName);
     }
 
     bool isNonExtensibleOrHasNonConfigurableProperties() const
@@ -505,7 +513,7 @@ public:
         // changed between the new and old structure. So, it's important to keep this simple because
         // it's on a fast path.
         
-        if (!outOfLineSize)
+        if (!outOfLineSize) [[likely]]
             return 0;
 
         if (outOfLineSize <= initialOutOfLineCapacity)
@@ -565,6 +573,11 @@ public:
             || hijacksIndexingHeader();
     }
     
+    bool canAllocatePropertyStorageInJIT() const
+    {
+        return !hijacksIndexingHeader() && !hasAnyArrayStorage(indexingType());
+    }
+
     bool hasIndexingHeader(const JSCell*) const;    
     bool masqueradesAsUndefined(JSGlobalObject* lexicalGlobalObject)
     {
@@ -611,10 +624,10 @@ public:
     void setContainsReadOnlyProperties() { setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true); }
     
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*, StructureChain*);
-    JSPropertyNameEnumerator* LEGACY_NODELETE cachedPropertyNameEnumerator() const;
-    uintptr_t LEGACY_NODELETE cachedPropertyNameEnumeratorAndFlag() const;
-    bool LEGACY_NODELETE canCachePropertyNameEnumerator(VM&) const;
-    bool LEGACY_NODELETE canAccessPropertiesQuicklyForEnumeration() const;
+    NODELETE JSPropertyNameEnumerator* cachedPropertyNameEnumerator() const;
+    NODELETE uintptr_t cachedPropertyNameEnumeratorAndFlag() const;
+    NODELETE bool canCachePropertyNameEnumerator(VM&) const;
+    NODELETE bool canAccessPropertiesQuicklyForEnumeration() const;
 
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
@@ -737,7 +750,7 @@ public:
         
     inline void addTransitionWatchpoint(Watchpoint* watchpoint) const; // Defined in StructureInlinesLight.h
     
-    void LEGACY_NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
+    NODELETE void didTransitionFromThisStructureWithoutFiringWatchpoint() const;
     void fireStructureTransitionWatchpoint(DeferredStructureTransitionWatchpointFire*) const;
 
     InlineWatchpointSet& transitionWatchpointSet() const
@@ -782,7 +795,7 @@ public:
         const HashTable* table;
         const HashTableValue* value;
     };
-    std::optional<PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
+    JS_EXPORT_PRIVATE std::optional<PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
     
     DECLARE_EXPORT_INFO;
 
@@ -986,7 +999,7 @@ private:
 
     inline void clearCachedPrototypeChain(); // Defined in StructureInlines.h
 
-    bool LEGACY_NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
+    NODELETE bool holesMustForwardToPrototypeSlow(JSObject*) const;
 
     // These need to be properly aligned at the beginning of the 'Structure'
     // part of the object.

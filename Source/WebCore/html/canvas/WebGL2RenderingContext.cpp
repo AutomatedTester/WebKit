@@ -1007,6 +1007,17 @@ void WebGL2RenderingContext::texImage3D(GCGLenum target, GCGLint level, GCGLint 
     texImageArrayBufferViewHelper(TexImageFunctionID::TexImage3D, target, level, internalformat, width, height, depth, border, format, type, 0, 0, 0, WTF::move(srcData), NullNotReachable, srcOffset);
 }
 
+ExceptionOr<void> WebGL2RenderingContext::texElementSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, std::optional<CanvasElementImageSource> source, std::optional<WebGLCopyElementImageConfig> config)
+{
+    if (isContextLost())
+        return { };
+    if (m_boundPixelUnpackBuffer) {
+        synthesizeGLError(GraphicsContextGL::INVALID_OPERATION, "texElementSubImage2D"_s, "a buffer is bound to PIXEL_UNPACK_BUFFER"_s);
+        return { };
+    }
+    return WebGLRenderingContextBase::texElementSubImage2D(target, level, xoffset, yoffset, WTF::move(source), WTF::move(config));
+}
+
 void WebGL2RenderingContext::texSubImage2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLsizei width, GCGLsizei height, GCGLenum format, GCGLenum type, RefPtr<ArrayBufferView>&& srcData)
 {
     if (isContextLost())
@@ -2180,7 +2191,7 @@ void WebGL2RenderingContext::bindTransformFeedback(GCGLenum target, WebGLTransfo
     m_boundTransformFeedback = toBeBound;
 }
 
-static bool LEGACY_NODELETE ValidateTransformFeedbackPrimitiveMode(GCGLenum mode)
+NODELETE static bool ValidateTransformFeedbackPrimitiveMode(GCGLenum mode)
 {
     switch (mode) {
     case GraphicsContextGL::POINTS:
@@ -2765,7 +2776,7 @@ std::optional<Vector<String>> WebGL2RenderingContext::getSupportedExtensions()
     return result;
 }
 
-static bool LEGACY_NODELETE validateDefaultFramebufferAttachment(GCGLenum attachment)
+NODELETE static bool validateDefaultFramebufferAttachment(GCGLenum attachment)
 {
     switch (attachment) {
     case GraphicsContextGL::BACK:

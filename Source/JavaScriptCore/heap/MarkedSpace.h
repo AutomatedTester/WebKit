@@ -22,6 +22,7 @@
 #pragma once
 
 #include <JavaScriptCore/BlockDirectory.h>
+#include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/MarkedBlock.h>
 #include <JavaScriptCore/MarkedBlockSet.h>
 #include <JavaScriptCore/PreciseAllocation.h>
@@ -68,10 +69,15 @@ public:
     // We have an extra size class for size zero.
     static constexpr size_t numSizeClasses = largeCutoff / sizeStep + 1;
     
-    static constexpr HeapVersion nullVersion = 0; // The version of freshly allocated blocks.
-    static constexpr HeapVersion initialVersion = 2; // The version that the heap starts out with. Set to make sure that nextVersion(nullVersion) != initialVersion.
+    // Versions identify which collection a block's bits belong to. A heap's versions start
+    // at initialVersion and wrap back to it, never reaching nullVersion, so a block at
+    // nullVersion (new, or reset at a wrap) never looks current. initialVersion is
+    // nextVersion(nullVersion), so a block a wrap resets is one version behind the
+    // version the wrap moves to, and its kept marks still record the survivors.
+    static constexpr HeapVersion nullVersion = 0;
+    static constexpr HeapVersion initialVersion = 1;
     
-    static HeapVersion nextVersion(HeapVersion version)
+    static constexpr HeapVersion nextVersion(HeapVersion version)
     {
         version++;
         if (version == nullVersion)
@@ -101,9 +107,9 @@ public:
 
     static size_t optimalSizeFor(size_t);
     
-    void prepareForAllocation();
+    void prepareForAllocation() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
-    void reapWeakSets();
+    void reapWeakSets() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
     template<typename Visitor>
     Ref<SharedTask<void(Visitor&)>> forEachWeakInParallel(Visitor&);
@@ -132,21 +138,22 @@ public:
 
     void didAddBlock(MarkedBlock::Handle*);
     void didConsumeFreeList(MarkedBlock::Handle*);
-    void LEGACY_NODELETE didAllocateInBlock(MarkedBlock::Handle*);
+    NODELETE void didAllocateInBlock(MarkedBlock::Handle*);
 
     // FIXME: rdar://139998916
     MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
-    void beginMarking();
-    void endMarking();
-    void snapshotUnswept();
+    void beginMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void endMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void adoptMarkingVersion(HeapVersion);
+    void snapshotUnswept() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void clearNewlyAllocated();
     void sweepBlocks();
     void sweepPreciseAllocations();
     void assertNoUnswept();
     size_t objectCount();
     size_t size();
-    size_t LEGACY_NODELETE capacity();
+    NODELETE size_t capacity();
 
     HeapVersion markingVersion() const { return m_markingVersion; }
     HeapVersion newlyAllocatedVersion() const { return m_newlyAllocatedVersion; }
@@ -174,7 +181,7 @@ public:
     // When this is true it means that we have flipped but the mark bits haven't converged yet.
     bool isMarking() const { return m_isMarking; }
     
-    void dumpBits(PrintStream& = WTF::dataFile());
+    void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     
     JS_EXPORT_PRIVATE static std::array<unsigned, numSizeClasses> s_sizeClassForSizeStep;
     
@@ -196,7 +203,7 @@ private:
 
     template<typename Functor> inline void forEachDirectory(NOESCAPE const Functor&);
     
-    void LEGACY_NODELETE addActiveWeakSet(WeakSet*);
+    NODELETE void addActiveWeakSet(WeakSet*);
 
     Vector<Subspace*> m_subspaces;
 
@@ -210,9 +217,9 @@ private:
     PreciseAllocation** m_preciseAllocationsForThisCollectionEnd { nullptr };
 
     size_t m_capacity { 0 };
-    HeapVersion m_markingVersion { initialVersion };
-    HeapVersion m_newlyAllocatedVersion { initialVersion };
-    HeapVersion m_edenVersion { initialVersion };
+    HeapVersion m_markingVersion;
+    HeapVersion m_newlyAllocatedVersion;
+    HeapVersion m_edenVersion;
     bool m_isIterating { false };
     bool m_isMarking { false };
     bool m_conservativeScanIsPrepared { false };

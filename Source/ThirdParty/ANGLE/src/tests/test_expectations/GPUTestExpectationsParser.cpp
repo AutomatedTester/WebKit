@@ -115,6 +115,7 @@ enum Token
     kConfigUBSan,
     // Translator
     kConfigIR,
+    kConfigAST,
     // expectation
     kExpectationPass,
     kExpectationFail,
@@ -240,6 +241,7 @@ constexpr std::array<TokenInfo, kNumberOfTokens> kTokenData = {{
     {"tsan", GPUTestConfig::kConditionTSan},
     {"ubsan", GPUTestConfig::kConditionUBSan},
     {"ir", GPUTestConfig::kConditionIR},
+    {"ast", GPUTestConfig::kConditionAST},
     {"pass", GPUTestConfig::kConditionNone, GPUTestExpectationsParser::kGpuTestPass},
     {"fail", GPUTestConfig::kConditionNone, GPUTestExpectationsParser::kGpuTestFail},
     {"flaky", GPUTestConfig::kConditionNone, GPUTestExpectationsParser::kGpuTestFlaky},
@@ -525,10 +527,11 @@ std::vector<std::string> GPUTestExpectationsParser::getUnusedExpectationsMessage
     std::vector<std::string> messages;
     std::vector<GPUTestExpectationsParser::GPUTestExpectationEntry> unusedExpectations =
         getUnusedExpectations();
-    for (size_t i = 0; i < unusedExpectations.size(); ++i)
+    for (const GPUTestExpectationsParser::GPUTestExpectationEntry &unusedExpectation :
+         unusedExpectations)
     {
         std::string message =
-            "Line " + ToString(unusedExpectations[i].lineNumber) + ": expectation was unused.";
+            "Line " + ToString(unusedExpectation.lineNumber) + ": expectation was unused.";
         messages.push_back(message);
     }
     return messages;
@@ -622,6 +625,7 @@ bool GPUTestExpectationsParser::parseLine(const GPUTestConfig *config,
             case kConfigTSan:
             case kConfigUBSan:
             case kConfigIR:
+            case kConfigAST:
                 // MODIFIERS, check each condition and add accordingly.
                 if (stage != kLineParserConfigs && stage != kLineParserBugID)
                 {
@@ -787,11 +791,11 @@ std::vector<GPUTestExpectationsParser::GPUTestExpectationEntry>
 GPUTestExpectationsParser::getUnusedExpectations() const
 {
     std::vector<GPUTestExpectationsParser::GPUTestExpectationEntry> unusedExpectations;
-    for (size_t i = 0; i < mEntries.size(); ++i)
+    for (const GPUTestExpectationsParser::GPUTestExpectationEntry &entry : mEntries)
     {
-        if (!mEntries[i].used)
+        if (!entry.used)
         {
-            unusedExpectations.push_back(mEntries[i]);
+            unusedExpectations.push_back(entry);
         }
     }
     return unusedExpectations;

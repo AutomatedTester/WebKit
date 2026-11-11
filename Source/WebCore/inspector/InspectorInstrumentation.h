@@ -87,6 +87,7 @@ class DocumentLoader;
 class DocumentThreadableLoader;
 class EventListener;
 class GPUDevice;
+class HTMLFrameOwnerElement;
 class HTTPHeaderMap;
 class InspectorTimelineAgent;
 class InstrumentingAgents;
@@ -150,6 +151,7 @@ public:
     static void didInvalidateStyleAttr(Element&);
     static void documentDetached(Document&);
     static void frameWindowDiscarded(LocalFrame&, LocalDOMWindow*);
+    static void fontDataChanged(Document&);
     static void mediaQueryResultChanged(Document&);
     static void activeStyleSheetsUpdated(Document&);
     static void didPushShadowRoot(Element& host, ShadowRoot&);
@@ -220,7 +222,7 @@ public:
     static void flexibleBoxRendererWrappedToNextLine(const RenderObject&, size_t lineStartItemIndex);
 
     static void willSendRequest(LocalFrame*, ResourceLoaderIdentifier, DocumentLoader*, ResourceRequest&, const ResourceResponse& redirectResponse, const CachedResource*, ResourceLoader*);
-    static void didLoadResourceFromMemoryCache(Page&, DocumentLoader*, CachedResource*);
+    static void didLoadResourceFromMemoryCache(LocalFrame&, DocumentLoader*, CachedResource*, const URL&);
     static void didReceiveResourceResponse(LocalFrame&, ResourceLoaderIdentifier, DocumentLoader*, const ResourceResponse&, ResourceLoader*);
     static void didReceiveThreadableLoaderResponse(Document&, DocumentThreadableLoader&, ResourceLoaderIdentifier);
     static void didReceiveData(LocalFrame*, ResourceLoaderIdentifier, const SharedBuffer*, int encodedDataLength);
@@ -250,6 +252,7 @@ public:
     static void loadEventFired(LocalFrame*);
     static void frameDetachedFromParent(LocalFrame&);
     static void didCommitLoad(LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChanged(Document&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdated(LocalFrame&);
     static void loaderDetachedFromFrame(LocalFrame&, DocumentLoader&);
     static void frameStartedLoading(LocalFrame&);
@@ -350,7 +353,7 @@ public:
     static void didChangeWebGPURenderPipelineLabel(GPURenderPipeline&);
     static void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffect(const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationName(WebAnimation&);
@@ -401,6 +404,7 @@ private:
     static void didInvalidateStyleAttrImpl(InstrumentingAgents&, Element&);
     static void documentDetachedImpl(InstrumentingAgents&, Document&);
     static void frameWindowDiscardedImpl(InstrumentingAgents&, LocalDOMWindow*);
+    static void fontDataChangedImpl(InstrumentingAgents&, Document&);
     static void mediaQueryResultChangedImpl(InstrumentingAgents&, Document&);
     static void activeStyleSheetsUpdatedImpl(InstrumentingAgents&, Document&);
     static void didPushShadowRootImpl(InstrumentingAgents&, Element& host, ShadowRoot&);
@@ -471,7 +475,7 @@ private:
     static void willSendRequestImpl(InstrumentingAgents&, ResourceLoaderIdentifier, DocumentLoader*, ResourceRequest&, const ResourceResponse& redirectResponse, const CachedResource*, ResourceLoader*);
     static void willSendRequestOfTypeImpl(InstrumentingAgents&, ResourceLoaderIdentifier, DocumentLoader*, ResourceRequest&, Inspector::UncachedLoadType);
     static void markResourceAsCachedImpl(InstrumentingAgents&, ResourceLoaderIdentifier);
-    static void didLoadResourceFromMemoryCacheImpl(InstrumentingAgents&, DocumentLoader*, CachedResource*);
+    static void didLoadResourceFromMemoryCacheImpl(InstrumentingAgents&, DocumentLoader*, CachedResource*, const URL&);
     static void didReceiveResourceResponseImpl(InstrumentingAgents&, ResourceLoaderIdentifier, DocumentLoader*, const ResourceResponse&, ResourceLoader*);
     static void didReceiveThreadableLoaderResponseImpl(InstrumentingAgents&, DocumentThreadableLoader&, ResourceLoaderIdentifier);
     static void didReceiveDataImpl(InstrumentingAgents&, ResourceLoaderIdentifier, const SharedBuffer*, int encodedDataLength);
@@ -486,6 +490,7 @@ private:
     static void loadEventFiredImpl(InstrumentingAgents&, LocalFrame*);
     static void frameDetachedFromParentImpl(InstrumentingAgents&, LocalFrame&);
     static void didCommitLoadImpl(InstrumentingAgents&, LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChangedImpl(InstrumentingAgents&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdatedImpl(InstrumentingAgents&, LocalFrame&);
     static void loaderDetachedFromFrameImpl(InstrumentingAgents&, DocumentLoader&);
     static void frameStartedLoadingImpl(InstrumentingAgents&, LocalFrame&);
@@ -574,7 +579,7 @@ private:
     static void willDestroyWebGPURenderPipelineImpl(InstrumentingAgents&, GPURenderPipeline&);
     static void didChangeWebGPURenderPipelineLabelImpl(InstrumentingAgents&, GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabledImpl(InstrumentingAgents&, GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffectImpl(InstrumentingAgents&, const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationNameImpl(InstrumentingAgents&, WebAnimation&);
@@ -587,16 +592,16 @@ private:
     static void layerTreeDidChangeImpl(InstrumentingAgents&);
     static void renderLayerDestroyedImpl(InstrumentingAgents&, const RenderLayer&);
 
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(Page&);
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const LocalFrame&);
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const LocalFrameView&);
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(WorkerOrWorkletGlobalScope&);
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(ServiceWorkerGlobalScope&);
-    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const RenderObject&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(Page&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(const LocalFrame&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(const LocalFrameView&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(WorkerOrWorkletGlobalScope&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(ServiceWorkerGlobalScope&);
+    NODELETE static InstrumentingAgents& instrumentingAgents(const RenderObject&);
 
     static InstrumentingAgents* instrumentingAgents(const LocalFrame*);
     static InstrumentingAgents* instrumentingAgents(ScriptExecutionContext&);
-    static InstrumentingAgents* LEGACY_NODELETE instrumentingAgents(Document&);
+    NODELETE static InstrumentingAgents* instrumentingAgents(Document&);
     static InstrumentingAgents* instrumentingAgents(Document*);
     static InstrumentingAgents* instrumentingAgents(WorkerOrWorkletGlobalScope*);
 };
@@ -729,6 +734,13 @@ inline void InspectorInstrumentation::documentDetached(Document& document)
 inline void InspectorInstrumentation::frameWindowDiscarded(LocalFrame& frame, LocalDOMWindow* domWindow)
 {
     frameWindowDiscardedImpl(protect(instrumentingAgents(frame)), domWindow);
+}
+
+inline void InspectorInstrumentation::fontDataChanged(Document& document)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(document))
+        fontDataChangedImpl(*agents, document);
 }
 
 inline void InspectorInstrumentation::mediaQueryResultChanged(Document& document)
@@ -1179,10 +1191,10 @@ inline void InspectorInstrumentation::willSendRequestOfType(LocalFrame* frame, R
         willSendRequestOfTypeImpl(*agents, identifier, loader, request, loadType);
 }
 
-inline void InspectorInstrumentation::didLoadResourceFromMemoryCache(Page& page, DocumentLoader* loader, CachedResource* resource)
+inline void InspectorInstrumentation::didLoadResourceFromMemoryCache(LocalFrame& frame, DocumentLoader* loader, CachedResource* resource, const URL& url)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
-    didLoadResourceFromMemoryCacheImpl(protect(instrumentingAgents(page)), loader, resource);
+    didLoadResourceFromMemoryCacheImpl(protect(instrumentingAgents(frame)), loader, resource, url);
 }
 
 inline void InspectorInstrumentation::didReceiveResourceResponse(LocalFrame& frame, ResourceLoaderIdentifier identifier, DocumentLoader* loader, const ResourceResponse& response, ResourceLoader* resourceLoader)
@@ -1314,6 +1326,13 @@ inline void InspectorInstrumentation::frameDetachedFromParent(LocalFrame& frame)
 inline void InspectorInstrumentation::didCommitLoad(LocalFrame& frame, DocumentLoader* loader)
 {
     didCommitLoadImpl(protect(instrumentingAgents(frame)), frame, loader);
+}
+
+inline void InspectorInstrumentation::frameOwnerContentFrameChanged(Document& document, HTMLFrameOwnerElement& frameOwner)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(document))
+        frameOwnerContentFrameChangedImpl(*agents, frameOwner);
 }
 
 inline void InspectorInstrumentation::frameDocumentUpdated(LocalFrame& frame)
@@ -1655,7 +1674,7 @@ inline bool InspectorInstrumentation::isWebGPURenderPipelineDisabled(GPURenderPi
     return false;
 }
 
-inline RefPtr<WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
+inline RefPtr<::WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
 {
     FAST_RETURN_IF_NO_FRONTENDS(nullptr);
     if (RefPtr device = pipeline.device()) {

@@ -25,14 +25,16 @@
 
 import Foundation
 import struct Foundation.URL
-@_spi(WebKitAdditions_Testing) @_spi(Testing) import WebKit
+@_spi(Testing) @_spi(CrossImportOverlay) import WebKit
+private import WebKit_Private.WKPreferencesPrivate
 import SwiftUI
 import struct Swift.String
 private import struct TestWebKitAPILibrary.DOMRect
 import Testing
-private import TestWebKitAPILibrary
+@_spi(WebKitAdditions_Testing) private import TestWebKitAPILibrary
 private import Recap
 private import Synchronization
+private import AppKit_Private.NSScrollView_Private
 private import AppKit_Private.NSMenu_Private
 private import WebKit_Private.WKFrameInfoPrivate
 
@@ -86,7 +88,7 @@ extension AppKitGesturesTests.Basic {
         let toBounds = try await screenBoundsOfText("to")
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+            composer.humanTap(at: toBounds.center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -116,7 +118,7 @@ extension AppKitGesturesTests.Basic {
         let toBounds = try await screenBoundsOfText("to")
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+            composer.humanTap(at: toBounds.center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -150,7 +152,7 @@ extension AppKitGesturesTests.Basic {
         let toBounds = try await screenBoundsOfText("to")
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+            composer.humanTap(at: toBounds.center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -184,7 +186,7 @@ extension AppKitGesturesTests.Basic {
         let targetBounds = try await screenBounds(ofElementWithID: "target")
 
         await recap.play { composer in
-            composer._wk_click(at: targetBounds.center, for: .seconds(0.05))
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -235,7 +237,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(modifiers) {
-                composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+                composer.humanTap(at: toBounds.center, for: .seconds(0.05))
             }
         }
 
@@ -272,7 +274,7 @@ extension AppKitGesturesTests.Basic {
         let toBounds = try await screenBoundsOfText("to")
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: holdDuration)
+            composer.humanTap(at: toBounds.center, for: holdDuration)
         }
 
         await page.waitForPendingMouseEvents()
@@ -310,7 +312,7 @@ extension AppKitGesturesTests.Basic {
         let toBounds = try await screenBoundsOfText("to")
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+            composer.humanTap(at: toBounds.center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -344,7 +346,7 @@ extension AppKitGesturesTests.Basic {
         let frameBounds = try await screenBounds(ofElementWithID: "frame")
 
         await recap.play { composer in
-            composer._wk_click(at: frameBounds.center, for: .seconds(0.5))
+            composer.humanTap(at: frameBounds.center, for: .seconds(0.5))
         }
 
         await page.waitForPendingMouseEvents()
@@ -405,7 +407,7 @@ extension AppKitGesturesTests.Basic {
             let frameBounds = try await screenBounds(ofElementWithID: "frame")
 
             await recap.play { composer in
-                composer._wk_click(at: frameBounds.center, for: .seconds(0.5))
+                composer.humanTap(at: frameBounds.center, for: .seconds(0.5))
             }
 
             await page.waitForPendingMouseEvents()
@@ -509,10 +511,12 @@ extension AppKitGesturesTests.Basic {
             try await page.load(html: html).wait()
         }
 
-        try await page.callJavaScript(
-            arguments: ["elementID": "surface", "styleValue": "none"],
-            script: styleAdjustmentForManipulationSurfaceScript
-        )
+        try await page.callJavaScript(arguments: ["elementID": "surface", "styleValue": "none"]) {
+            """
+            document.getElementById(elementID).style.touchAction = styleValue;
+            """
+        }
+
         await page.waitForNextPresentationUpdate()
     }
 
@@ -527,7 +531,7 @@ extension AppKitGesturesTests.Basic {
         let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
 
         await recap.play { composer in
-            composer._wk_click(at: surfaceBounds.center, for: .seconds(1))
+            composer.humanTap(at: surfaceBounds.center, for: .seconds(1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -543,7 +547,7 @@ extension AppKitGesturesTests.Basic {
         let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
 
         await recap.play { composer in
-            composer._wk_click(at: surfaceBounds.center, for: .milliseconds(100))
+            composer.humanTap(at: surfaceBounds.center, for: .milliseconds(100))
         }
 
         await page.waitForPendingMouseEvents()
@@ -561,7 +565,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: start.x + travel, y: start.y)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+            composer.drag(withStart: start, end: end, duration: .seconds(0.5))
         }
 
         await page.waitForPendingMouseEvents()
@@ -591,7 +595,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: surfaceBounds.midX + 80, y: surfaceBounds.midY)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
+            composer.flick(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
         }
 
         await page.waitForPendingMouseEvents()
@@ -619,7 +623,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: surfaceBounds.midX + 60, y: surfaceBounds.midY)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+            composer.drag(withStart: start, end: end, duration: .seconds(0.5))
         }
 
         await page.waitForPendingMouseEvents()
@@ -636,7 +640,8 @@ extension AppKitGesturesTests.Basic {
     @Test
     func trackedPointerMovesReportThemselvesAsCoalescedEvents() async throws {
         // `getCoalescedEvents()` is only exposed in a secure context, which a page loaded from a string is not by default.
-        try await loadLongPressSurface(baseURL: try #require(URL(string: "https://example.com")))
+        let baseURL = try #require(URL(string: "https://example.com"))
+        try await loadLongPressSurface(baseURL: baseURL)
         try #require(try await page.callJavaScript(returning: Bool.self) { "return window.isSecureContext;" })
 
         try await page.callJavaScript {
@@ -659,7 +664,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: surfaceBounds.midX + 60, y: surfaceBounds.midY)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+            composer.drag(withStart: start, end: end, duration: .seconds(0.5))
         }
 
         await page.waitForPendingMouseEvents()
@@ -695,12 +700,12 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledContextMenu {
             await recap.play { composer in
-                composer._wk_drag(withStart: linkBounds.center, end: linkBounds.center, duration: .seconds(1.5), release: false)
+                composer.drag(withStart: linkBounds.center, end: linkBounds.center, duration: .seconds(1.5), lift: false)
             }
         }
 
         await recap.play { composer in
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForPendingMouseEvents()
@@ -736,7 +741,7 @@ extension AppKitGesturesTests.Basic {
         let secondBounds = try await screenBounds(ofElementWithID: "second")
 
         await recap.play { composer in
-            composer._wk_click(at: firstBounds.center, for: .milliseconds(100))
+            composer.humanTap(at: firstBounds.center, for: .milliseconds(100))
         }
 
         await page.waitForPendingMouseEvents()
@@ -746,7 +751,7 @@ extension AppKitGesturesTests.Basic {
         #expect(firstPressLog == ["pointerover:first", "pointerenter:first", "pointerdown:first", "pointerup:first"])
 
         await recap.play { composer in
-            composer._wk_click(at: secondBounds.center, for: .milliseconds(100))
+            composer.humanTap(at: secondBounds.center, for: .milliseconds(100))
         }
 
         await page.waitForPendingMouseEvents()
@@ -797,7 +802,7 @@ extension AppKitGesturesTests.Basic {
         let controlBounds = try await screenBounds(ofElementWithID: "control")
 
         await recap.play { composer in
-            composer._wk_click(at: controlBounds.center, for: .milliseconds(100))
+            composer.humanTap(at: controlBounds.center, for: .milliseconds(100))
         }
 
         await page.waitForPendingMouseEvents()
@@ -849,7 +854,7 @@ extension AppKitGesturesTests.Basic {
             let targetBounds = try await screenBounds(ofElementWithID: "target")
 
             await recap.play { composer in
-                composer._wk_click(at: targetBounds.center, for: .seconds(1.5))
+                composer.humanTap(at: targetBounds.center, for: .seconds(1.5))
             }
 
             await page.waitForPendingMouseEvents()
@@ -948,7 +953,7 @@ extension AppKitGesturesTests.Basic {
         let captchaBounds = try await screenBounds(ofElementWithID: "captcha")
 
         await recap.play { composer in
-            composer._wk_click(at: captchaBounds.center, for: .seconds(1))
+            composer.humanTap(at: captchaBounds.center, for: .seconds(1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -964,7 +969,7 @@ extension AppKitGesturesTests.Basic {
         let captchaBounds = try await screenBounds(ofElementWithID: "captcha")
 
         await recap.play { composer in
-            composer._wk_click(at: captchaBounds.center, for: .milliseconds(50))
+            composer.humanTap(at: captchaBounds.center, for: .milliseconds(50))
         }
 
         await page.waitForPendingMouseEvents()
@@ -983,7 +988,7 @@ extension AppKitGesturesTests.Basic {
         let scrollEnd = CGPoint(x: captchaBounds.center.x, y: captchaBounds.center.y - 200)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: captchaBounds.center, end: scrollEnd, duration: .seconds(0.5), release: true)
+            composer.drag(withStart: captchaBounds.center, end: scrollEnd, duration: .seconds(0.5))
         }
 
         await page.waitForPendingMouseEvents()
@@ -1009,7 +1014,7 @@ extension AppKitGesturesTests.Basic {
         let textBounds = try await screenBounds(ofElementWithID: "holdText")
 
         await recap.play { composer in
-            composer._wk_click(at: textBounds.center, for: .seconds(1))
+            composer.humanTap(at: textBounds.center, for: .seconds(1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -1031,7 +1036,7 @@ extension AppKitGesturesTests.Basic {
         let textBounds = try await screenBounds(ofElementWithID: "holdText")
 
         await recap.play { composer in
-            composer._wk_click(at: textBounds.center, for: .seconds(1))
+            composer.humanTap(at: textBounds.center, for: .seconds(1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -1050,7 +1055,7 @@ extension AppKitGesturesTests.Basic {
         let editorStateSnapshots = page.editorStateSnapshots()
 
         await recap.play { composer in
-            composer._wk_click(at: toBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: toBounds.center, for: .seconds(0.1))
 
             composer.advanceTime(0.1)
 
@@ -1058,7 +1063,7 @@ extension AppKitGesturesTests.Basic {
 
             composer.advanceTime(0.1)
 
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         let firstRangeEditorState = try await #require(
@@ -1089,14 +1094,14 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             // Click-and-hold to begin a range selection, then drag to the bottom edge and hold.
-            composer._wk_click(at: startBounds.center, for: .seconds(0.5))
+            composer.humanTap(at: startBounds.center, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), lift: false)
 
             // Hold at the edge so the autoscroll timer fires repeatedly.
             // The longer the duration the further down the scroll goes.
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1131,13 +1136,13 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = screenBounds(ofPointInWindowCoordinates: CGPoint(x: window.frame.width / 2, y: 20))
 
         await recap.play { composer in
-            composer._wk_click(at: startBounds.center, for: .seconds(0.5))
+            composer.humanTap(at: startBounds.center, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), lift: false)
 
             // Hold near the edge for a couple of seconds so the autoscroll timer fires many times.
             composer.advanceTime(2.0)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1171,11 +1176,11 @@ extension AppKitGesturesTests.Basic {
         let midContent = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: contentHeight / 2))
 
         await recap.play { composer in
-            composer._wk_click(at: startBounds.center, for: .seconds(0.5))
+            composer.humanTap(at: startBounds.center, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: startBounds.center, end: midContent, duration: .seconds(1), release: false)
+            composer.drag(withStart: startBounds.center, end: midContent, duration: .seconds(1), lift: false)
             composer.advanceTime(1.0)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1194,11 +1199,11 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: 20))
 
         await recap.play { composer in
-            composer._wk_click(at: startBounds.center, for: .seconds(0.5))
+            composer.humanTap(at: startBounds.center, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: startBounds.center, end: dragEnd, duration: .seconds(1), lift: false)
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1231,11 +1236,11 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: contentHeight - 20))
 
         await recap.play { composer in
-            composer._wk_click(at: start, for: .seconds(0.5))
+            composer.humanTap(at: start, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: start, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: start, end: dragEnd, duration: .seconds(1), lift: false)
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1257,13 +1262,13 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: 45))
 
         await recap.play { composer in
-            composer._wk_click(at: start, for: .seconds(0.5))
+            composer.humanTap(at: start, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: start, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: start, end: dragEnd, duration: .seconds(1), lift: false)
 
             // Hold so the autoscroll timer would fire repeatedly if it were going to.
             composer.advanceTime(1.0)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1283,11 +1288,11 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = screenBounds(ofPointInWindowCoordinates: NSPoint(x: window.frame.width / 2, y: -40))
 
         await recap.play { composer in
-            composer._wk_click(at: start, for: .seconds(0.5))
+            composer.humanTap(at: start, for: .seconds(0.5))
             composer.advanceTime(0.1)
-            composer._wk_drag(withStart: start, end: dragEnd, duration: .seconds(1), release: false)
+            composer.drag(withStart: start, end: dragEnd, duration: .seconds(1), lift: false)
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1315,7 +1320,7 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1342,7 +1347,7 @@ extension AppKitGesturesTests.Basic {
         // Clicking just inside the right edge of the word resolves to the boundary at its end.
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: CGPoint(x: onesBounds.maxX - 1, y: onesBounds.midY), for: .seconds(0.1))
+                composer.humanTap(at: CGPoint(x: onesBounds.maxX - 1, y: onesBounds.midY), for: .seconds(0.1))
             }
         }
 
@@ -1373,7 +1378,7 @@ extension AppKitGesturesTests.Basic {
         // Clicking just inside the left edge of the word resolves to the boundary at its start.
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: CGPoint(x: heresBounds.minX + 1, y: heresBounds.midY), for: .seconds(0.1))
+                composer.humanTap(at: CGPoint(x: heresBounds.minX + 1, y: heresBounds.midY), for: .seconds(0.1))
             }
         }
 
@@ -1407,7 +1412,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: CGPoint(x: theBounds.maxX - 1, y: theBounds.midY), for: .seconds(0.1))
+                composer.humanTap(at: CGPoint(x: theBounds.maxX - 1, y: theBounds.midY), for: .seconds(0.1))
             }
         }
 
@@ -1436,7 +1441,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: CGPoint(x: theBounds.maxX - 1, y: theBounds.midY), for: .seconds(0.1))
+                composer.humanTap(at: CGPoint(x: theBounds.maxX - 1, y: theBounds.midY), for: .seconds(0.1))
             }
         }
 
@@ -1465,7 +1470,7 @@ extension AppKitGesturesTests.Basic {
         let onesBounds = try await screenBoundsOfText("ones")
 
         await recap.play { composer in
-            composer._wk_click(at: CGPoint(x: onesBounds.maxX - 1, y: onesBounds.midY), for: .seconds(0.1))
+            composer.humanTap(at: CGPoint(x: onesBounds.maxX - 1, y: onesBounds.midY), for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -1493,7 +1498,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: linkBounds.center, for: .seconds(0.1))
+                composer.humanTap(at: linkBounds.center, for: .seconds(0.1))
             }
         }
 
@@ -1511,7 +1516,7 @@ extension AppKitGesturesTests.Basic {
     }
 
     private static let middleOfTHREEInPDF = NSPoint(x: 176, y: 444)
-    private static let middleOfOneInPDF = NSPoint(x: 134, y: 471)
+    private static let middleOfOneInPDF = NSPoint(x: 124, y: 481)
 
     private static let pdfDocumentText = "one\nTwo tWo\ntHree THREE threE"
 
@@ -1523,7 +1528,7 @@ extension AppKitGesturesTests.Basic {
         let focusPoint = screenBounds(ofPointInWindowCoordinates: Self.middleOfTHREEInPDF)
 
         await recap.play { composer in
-            composer._wk_click(at: focusPoint, for: .seconds(0.1))
+            composer.humanTap(at: focusPoint, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -1542,7 +1547,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: clickPoint, for: .seconds(0.1))
+                composer.humanTap(at: clickPoint, for: .seconds(0.1))
             }
         }
 
@@ -1564,7 +1569,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_click(at: clickPoint, for: .seconds(0.1))
+                composer.humanTap(at: clickPoint, for: .seconds(0.1))
             }
         }
 
@@ -1587,7 +1592,7 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer.holdingModifiers(.shift) {
-                composer._wk_drag(withStart: dragStart, end: dragEnd, duration: .seconds(0.5))
+                composer.drag(withStart: dragStart, end: dragEnd, duration: .seconds(0.5))
             }
         }
 
@@ -1609,7 +1614,7 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledContextMenu {
             await recap.play { composer in
-                composer._wk_click(at: middleOfWindow, for: .seconds(1))
+                composer.humanTap(at: middleOfWindow, for: .seconds(1))
             }
         }
 
@@ -1636,17 +1641,17 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledContextMenu {
             await recap.play { composer in
-                composer._wk_drag(
+                composer.drag(
                     withStart: linkBounds.center,
                     end: linkBounds.center,
                     duration: .seconds(1.5),
-                    release: false
+                    lift: false
                 )
             }
         }
 
         await recap.play { composer in
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
     }
 
@@ -1669,7 +1674,7 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1677,6 +1682,70 @@ extension AppKitGesturesTests.Basic {
         let newSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
 
         #expect(newSelection == crazySelection)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/330303", "Long press on PDF document does not produce word selection"),
+        arguments: PDFPresentation.allCases
+    )
+    func longPressOverPDFTextSelectsWordAndDoesNotOpenContextMenu(presentation: PDFPresentation) async throws {
+        try await loadFindPDF(presentation)
+
+        let pressPoint = screenBounds(ofPointInWindowCoordinates: Self.middleOfOneInPDF)
+
+        let presentedMenuItems = await withSwizzledContextMenu(waitingForMenu: false) {
+            await recap.play { composer in
+                composer.humanTap(at: pressPoint, for: .seconds(1))
+            }
+
+            await page.waitForPendingMouseEvents()
+            await page.waitForNextPresentationUpdate()
+        }
+
+        #expect(presentedMenuItems.isEmpty)
+
+        let selectedText = await page.copySelection()
+        #expect(selectedText == "one")
+    }
+
+    private func loadFindPDF(_ presentation: PDFPresentation) async throws {
+        let pdfURL = try #require(Bundle.testResources.url(forResource: "find", withExtension: "pdf"))
+
+        guard presentation != .document else {
+            try await page.load(pdfURL).wait()
+            await page.waitForNextPresentationUpdate()
+            return
+        }
+
+        let spacer = presentation == .embedInScrolledPage ? #"<div style="height: 100vh"></div>"# : ""
+        let html = """
+            <style>
+            html { overflow: hidden; }
+            body { margin: 0; }
+            embed { display: block; width: 100vw; height: 100vh; }
+            </style>
+            \(spacer)
+            <embed src="find.pdf">
+            """
+        try await page.load(html: html, baseURL: try #require(Bundle.testResources.resourceURL)).wait()
+
+        try await page.callJavaScript {
+            #"window.scrollTo(0, document.querySelector("embed").offsetTop);"#
+        }
+
+        // An embedded PDF loads after its document does, and shows its HUD once it has laid out.
+        try #require(await waitForPDFHUD())
+        await page.waitForNextPresentationUpdate()
+    }
+
+    private func waitForPDFHUD() async throws -> Bool {
+        for _ in 0..<50 {
+            if !page.pdfHUDs.isEmpty {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return false
     }
 
     @Test(arguments: [false, true])
@@ -1694,7 +1763,7 @@ extension AppKitGesturesTests.Basic {
         await withSwizzledContextMenu {
             await recap.play { composer in
                 composer.holdingModifiers(.control) {
-                    composer._wk_click(at: crazyBounds.center, for: .seconds(0.05))
+                    composer.humanTap(at: crazyBounds.center, for: .seconds(0.05))
                 }
             }
         }
@@ -1725,7 +1794,7 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledContextMenu {
             await recap.play { composer in
-                composer._wk_click(at: videoBounds.center, for: .seconds(2))
+                composer.humanTap(at: videoBounds.center, for: .seconds(2))
             }
         }
     }
@@ -1751,7 +1820,7 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledContextMenu {
             await recap.play { composer in
-                composer._wk_click(at: playerBounds.center, for: .seconds(2))
+                composer.humanTap(at: playerBounds.center, for: .seconds(2))
             }
         }
     }
@@ -1774,7 +1843,7 @@ extension AppKitGesturesTests.Basic {
         await withMockedImageAnalyzer(response: .success(.init(lines: [])), after: .zero) {
             await withSwizzledContextMenu {
                 await recap.play { composer in
-                    composer._wk_click(at: imageBounds.center, for: .seconds(2))
+                    composer.humanTap(at: imageBounds.center, for: .seconds(2))
                 }
             }
         }
@@ -1798,7 +1867,7 @@ extension AppKitGesturesTests.Basic {
         await withMockedImageAnalyzer(response: .success(.init(lines: [])), after: .zero) {
             await withSwizzledContextMenu {
                 await recap.play { composer in
-                    composer._wk_click(at: imageBounds.center, for: .seconds(2))
+                    composer.humanTap(at: imageBounds.center, for: .seconds(2))
                 }
             }
         }
@@ -1827,7 +1896,7 @@ extension AppKitGesturesTests.Basic {
         let targetBounds = try await screenBounds(ofElementWithID: "target")
 
         await recap.play { composer in
-            composer._wk_click(at: targetBounds.center, for: .seconds(2))
+            composer.humanTap(at: targetBounds.center, for: .seconds(2))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -1862,7 +1931,7 @@ extension AppKitGesturesTests.Basic {
         let crazyBounds = try await screenBoundsOfText("crazy")
 
         await recap.play { composer in
-            composer._wk_click(at: crazyBounds.center, for: .seconds(1))
+            composer.humanTap(at: crazyBounds.center, for: .seconds(1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2015,9 +2084,9 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
             composer.advanceTime(0.1)
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2026,7 +2095,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: start.x, y: start.y + 200)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(1))
+            composer.flick(withStart: start, end: end, duration: .seconds(1))
         }
 
         let newSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
@@ -2051,9 +2120,9 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
             composer.advanceTime(0.1)
-            composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+            composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2075,9 +2144,9 @@ extension AppKitGesturesTests.Basic {
             await page.waitForNextPresentationUpdate()
 
             await recap.play { composer in
-                composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
+                composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: .seconds(0.1))
                 composer.advanceTime(0.1)
-                composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: secondClickDuration)
+                composer.humanTap(at: crazyBoundsInScreenCoordinates.center, for: secondClickDuration)
             }
 
             await page.waitForPendingMouseEvents()
@@ -2119,7 +2188,7 @@ extension AppKitGesturesTests.Basic {
         let emptySpace = CGPoint(x: fieldBounds.midX, y: fieldBounds.maxY - 20)
 
         await recap.play { composer in
-            composer._wk_click(at: emptySpace, for: .seconds(0.1))
+            composer.humanTap(at: emptySpace, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -2148,11 +2217,11 @@ extension AppKitGesturesTests.Basic {
         let clickPoint = screenBounds(ofPointInWindowCoordinates: .init(x: 100, y: 350))
 
         await recap.play { composer in
-            composer._wk_click(at: clickPoint, for: .seconds(0.1))
+            composer.humanTap(at: clickPoint, for: .seconds(0.1))
             composer.advanceTime(0.1)
-            composer._wk_click(at: clickPoint, for: .seconds(0.1))
+            composer.humanTap(at: clickPoint, for: .seconds(0.1))
             composer.advanceTime(0.1)
-            composer._wk_click(at: clickPoint, for: .seconds(0.1))
+            composer.humanTap(at: clickPoint, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -2176,7 +2245,7 @@ extension AppKitGesturesTests.Basic {
         let scaleBeforeZooming = page.pageZoom
 
         await recap.play { composer in
-            composer._wk_click(at: zoomInButton, for: .seconds(0.1))
+            composer.humanTap(at: zoomInButton, for: .seconds(0.1))
             composer.advanceTime(0.1)
         }
 
@@ -2207,7 +2276,7 @@ extension AppKitGesturesTests.Basic {
         #expect(visibleView.alphaValue == 0)
 
         await recap.play { composer in
-            composer._wk_click(at: clickPoint, for: .seconds(0.1))
+            composer.humanTap(at: clickPoint, for: .seconds(0.1))
             composer.advanceTime(0.1)
         }
 
@@ -2233,7 +2302,7 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: point, for: .seconds(0.1))
+            composer.humanTap(at: point, for: .seconds(0.1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2289,7 +2358,7 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test(arguments: [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)])
-    func scrollingOnScrollBarChangesScrollPosition(pressAndWait: Duration) async throws {
+    func scrollingOnScrollBarChangesScrollPosition(tapAndWait: Duration) async throws {
         let html = """
             <body style="width: 100%; height: 2000px; margin: 0; background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
             </body>
@@ -2302,7 +2371,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: start.x, y: start.y + 200)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5), pressAndWait: pressAndWait)
+            composer.drag(withStart: start, end: end, duration: .seconds(0.5), tapAndWait: tapAndWait)
         }
 
         try await Task.sleep(for: .seconds(1))
@@ -2325,18 +2394,18 @@ extension AppKitGesturesTests.Basic {
         let scrollEnd = CGPoint(x: contentCenter.x, y: contentCenter.y - 150)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: contentCenter, end: scrollEnd, duration: .seconds(0.1))
+            composer.flick(withStart: contentCenter, end: scrollEnd, duration: .seconds(0.1))
         }
 
         let thumb = screenBounds(ofPointInWindowCoordinates: CGPoint(x: window.frame.maxX - 8, y: window.frame.midY))
         let thumbDragEnd = CGPoint(x: thumb.x, y: thumb.y - window.frame.height)
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: thumb,
                 end: thumbDragEnd,
                 duration: .seconds(0.5),
-                pressAndWait: .seconds(0.1)
+                tapAndWait: .seconds(0.1)
             )
         }
 
@@ -2367,7 +2436,7 @@ extension AppKitGesturesTests.Basic {
         .bug("https://webkit.org/b/325063", "Cannot drag subscroller scrollbars"),
         arguments: [Duration.seconds(0.1), .seconds(0.5), .seconds(1.0)]
     )
-    func scrollingOnSubscrollerScrollBarChangesScrollPosition(pressAndWait: Duration) async throws {
+    func scrollingOnSubscrollerScrollBarChangesScrollPosition(tapAndWait: Duration) async throws {
         try await loadPageWithSubscroller()
 
         let scrollerBounds = try await screenBounds(ofElementWithID: "scroller")
@@ -2375,7 +2444,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: start.x, y: start.y + 100)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5), pressAndWait: pressAndWait)
+            composer.drag(withStart: start, end: end, duration: .seconds(0.5), tapAndWait: tapAndWait)
         }
 
         try await Task.sleep(for: .seconds(1))
@@ -2398,18 +2467,18 @@ extension AppKitGesturesTests.Basic {
         let scrollEnd = CGPoint(x: scrollerCenter.x, y: scrollerCenter.y - 50)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: scrollerCenter, end: scrollEnd, duration: .seconds(0.1))
+            composer.flick(withStart: scrollerCenter, end: scrollEnd, duration: .seconds(0.1))
         }
 
         let thumb = CGPoint(x: scrollerBounds.maxX - 8, y: scrollerBounds.midY)
         let thumbDragEnd = CGPoint(x: thumb.x, y: scrollerBounds.minY + 10)
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: thumb,
                 end: thumbDragEnd,
                 duration: .seconds(0.5),
-                pressAndWait: .seconds(0.1)
+                tapAndWait: .seconds(0.1)
             )
         }
 
@@ -2442,7 +2511,7 @@ extension AppKitGesturesTests.Basic {
 
         await page.withWheelEventMonitoring {
             await recap.play { composer in
-                composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5))
+                composer.flick(withStart: start, end: end, duration: .seconds(0.5))
             }
         }
 
@@ -2482,11 +2551,11 @@ extension AppKitGesturesTests.Basic {
         // End the scroll by programatically scrolling back to 0,0.
         try await page.callJavaScript { "window.scrollTo(0, 0);" }
 
-        expectCoefficient(trackpadRubberbandHyperbolicCoefficient, "after initial trackpad scroll")
+        expectCoefficient(NSScrollingBehaviorHyperbolicCoefficientTrackpad, "after initial trackpad scroll")
 
         // 2. Automation scroll.
         await recap.play { composer in
-            composer._wk_scroll(
+            composer.flick(
                 withStart: automationLocation,
                 end: CGPoint(x: automationLocation.x, y: automationLocation.y + 200),
                 duration: .seconds(0.5)
@@ -2496,7 +2565,7 @@ extension AppKitGesturesTests.Basic {
         // End the scroll by programatically scrolling back to 0,0.
         try await page.callJavaScript { "window.scrollTo(0, 0);" }
 
-        expectCoefficient(automationHyperbolicCoefficient, "after automated scroll")
+        expectCoefficient(NSScrollingBehaviorHyperbolicCoefficientTouch, "after automated scroll")
 
         // 3. Trackpad scroll again.
         page.scrollWheel(at: trackpadLocation, delta: CGSize(width: 0, height: 600))
@@ -2504,7 +2573,7 @@ extension AppKitGesturesTests.Basic {
         // End the scroll by programatically scrolling back to 0,0.
         try await page.callJavaScript { "window.scrollTo(0, 0);" }
 
-        expectCoefficient(trackpadRubberbandHyperbolicCoefficient, "after returning to trackpad scroll")
+        expectCoefficient(NSScrollingBehaviorHyperbolicCoefficientTrackpad, "after returning to trackpad scroll")
     }
 
     @Test(
@@ -2531,9 +2600,9 @@ extension AppKitGesturesTests.Basic {
         // Begin a momentum scroll, then catch it before it settles.
         // The interruption should not follow the link beneath it.
         await recap.play { composer in
-            composer._wk_scroll(withStart: flickStart, end: flickEnd, duration: .seconds(0.1))
+            composer.flick(withStart: flickStart, end: flickEnd, duration: .seconds(0.1))
             composer.advanceTime(0.05)
-            composer._wk_click(at: clickLocation, for: .seconds(0.05))
+            composer.humanTap(at: clickLocation, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -2562,12 +2631,12 @@ extension AppKitGesturesTests.Basic {
 
         await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
             await recap.play { composer in
-                composer._wk_scroll(withStart: center, end: scrollEnd, duration: .seconds(0.1))
+                composer.flick(withStart: center, end: scrollEnd, duration: .seconds(0.1))
             }
         }
 
         await recap.play { composer in
-            composer._wk_click(at: center, for: .seconds(0.05))
+            composer.humanTap(at: center, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -2603,7 +2672,7 @@ extension AppKitGesturesTests.Basic {
         // Flick over the left box so that the gesture ends in momentum, and let the momentum settle.
         await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
             await recap.play { composer in
-                composer._wk_scroll(withStart: left, end: CGPoint(x: left.x, y: left.y - 200), duration: .seconds(0.1))
+                composer.flick(withStart: left, end: CGPoint(x: left.x, y: left.y - 200), duration: .seconds(0.1))
             }
         }
         await page.waitForNextPresentationUpdate()
@@ -2616,7 +2685,7 @@ extension AppKitGesturesTests.Basic {
         // A new gesture over the right box must not stay latched to the element under the previous gesture.
         // This deliberately avoids withWheelEventMonitoring(), since starting to monitor clears latching state.
         await recap.play { composer in
-            composer._wk_scroll(withStart: right, end: CGPoint(x: right.x, y: right.y + 100), duration: .seconds(0.3))
+            composer.flick(withStart: right, end: CGPoint(x: right.x, y: right.y + 100), duration: .seconds(0.3))
         }
         try #require(try await waitUntil("return scrollEnded;"), "the scroll over #right never ended")
 
@@ -2642,17 +2711,17 @@ extension AppKitGesturesTests.Basic {
         if !interruptsScroll {
             await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
                 await recap.play { composer in
-                    composer._wk_scroll(withStart: center, end: flickEnd, duration: .seconds(0.1))
+                    composer.flick(withStart: center, end: flickEnd, duration: .seconds(0.1))
                 }
             }
         }
 
         await recap.play { composer in
             if interruptsScroll {
-                composer._wk_scroll(withStart: center, end: flickEnd, duration: .seconds(0.1))
+                composer.flick(withStart: center, end: flickEnd, duration: .seconds(0.1))
                 composer.advanceTime(0.05)
             }
-            composer._wk_drag(withStart: center, end: flickEnd, duration: .seconds(1.5), pressAndWait: .seconds(1))
+            composer.drag(withStart: center, end: flickEnd, duration: .seconds(1.5), tapAndWait: .seconds(1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2689,14 +2758,14 @@ extension AppKitGesturesTests.Basic {
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: center,
                 end: CGPoint(x: center.x, y: center.y - 200),
                 duration: .seconds(0.5),
-                release: false
+                lift: false
             )
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
         await page.waitForNextPresentationUpdate()
 
@@ -2706,7 +2775,7 @@ extension AppKitGesturesTests.Basic {
         try await Task.sleep(for: .seconds(1.5))
 
         await recap.play { composer in
-            composer._wk_click(at: center, for: .seconds(0.1))
+            composer.humanTap(at: center, for: .seconds(0.1))
         }
         await page.waitForPendingMouseEvents()
         await page.waitForNextPresentationUpdate()
@@ -2755,7 +2824,7 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_click(at: convertedBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: convertedBounds.center, for: .seconds(0.1))
         }
 
         // Hard-coded delay to give the test a chance for multiple events to happen, in the failure case.
@@ -2796,7 +2865,7 @@ extension AppKitGesturesTests.Basic {
         let otherBounds = try await screenBounds(ofElementWithID: "other")
 
         await recap.play { composer in
-            composer._wk_click(at: inputBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: inputBounds.center, for: .seconds(0.1))
         }
 
         func isDataListDropdownShowing() -> Bool {
@@ -2811,7 +2880,7 @@ extension AppKitGesturesTests.Basic {
         #expect(isDataListDropdownShowing())
 
         await recap.play { composer in
-            composer._wk_click(at: otherBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: otherBounds.center, for: .seconds(0.1))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -2851,7 +2920,7 @@ extension AppKitGesturesTests.Basic {
     @Test(
         .bug("https://webkit.org/b/325084", "Press-dragging some range inputs only changes their value when the press ends"),
         arguments: [false, true],
-        pressDragOverStyledRangeInputStyleValues
+        ["pan-y", "pan-y pinch-zoom"]
     )
     func pressDragOverStyledRangeInputChangesInputValue(useNativeWidget: Bool, styleValue: String) async throws {
         let maximumValue = 10
@@ -2862,19 +2931,21 @@ extension AppKitGesturesTests.Basic {
         try await page.load(url).wait()
         await page.waitForNextPresentationUpdate()
 
-        try await page.callJavaScript(
-            arguments: ["elementID": elementID, "styleValue": styleValue],
-            script: styleAdjustmentForManipulationSurfaceScript
-        )
+        try await page.callJavaScript(arguments: ["elementID": elementID, "styleValue": styleValue]) {
+            """
+            document.getElementById(elementID).style.touchAction = styleValue;
+            """
+        }
+
         await page.waitForNextPresentationUpdate()
 
         let sliderBounds = try await screenBounds(ofElementWithID: elementID)
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: sliderBounds.center,
                 end: CGPoint(x: sliderBounds.maxX, y: sliderBounds.center.y),
                 duration: .seconds(1.5),
-                pressAndWait: .seconds(0.5)
+                tapAndWait: .seconds(0.5)
             )
         }
         await page.waitForNextPresentationUpdate()
@@ -2894,7 +2965,7 @@ extension AppKitGesturesTests.Basic {
 
     @Test(arguments: [true, false])
     func pressAndHoldBeforeDraggingOverSliderDoesNotOpenContextMenu(useNativeWidget: Bool) async throws {
-        let elementID = try await dragAcrossSlider(useNativeWidget: useNativeWidget, pressAndWait: .seconds(1))
+        let elementID = try await dragAcrossSlider(useNativeWidget: useNativeWidget, tapAndWait: .seconds(1))
 
         let contextMenuEventCount = try await page.callJavaScript(returning: Int.self) {
             "return window.contextMenuEventCount;"
@@ -2959,14 +3030,551 @@ extension AppKitGesturesTests.Basic {
         dragStart: SVGSliderDragStart
     ) async throws {
         try await loadSVGDragSlider(variant)
+
         if isStyleAdjusted {
             try await page.callJavaScript(
                 arguments: ["elementID": "slider-group", "interactive": false],
-                script: styleAdjustmentForCustomWidgetScript
-            )
+            ) {
+                """
+                const touchActionValue = interactive ? "manipulation" : "none";
+                const element = document.getElementById(elementID);
+                element.style.touchAction = touchActionValue;
+                """
+            }
+
             await page.waitForNextPresentationUpdate()
         }
+
         try await expectDragReachesContent(startingFrom: dragStart)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/325570", "Dragging over a zoomed product image scrolls the page instead of panning the image"),
+        arguments: HoverZoomStyle.allCases,
+        HoverZoomPanDirection.allCases
+    )
+    func dragOverHoverZoomInCarouselPansZoom(style: HoverZoomStyle, direction: HoverZoomPanDirection) async throws {
+        let html = """
+            <body style="margin: 0; height: 4000px;">
+                <div id="carousel" style="position: absolute; left: 100px; top: 100px; width: 300px; height: 300px; overflow: hidden;">
+                    <div id="track" style="display: flex; width: 900px; height: 300px;">
+                        <div id="slide" style="position: relative; flex: none; width: 300px; height: 300px;">
+                            <div id="source" style="width: 300px; height: 300px; background: linear-gradient(red, blue);"></div>
+                        </div>
+                        <div style="flex: none; width: 300px; height: 300px; background: green;"></div>
+                        <div style="flex: none; width: 300px; height: 300px; background: yellow;"></div>
+                    </div>
+                </div>
+                <script>
+                    const style = "\(style.rawValue)";
+                    const carousel = document.getElementById("carousel");
+                    const track = document.getElementById("track");
+                    const slide = document.getElementById("slide");
+                    const source = document.getElementById("source");
+
+                    window.pageEvents = [];
+                    for (const type of ["mousedown", "mouseup", "click"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.type), true);
+                    for (const type of ["mousemove", "pointerdown", "pointermove", "pointerup", "pointercancel"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.buttons ? `${event.type}-with-buttons` : event.type), true);
+                    document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+
+                    let dragStartX = null;
+                    window.trackOffset = 0;
+                    track.addEventListener("mousedown", event => { dragStartX = event.clientX; });
+                    document.addEventListener("mousemove", event => {
+                        if (dragStartX === null || !event.buttons)
+                            return;
+                        window.trackOffset = event.clientX - dragStartX;
+                        track.style.transform = `translateX(${window.trackOffset}px)`;
+                    });
+                    document.addEventListener("mouseup", () => { dragStartX = null; });
+
+                    const zoomImage = document.createElement("div");
+                    zoomImage.id = "zoomImage";
+                    zoomImage.style.cssText = "position: absolute; width: 900px; height: 900px; background: linear-gradient(to right, orange, purple);";
+                    const preview = document.createElement("div");
+                    preview.id = "preview";
+                    preview.style.cssText = "display: none; position: absolute; overflow: hidden; width: 300px; height: 300px;";
+                    preview.appendChild(zoomImage);
+                    preview.addEventListener("click", () => { });
+                    const lens = document.createElement("div");
+                    lens.id = "lens";
+                    lens.style.cssText = "display: none; position: absolute; width: 100px; height: 100px; pointer-events: none; background: rgba(255, 255, 255, 0.5);";
+                    if (style === "overlay") {
+                        preview.style.left = "0";
+                        preview.style.top = "0";
+                        preview.addEventListener("mousemove", pan);
+                        preview.addEventListener("mouseleave", closeZoom);
+                        slide.appendChild(preview);
+                    } else {
+                        preview.style.left = "500px";
+                        preview.style.top = "100px";
+                        document.body.appendChild(preview);
+                        slide.appendChild(lens);
+                    }
+
+                    const isZoomOpen = () => preview.style.display !== "none";
+
+                    function openZoom() {
+                        preview.style.display = "block";
+                        if (style === "lens")
+                            lens.style.display = "block";
+                    }
+
+                    function closeZoom() {
+                        preview.style.display = "none";
+                        lens.style.display = "none";
+                    }
+
+                    function pan(event) {
+                        const bounds = source.getBoundingClientRect();
+                        const x = Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width);
+                        const y = Math.min(Math.max(event.clientY - bounds.top, 0), bounds.height);
+                        zoomImage.style.transform = `translate(${-2 * x}px, ${-2 * y}px)`;
+                        if (style === "lens") {
+                            lens.style.left = `${x - 50}px`;
+                            lens.style.top = `${y - 50}px`;
+                        }
+                    }
+
+                    source.addEventListener("mouseenter", event => { openZoom(); pan(event); });
+                    source.addEventListener("mousemove", event => { openZoom(); pan(event); });
+                    if (style === "lens")
+                        source.addEventListener("mouseleave", closeZoom);
+
+                    window.zoomImageTransform = () => isZoomOpen() ? zoomImage.style.transform : "";
+                </script>
+            </body>
+            """
+
+        page.backingWebView.configuration.preferences._contentChangeObserverEnabled = true
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let bounds = try await screenBounds(ofElementWithID: "source")
+
+        await recap.play { composer in
+            composer.humanTap(at: bounds.center, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let transformAfterClick = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+        try #require(!transformAfterClick.isEmpty)
+
+        let clickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        #expect(!clickEvents.contains("click"))
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        await recap.play { composer in
+            composer.flick(
+                withStart: bounds.center,
+                end: direction.end(from: bounds.center),
+                duration: .seconds(0.3)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let events = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        let transformAfterDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+        let trackOffset = try await page.callJavaScript(returning: Double.self) { "return window.trackOffset;" }
+        let scroll = try await settledScrollPosition()
+
+        #expect(Set(events) == ["mousemove", "pointermove"])
+        #expect(!transformAfterDrag.isEmpty)
+        #expect(transformAfterDrag != transformAfterClick)
+        #expect(trackOffset == 0)
+        #expect(scroll == .zero)
+
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        let secondStart = CGPoint(x: bounds.minX + bounds.width * 0.75, y: bounds.minY + bounds.height * 0.75)
+
+        try await Task.sleep(for: .seconds(1))
+        await recap.play { composer in
+            composer.humanTap(at: secondStart, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let secondClickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        let transformAfterSecondClick = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+
+        #expect(secondClickEvents.contains("click"))
+        #expect(secondClickEvents.contains("pointerdown-with-buttons"))
+        #expect(!transformAfterSecondClick.isEmpty)
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        await recap.play { composer in
+            composer.flick(
+                withStart: secondStart,
+                end: direction.end(from: secondStart),
+                duration: .seconds(0.3)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let secondEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        let transformAfterSecondDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+
+        #expect(Set(secondEvents) == ["mousemove", "pointermove"])
+        #expect(transformAfterSecondDrag != transformAfterSecondClick)
+        #expect(try await settledScrollPosition() == .zero)
+    }
+
+    @Test(arguments: [true, false])
+    func scrollAfterClickThatZoomsImageInPlacePansZoom(clickZoomsImage: Bool) async throws {
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        let html = """
+            <style>
+                #wrapper { position: absolute; left: 100px; top: 100px; width: 300px; height: 300px; background-image: linear-gradient(to right, orange, purple); background-size: 900px 900px; }
+                #photo { display: block; width: 300px; height: 300px; }
+                #wrapper.zoomed #photo { opacity: 0; }
+            </style>
+            <body style="margin: 0; height: 4000px;">
+                <div id="wrapper"><img id="photo" src="400x400-green.png"></div>
+                <script>
+                    const zoomsImage = \(clickZoomsImage);
+                    const wrapper = document.getElementById("wrapper");
+                    const photo = document.getElementById("photo");
+                    window.pageEvents = [];
+                    for (const type of ["mousedown", "mouseup", "click"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.type), true);
+                    for (const type of ["mousemove", "pointerdown", "pointermove", "pointerup", "pointercancel"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.buttons ? `${event.type}-with-buttons` : event.type), true);
+                    document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+                    photo.addEventListener("click", () => {
+                        if (zoomsImage)
+                            wrapper.classList.add("zoomed");
+                    });
+                    photo.addEventListener("mousemove", event => {
+                        if (wrapper.classList.contains("zoomed"))
+                            wrapper.style.backgroundPosition = `${event.offsetX / 3}% ${event.offsetY / 3}%`;
+                    });
+                    photo.addEventListener("mouseleave", () => wrapper.classList.remove("zoomed"));
+                    window.zoomState = () => wrapper.classList.contains("zoomed") ? wrapper.style.backgroundPosition : "closed";
+                </script>
+            </body>
+            """
+
+        page.backingWebView.configuration.preferences._contentChangeObserverEnabled = true
+
+        try await page.load(html: html, baseURL: baseURL).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let bounds = try await screenBounds(ofElementWithID: "photo")
+
+        await recap.play { composer in
+            composer.humanTap(at: bounds.center, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let clickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        try #require(clickEvents.contains("click"))
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+        let zoomStateBeforeDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomState();" }
+
+        await recap.play { composer in
+            composer.flick(
+                withStart: bounds.center,
+                end: CGPoint(x: bounds.center.x, y: bounds.center.y - 120),
+                duration: .seconds(0.3)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let events = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        let zoomStateAfterDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomState();" }
+        let scroll = try await settledScrollPosition()
+
+        if clickZoomsImage {
+            #expect(Set(events) == ["mousemove", "pointermove"])
+            #expect(zoomStateAfterDrag != "closed")
+            #expect(zoomStateAfterDrag != zoomStateBeforeDrag)
+            #expect(scroll == .zero)
+        } else {
+            #expect(events.contains("wheel"))
+            #expect(scroll.y > 20)
+        }
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/325570", "Dragging over a zoomed product image scrolls the page instead of panning the image"),
+        arguments: [true, false]
+    )
+    func scrollAwayFromHoverZoomOpenedByClickScrollsPage(clickElsewhereFirst: Bool) async throws {
+        let html = """
+            <body style="margin: 0; height: 4000px;">
+                <div id="source" style="position: absolute; left: 100px; top: 100px; width: 300px; height: 300px; background: linear-gradient(red, blue);"></div>
+                <div id="preview" style="display: none; position: absolute; left: 500px; top: 100px; width: 300px; height: 300px; overflow: hidden;">
+                    <div id="zoomImage" style="width: 900px; height: 900px; background: linear-gradient(to right, orange, purple);"></div>
+                </div>
+                <div id="other" style="position: absolute; left: 100px; top: 420px; width: 300px; height: 100px; background: green;"></div>
+                <script>
+                    const source = document.getElementById("source");
+                    const preview = document.getElementById("preview");
+                    const zoomImage = document.getElementById("zoomImage");
+                    window.pageEvents = [];
+                    for (const type of ["mousedown", "mouseup", "click"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.type), true);
+                    document.addEventListener("mousemove", event => window.pageEvents.push(event.buttons ? "mousemove-with-buttons" : "mousemove"), true);
+                    document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+                    document.getElementById("other").addEventListener("click", () => { });
+                    preview.addEventListener("click", () => { });
+                    function pan(event) {
+                        preview.style.display = "block";
+                        const bounds = source.getBoundingClientRect();
+                        zoomImage.style.transform = `translate(${-2 * (event.clientX - bounds.left)}px, ${-2 * (event.clientY - bounds.top)}px)`;
+                    }
+                    source.addEventListener("mouseenter", pan);
+                    source.addEventListener("mousemove", pan);
+                </script>
+            </body>
+            """
+
+        page.backingWebView.configuration.preferences._contentChangeObserverEnabled = true
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let source = try await screenBounds(ofElementWithID: "source")
+        let other = try await screenBounds(ofElementWithID: "other")
+
+        await recap.play { composer in
+            composer.humanTap(at: source.center, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let clickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        try #require(!clickEvents.contains("click"))
+
+        let start: CGPoint
+        if clickElsewhereFirst {
+            try await Task.sleep(for: .seconds(1))
+            await recap.play { composer in
+                composer.humanTap(at: other.center, for: .seconds(0.05))
+            }
+            await page.waitForPendingMouseEvents()
+            await page.waitForNextPresentationUpdate()
+
+            let otherClickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+            try #require(otherClickEvents.contains("click"))
+            start = source.center
+        } else {
+            start = other.center
+        }
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        await recap.play { composer in
+            composer.flick(
+                withStart: start,
+                end: CGPoint(x: start.x, y: start.y - 120),
+                duration: .seconds(0.3)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let events = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        #expect(events.contains("wheel"))
+        #expect(try await settledScrollPosition().y > 20)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/325570", "Dragging over a zoomed product image scrolls the page instead of panning the image"),
+        arguments: [true, false]
+    )
+    func clickAndDragInsideHoverZoomOpenedByClick(pointerTracking: Bool) async throws {
+        page.setWebFeature("UseAppKitGesturesForPointerEvents", enabled: pointerTracking)
+
+        let html = """
+            <body style="margin: 0; height: 4000px;">
+                <div id="source" style="position: absolute; left: 100px; top: 100px; width: 300px; height: 300px; background: linear-gradient(red, blue);"></div>
+                <div id="preview" style="display: none; position: absolute; left: 500px; top: 100px; width: 300px; height: 300px; overflow: hidden;">
+                    <div id="zoomImage" style="width: 900px; height: 900px; background: linear-gradient(to right, orange, purple);"></div>
+                </div>
+                <script>
+                    const source = document.getElementById("source");
+                    const preview = document.getElementById("preview");
+                    const zoomImage = document.getElementById("zoomImage");
+                    window.pageEvents = [];
+                    for (const type of ["mousedown", "mouseup", "click"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.type), true);
+                    for (const type of ["mousemove", "pointerdown", "pointermove", "pointerup", "pointercancel"])
+                        document.addEventListener(type, event => window.pageEvents.push(event.buttons ? `${event.type}-with-buttons` : event.type), true);
+                    document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+                    function pan(event) {
+                        preview.style.display = "block";
+                        const bounds = source.getBoundingClientRect();
+                        zoomImage.style.transform = `translate(${-2 * (event.clientX - bounds.left)}px, ${-2 * (event.clientY - bounds.top)}px)`;
+                    }
+                    preview.addEventListener("click", () => { });
+                    source.addEventListener("mouseenter", pan);
+                    source.addEventListener("mousemove", pan);
+                    window.zoomImageTransform = () => zoomImage.style.transform;
+                </script>
+            </body>
+            """
+
+        page.backingWebView.configuration.preferences._contentChangeObserverEnabled = true
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let bounds = try await screenBounds(ofElementWithID: "source")
+
+        await recap.play { composer in
+            composer.humanTap(at: bounds.center, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let firstClickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        try #require(!firstClickEvents.contains("click"))
+
+        func dragInsideSource(from start: CGPoint) async throws -> [String] {
+            try await Task.sleep(for: .seconds(1))
+            try await page.callJavaScript { "window.pageEvents = [];" }
+
+            await recap.play { composer in
+                composer.flick(
+                    withStart: start,
+                    end: CGPoint(x: start.x, y: start.y - 120),
+                    duration: .seconds(0.3)
+                )
+            }
+            await page.waitForPendingMouseEvents()
+            await page.waitForNextPresentationUpdate()
+
+            return try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        }
+
+        let transformBeforeDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+        let firstDragEvents = try await dragInsideSource(from: bounds.center)
+
+        let transformAfterDrag = try await page.callJavaScript(returning: String.self) { "return window.zoomImageTransform();" }
+
+        #expect(Set(firstDragEvents) == ["mousemove", "pointermove"])
+        #expect(transformAfterDrag != transformBeforeDrag)
+        #expect(try await settledScrollPosition() == .zero)
+
+        let secondClickLocation = CGPoint(x: bounds.minX + bounds.width * 0.75, y: bounds.minY + bounds.height * 0.75)
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        await recap.play { composer in
+            composer.humanTap(at: secondClickLocation, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let secondClickEvents = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        #expect(secondClickEvents.contains("click"))
+        #expect(secondClickEvents.contains("pointerdown-with-buttons"))
+        #expect(secondClickEvents.contains("pointerup"))
+        #expect(!secondClickEvents.contains("pointercancel"))
+
+        let secondDragEvents = try await dragInsideSource(from: secondClickLocation)
+
+        #expect(Set(secondDragEvents) == ["mousemove", "pointermove"])
+        #expect(try await settledScrollPosition() == .zero)
+    }
+
+    @Test(
+        .bug("https://webkit.org/b/325570", "Dragging over a zoomed product image scrolls the page instead of panning the image"),
+        arguments: HoverOpenedByClickScrollTarget.allCases
+    )
+    func scrollOverHoverOpenedByClickScrollsWhenItIsNotAZoom(target: HoverOpenedByClickScrollTarget) async throws {
+        let html: String
+        switch target {
+        case .scrollerInMenu:
+            html = """
+                <body style="margin: 0; height: 4000px;">
+                    <div id="trigger" style="position: absolute; left: 100px; top: 100px; width: 300px; height: 40px; background: gray;">
+                        <div id="menu" style="display: none; position: absolute; left: 0; top: 40px; width: 300px; height: 300px; overflow: auto;">
+                            <div style="height: 2000px; background: linear-gradient(red, blue);"></div>
+                        </div>
+                    </div>
+                    <script>
+                        const trigger = document.getElementById("trigger");
+                        window.pageEvents = [];
+                        document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+                        trigger.addEventListener("mouseenter", () => { document.getElementById("menu").style.display = "block"; });
+                        trigger.addEventListener("click", () => { });
+                        window.scrolledDistance = () => document.getElementById("menu").scrollTop;
+                    </script>
+                </body>
+                """
+        case .elementCoveringViewport:
+            html = """
+                <body style="margin: 0; height: 4000px;">
+                    <div id="trigger" style="position: absolute; left: 0; top: 0; width: 100%; height: 2000px; background: linear-gradient(red, blue);">
+                        <div id="menu" style="display: none; position: absolute; left: 100px; top: 300px; width: 300px; height: 300px; background: green;"></div>
+                    </div>
+                    <script>
+                        const trigger = document.getElementById("trigger");
+                        window.pageEvents = [];
+                        document.addEventListener("wheel", event => window.pageEvents.push(event.type), { capture: true, passive: true });
+                        trigger.addEventListener("mouseenter", () => { document.getElementById("menu").style.display = "block"; });
+                        trigger.addEventListener("mousemove", () => { });
+                        window.scrolledDistance = () => window.scrollY;
+                    </script>
+                </body>
+                """
+        }
+
+        page.backingWebView.configuration.preferences._contentChangeObserverEnabled = true
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let triggerBounds = try await screenBounds(ofElementWithID: "trigger")
+        let clickLocation = CGPoint(x: triggerBounds.minX + 50, y: triggerBounds.minY + 20)
+
+        await recap.play { composer in
+            composer.humanTap(at: clickLocation, for: .seconds(0.05))
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let menuBounds = try await screenBounds(ofElementWithID: "menu")
+        try #require(!menuBounds.isEmpty)
+
+        try await Task.sleep(for: .seconds(1))
+        try await page.callJavaScript { "window.pageEvents = [];" }
+
+        await recap.play { composer in
+            composer.flick(
+                withStart: menuBounds.center,
+                end: CGPoint(x: menuBounds.center.x, y: menuBounds.center.y - 120),
+                duration: .seconds(0.3)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+        _ = try await settledScrollPosition()
+
+        let events = try await page.callJavaScript(returning: [String].self) { "return window.pageEvents;" }
+        let scrolledDistance = try await page.callJavaScript(returning: Double.self) { "return window.scrolledDistance();" }
+
+        #expect(events.contains("wheel"))
+        #expect(scrolledDistance > 20)
     }
 
     @Test(
@@ -3066,7 +3674,7 @@ extension AppKitGesturesTests.Basic {
         let endPoint = CGPoint(x: scrubber.minX + scrubber.width * 0.25, y: scrubber.midY)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: startPoint, end: endPoint, duration: .seconds(0.2), release: true)
+            composer.drag(withStart: startPoint, end: endPoint, duration: .seconds(0.2))
         }
 
         await page.waitForPendingMouseEvents()
@@ -3091,23 +3699,32 @@ extension AppKitGesturesTests.Basic {
         let modelHTML = try #require(Bundle.testResources.url(forResource: "orbit-model-page", withExtension: "html"))
         try await page.load(modelHTML).wait()
         try await waitForModelReady()
+
         if adjustStyle {
             try await page.callJavaScript(
                 arguments: ["elementID": "model", "interactive": false],
-                script: styleAdjustmentForCustomWidgetScript
-            )
+            ) {
+                """
+                const touchActionValue = interactive ? "manipulation" : "none";
+                const element = document.getElementById(elementID);
+                element.style.touchAction = touchActionValue;
+                """
+            }
+
             await page.waitForNextPresentationUpdate()
         }
+
         let modelBounds = try await screenBounds(ofElementWithID: "model")
         let initialEntityTransform = try await entityTransform()
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: modelBounds.center,
                 end: CGPoint(x: modelBounds.maxX, y: modelBounds.center.y),
                 duration: .seconds(0.05),
-                pressAndWait: .seconds(0.05)
+                tapAndWait: .seconds(0.05)
             )
         }
+
         await page.waitForNextPresentationUpdate()
         #expect(try await entityTransformDidChange(from: initialEntityTransform))
     }
@@ -3126,11 +3743,11 @@ extension AppKitGesturesTests.Basic {
         await page.waitForNextPresentationUpdate()
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: toBounds.center,
                 end: crazyBounds.center,
                 duration: .seconds(1.5),
-                pressAndWait: .seconds(1.0)
+                tapAndWait: .seconds(1.0)
             )
         }
 
@@ -3177,11 +3794,11 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledDraggingSession {
             await recap.play { composer in
-                composer._wk_drag(
+                composer.drag(
                     withStart: linkBounds.center,
                     end: dragEnd,
                     duration: .seconds(1.5),
-                    pressAndWait: .seconds(1.0)
+                    tapAndWait: .seconds(1.0)
                 )
             }
         }
@@ -3209,11 +3826,11 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledDraggingSession {
             await recap.play { composer in
-                composer._wk_drag(
+                composer.drag(
                     withStart: linkBounds.center,
                     end: dragEnd,
                     duration: .seconds(1.5),
-                    pressAndWait: .seconds(1.0)
+                    tapAndWait: .seconds(1.0)
                 )
             }
         }
@@ -3242,11 +3859,11 @@ extension AppKitGesturesTests.Basic {
         let imgBounds = screenBounds(ofRectInViewportCoordinates: imgViewportBounds)
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: imgBounds.center,
                 end: CGPoint(x: imgBounds.center.x, y: imgBounds.midY + 200),
                 duration: .seconds(1.5),
-                pressAndWait: .seconds(1.0)
+                tapAndWait: .seconds(1.0)
             )
         }
 
@@ -3287,11 +3904,11 @@ extension AppKitGesturesTests.Basic {
         // Dragging the image attempts to start a drag, but the page cancels dragstart.
         let imgBounds = try await screenBounds(ofElementWithID: "img")
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: imgBounds.center,
                 end: CGPoint(x: imgBounds.center.x + 300, y: imgBounds.center.y),
                 duration: .seconds(1.5),
-                pressAndWait: .seconds(1.0)
+                tapAndWait: .seconds(1.0)
             )
         }
         await page.waitForPendingMouseEvents()
@@ -3300,11 +3917,10 @@ extension AppKitGesturesTests.Basic {
         // A subsequent drag should allow mouse tracking.
         let sliderBounds = try await screenBounds(ofElementWithID: "slider")
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: CGPoint(x: sliderBounds.minX + 10, y: sliderBounds.center.y),
                 end: CGPoint(x: sliderBounds.maxX, y: sliderBounds.center.y),
                 duration: .seconds(0.5),
-                release: true
             )
         }
         await page.waitForPendingMouseEvents()
@@ -3331,11 +3947,11 @@ extension AppKitGesturesTests.Basic {
 
         await withSwizzledDraggingSession {
             await recap.play { composer in
-                composer._wk_drag(
+                composer.drag(
                     withStart: imgBounds.center,
                     end: dragEnd,
                     duration: .seconds(1.5),
-                    pressAndWait: .seconds(1.0)
+                    tapAndWait: .seconds(1.0)
                 )
             }
         }
@@ -3377,11 +3993,11 @@ extension AppKitGesturesTests.Basic {
             with: implementation
         ) {
             await recap.play { composer in
-                composer._wk_drag(
+                composer.drag(
                     withStart: thisBounds.center,
                     end: onesBounds.center,
                     duration: .seconds(1.5),
-                    pressAndWait: .seconds(1.5)
+                    tapAndWait: .seconds(1.5)
                 )
             }
 
@@ -3419,7 +4035,7 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: scrubberBounds.maxX - 10, y: start.y)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5))
+            composer.flick(withStart: start, end: end, duration: .seconds(0.5))
         }
 
         await page.waitForNextPresentationUpdate()
@@ -3458,7 +4074,7 @@ extension AppKitGesturesTests.Basic {
         let end = screenBounds(ofPointInWindowCoordinates: CGPoint(x: 3 * window.frame.width / 4, y: window.frame.height / 2))
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
+            composer.flick(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
         }
 
         // Allow any (incorrectly) triggered back navigation to occur before asserting it did not.
@@ -3489,7 +4105,7 @@ extension AppKitGesturesTests.Basic {
 
         // Swipe right, back navigation.
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5))
+            composer.flick(withStart: start, end: end, duration: .seconds(0.5))
         }
 
         try await Task.sleep(for: .seconds(1))
@@ -3500,7 +4116,7 @@ extension AppKitGesturesTests.Basic {
 
         // Swipe left, forward navigation.
         await recap.play { composer in
-            composer._wk_scroll(withStart: end, end: start, duration: .seconds(0.5))
+            composer.flick(withStart: end, end: start, duration: .seconds(0.5))
         }
 
         try await Task.sleep(for: .seconds(1))
@@ -3534,7 +4150,7 @@ extension AppKitGesturesTests.Basic {
 
         await withMockedImageAnalyzer(response: .success(analysis), after: delay) {
             await recap.play { composer in
-                composer._wk_drag(withStart: start, end: end, duration: .seconds(1.5), pressAndWait: .seconds(1.0))
+                composer.drag(withStart: start, end: end, duration: .seconds(1.5), tapAndWait: .seconds(1.0))
             }
         }
 
@@ -3565,11 +4181,11 @@ extension AppKitGesturesTests.Basic {
         await withMockedImageAnalyzer(response: .success(.init(lines: [])), after: .zero) {
             await withSwizzledDraggingSession {
                 await recap.play { composer in
-                    composer._wk_drag(
+                    composer.drag(
                         withStart: imageScreenBounds.center,
                         end: dragEnd,
                         duration: .seconds(1.5),
-                        pressAndWait: .seconds(1.0)
+                        tapAndWait: .seconds(1.0)
                     )
                 }
             }
@@ -3582,7 +4198,7 @@ extension AppKitGesturesTests.Basic {
     func clickThatMovesBeforeImageAnalysisBeginsInitiatesDragAndDropWhileHeld() async throws {
         let baseURL = try #require(Bundle.testResources.resourceURL)
         let html = """
-            <img id="img" src="400x400-green.png" style="display: block; height: 100vh; margin: 0; \(nonManipulableSurfaceStyle)">
+            <img id="img" src="400x400-green.png" style="display: block; height: 100vh; margin: 0; touch-action: none;">
             """
         try await page.load(html: html, baseURL: baseURL).wait()
 
@@ -3602,11 +4218,11 @@ extension AppKitGesturesTests.Basic {
             gestureStateAtDragStart = await withSwizzledDraggingSession {
                 await recap.play { composer in
                     // Click and hold past the drag gesture's minimum duration, then drag.
-                    composer._wk_drag(
+                    composer.drag(
                         withStart: start,
                         end: dragEnd,
                         duration: .seconds(1),
-                        pressAndWait: .seconds(0.5),
+                        tapAndWait: .seconds(0.5),
                         movingFirstTo: nudged
                     )
                 }
@@ -3636,7 +4252,7 @@ extension AppKitGesturesTests.Basic {
         let pointAfterImage = CGPoint(x: imageBounds.maxX + 50, y: imageBounds.midY)
 
         await recap.play { composer in
-            composer._wk_click(at: pointAfterImage, for: .seconds(0.1))
+            composer.humanTap(at: pointAfterImage, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -3674,7 +4290,7 @@ extension AppKitGesturesTests.Basic {
         let attachmentBounds = try await screenBounds(ofElementWithID: "attachment")
 
         await recap.play { composer in
-            composer._wk_click(at: attachmentBounds.center, for: .seconds(0.1))
+            composer.humanTap(at: attachmentBounds.center, for: .seconds(0.1))
         }
 
         await page.waitForPendingMouseEvents()
@@ -3696,9 +4312,9 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: center.x, y: center.y - dragDistance)
 
         await recap.play { composer in
-            composer._wk_eventFrequency = coalescedFlickEventFrequency
-            composer._wk_drag(withStart: center, end: end, duration: coalescedFlickDuration, release: false)
-            composer._wk_mouseUp()
+            composer.touchFrequency = coalescedFlickEventFrequency
+            composer.drag(withStart: center, end: end, duration: coalescedFlickDuration, lift: false)
+            composer.liftUpAtAllActivePoints()
         }
 
         let settled = try await settledScrollPosition()
@@ -3719,10 +4335,10 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: center.x, y: center.y - dragDistance)
 
         await recap.play { composer in
-            composer._wk_eventFrequency = coalescedFlickEventFrequency
-            composer._wk_drag(withStart: center, end: end, duration: coalescedFlickDuration, release: false)
+            composer.touchFrequency = coalescedFlickEventFrequency
+            composer.drag(withStart: center, end: end, duration: coalescedFlickDuration, lift: false)
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         let settled = try await settledScrollPosition()
@@ -3741,14 +4357,101 @@ extension AppKitGesturesTests.Basic {
 
         // Unlike the coalesced case above, this sees "changed" events, so it relies on the velocity going stale.
         await recap.play { composer in
-            composer._wk_drag(withStart: center, end: end, duration: coalescedFlickDuration, release: false)
+            composer.drag(withStart: center, end: end, duration: coalescedFlickDuration, lift: false)
             composer.advanceTime(0.5)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         let settled = try await settledScrollPosition()
 
         #expect(settled.y < dragDistance * 1.5)
+    }
+
+    @Test
+    func momentumScrollingDispatchesWheelEvents() async throws {
+        let html = """
+            <body style="margin: 0; width: 100%; height: 200000px;
+                         background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
+            <script>
+              window.totalWheelDeltaY = 0;
+              document.addEventListener("wheel", event => totalWheelDeltaY += event.deltaY, { passive: true });
+            </script>
+            </body>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        // Start low enough that the flick stays within the web view.
+        let dragDistance = 200.0
+        let start = screenBounds(ofPointInWindowCoordinates: CGPoint(x: window.frame.width / 2, y: window.frame.height / 4))
+        let end = CGPoint(x: start.x, y: start.y - dragDistance)
+
+        await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
+            await recap.play { composer in
+                composer.flick(withStart: start, end: end, duration: .seconds(0.1))
+            }
+        }
+
+        let settled = try await settledScrollPosition()
+
+        // The gesture itself only accounts for `dragDistance`; anything well beyond it came from momentum.
+        try #require(settled.y > dragDistance * 2, "the flick did not start momentum scrolling")
+
+        // Momentum scrolling should be reported to the page as wheel events, just like the gesture before it.
+        // Without them, the wheel events would only account for the gesture, less than half of the scroll.
+        let totalWheelDeltaY = try await page.callJavaScript(returning: Double.self) {
+            "return totalWheelDeltaY;"
+        }
+        #expect(
+            abs(totalWheelDeltaY - settled.y) < settled.y * 0.1,
+            "wheel events accounted for \(totalWheelDeltaY)px of a \(settled.y)px scroll"
+        )
+    }
+
+    @Test
+    func momentumScrollingDispatchesWheelEventsToPageHandlingScrolling() async throws {
+        let html = """
+            <body style="margin: 0; width: 100%; height: 200000px;
+                         background: repeating-linear-gradient(to bottom, blue 0 50px, white 50px 100px);">
+            <script>
+              window.totalWheelDeltaY = 0;
+              window.allWheelEventsWereCancelable = true;
+              document.addEventListener("wheel", event => {
+                  allWheelEventsWereCancelable &&= event.cancelable;
+                  totalWheelDeltaY += event.deltaY;
+                  event.preventDefault();
+              }, { passive: false });
+            </script>
+            </body>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        // Start low enough that the flick stays within the web view.
+        let dragDistance = 200.0
+        let start = screenBounds(ofPointInWindowCoordinates: CGPoint(x: window.frame.width / 2, y: window.frame.height / 4))
+        let end = CGPoint(x: start.x, y: start.y - dragDistance)
+
+        await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
+            await recap.play { composer in
+                composer.flick(withStart: start, end: end, duration: .seconds(0.1))
+            }
+        }
+
+        let settled = try await settledScrollPosition()
+        #expect(settled.y == 0)
+
+        // A page that handles scrolling itself should be told about momentum.
+        // The gesture itself only accounts for `dragDistance`; anything well beyond it came from momentum.
+        let totalWheelDeltaY = try await page.callJavaScript(returning: Double.self) {
+            "return totalWheelDeltaY;"
+        }
+        #expect(totalWheelDeltaY > dragDistance * 2, "wheel events only accounted for \(totalWheelDeltaY)px")
+
+        let allWheelEventsWereCancelable = try await page.callJavaScript(returning: Bool.self) {
+            "return allWheelEventsWereCancelable;"
+        }
+        #expect(allWheelEventsWereCancelable)
     }
 
     @Test(.disabled("This test takes an unavoidable ~10 seconds to run"))
@@ -3764,7 +4467,7 @@ extension AppKitGesturesTests.Basic {
             await recap.play { composer in
                 for i in 0..<count {
                     let isLast = i == count - 1
-                    composer._wk_scroll(withStart: center, end: (isLast && reverseLast) ? up : down, duration: .seconds(0.08))
+                    composer.flick(withStart: center, end: (isLast && reverseLast) ? up : down, duration: .seconds(0.08))
                     if !isLast {
                         composer.advanceTime(0.05)
                     }
@@ -3798,7 +4501,7 @@ extension AppKitGesturesTests.Basic {
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
         await recap.play { composer in
             // ~45°: neither axis is locked out.
-            composer._wk_scroll(
+            composer.flick(
                 withStart: center,
                 end: CGPoint(x: center.x - 250, y: center.y - 250),
                 duration: .seconds(0.3)
@@ -3857,7 +4560,7 @@ extension AppKitGesturesTests.Basic {
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
         await recap.play { composer in
             // ~7°: the vertical component is suppressed.
-            composer._wk_scroll(
+            composer.flick(
                 withStart: center,
                 end: CGPoint(x: center.x - 250, y: center.y - 30),
                 duration: .seconds(0.3)
@@ -3886,7 +4589,7 @@ extension AppKitGesturesTests.Basic {
 
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
         await recap.play { composer in
-            composer._wk_scroll(
+            composer.flick(
                 withStart: center,
                 end: CGPoint(x: center.x - 250, y: center.y - 80),
                 duration: .seconds(0.3),
@@ -3913,7 +4616,7 @@ extension AppKitGesturesTests.Basic {
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
         await recap.play { composer in
             // ~7° from vertical: the horizontal component is suppressed.
-            composer._wk_scroll(
+            composer.flick(
                 withStart: center,
                 end: CGPoint(x: center.x - 30, y: center.y - 250),
                 duration: .seconds(0.3)
@@ -3938,14 +4641,14 @@ extension AppKitGesturesTests.Basic {
         let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: center, end: CGPoint(x: center.x - 250, y: center.y), duration: .seconds(0.08))
+            composer.flick(withStart: center, end: CGPoint(x: center.x - 250, y: center.y), duration: .seconds(0.08))
         }
         await page.waitForNextPresentationUpdate()
 
         let after = try await page.callJavaScript(JavaScriptMessages.ScrollPosition())
 
         await recap.play { composer in
-            composer._wk_scroll(withStart: center, end: CGPoint(x: center.x, y: center.y - 250), duration: .seconds(0.3))
+            composer.flick(withStart: center, end: CGPoint(x: center.x, y: center.y - 250), duration: .seconds(0.3))
         }
         await page.waitForNextPresentationUpdate()
 
@@ -3968,7 +4671,7 @@ extension AppKitGesturesTests.Basic {
             // horizontally, so that branch is skipped. The drag is not steep enough for the vertical
             // branch either, so no lock is taken at all and both components flow — which is what lets
             // the vertical one scroll here.
-            composer._wk_scroll(
+            composer.flick(
                 withStart: center,
                 end: CGPoint(x: center.x - 250, y: center.y - 80),
                 duration: .seconds(0.3)
@@ -4038,11 +4741,11 @@ extension AppKitGesturesTests.Basic {
         let dragEnd = CGPoint(x: dragStart.x + 50, y: dragStart.y + 50)
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: dragStart,
                 end: dragEnd,
                 duration: .seconds(0.1),
-                pressAndWait: .seconds(0.1)
+                tapAndWait: .seconds(0.1)
             )
         }
 
@@ -4068,9 +4771,11 @@ private struct PresentedMenuItem: Sendable, Equatable {
 }
 
 /// Captures the items of the context menu that `body` presents instead of showing it. Then runs `whileMenuIsOpen`,
-/// and chooses the item titled `itemTitle`, if any, as if it were picked from the menu.
+/// and chooses the item titled `itemTitle`, if any, as if it were picked from the menu. When `waitingForMenu` is false,
+/// only a menu that `body` has presented by the time it returns is captured, and no items are returned if there is none.
 @discardableResult
 nonisolated(nonsending) private func withSwizzledContextMenu(
+    waitingForMenu: Bool = true,
     choosingItemTitled itemTitle: String? = nil,
     whileMenuIsOpen: () async -> Void = {},
     perform body: () async -> Void
@@ -4097,7 +4802,9 @@ nonisolated(nonsending) private func withSwizzledContextMenu(
     ) {
         await body()
 
-        await future.wait()
+        if waitingForMenu {
+            await future.wait()
+        }
 
         await whileMenuIsOpen()
 
@@ -4242,7 +4949,7 @@ extension AppKitGesturesTests.Basic {
     private func dragAcrossSlider(
         useNativeWidget: Bool,
         verticalTravelFraction: Double = 0,
-        pressAndWait: Duration = .seconds(0.5)
+        tapAndWait: Duration = .seconds(0.5)
     ) async throws -> String {
         let elementID = useNativeWidget ? "native-slider" : "custom-slider"
 
@@ -4253,8 +4960,14 @@ extension AppKitGesturesTests.Basic {
 
         try await page.callJavaScript(
             arguments: ["elementID": "custom-slider", "interactive": false],
-            script: styleAdjustmentForCustomWidgetScript
-        )
+        ) {
+            """
+            const touchActionValue = interactive ? "manipulation" : "none";
+            const element = document.getElementById(elementID);
+            element.style.touchAction = touchActionValue;
+            """
+        }
+
         await page.waitForNextPresentationUpdate()
 
         let sliderBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: elementID))
@@ -4267,7 +4980,7 @@ extension AppKitGesturesTests.Basic {
         )
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(1.5), pressAndWait: pressAndWait)
+            composer.drag(withStart: start, end: end, duration: .seconds(1.5), tapAndWait: tapAndWait)
         }
 
         await page.waitForNextPresentationUpdate()
@@ -4302,9 +5015,9 @@ extension AppKitGesturesTests.Basic {
         }
 
         await recap.play { composer in
-            composer._wk_click(at: point, for: .seconds(0.05))
+            composer.humanTap(at: point, for: .seconds(0.05))
             composer.advanceTime(1)
-            composer._wk_click(at: point, for: .seconds(0.05))
+            composer.humanTap(at: point, for: .seconds(0.05))
         }
 
         // A click at the caret presents the context menu only once a double click is no longer possible.
@@ -4330,7 +5043,7 @@ extension AppKitGesturesTests.Basic {
         whileMenuIsOpen: () async -> Void = {}
     ) async throws -> (caretSelection: JavaScriptSelection, menuItems: [PresentedMenuItem]) {
         await recap.play { composer in
-            composer._wk_click(at: point, for: .seconds(0.05))
+            composer.humanTap(at: point, for: .seconds(0.05))
         }
 
         await page.waitForPendingMouseEvents()
@@ -4349,7 +5062,7 @@ extension AppKitGesturesTests.Basic {
         await withSpellChecker(spellChecker) {
             menuItems = await withSwizzledContextMenu(choosingItemTitled: itemTitle, whileMenuIsOpen: whileMenuIsOpen) {
                 await recap.play { composer in
-                    composer._wk_click(at: point, for: .seconds(0.05))
+                    composer.humanTap(at: point, for: .seconds(0.05))
                 }
             }
 
@@ -4457,11 +5170,11 @@ extension AppKitGesturesTests.Basic {
         let bounds = try await screenBounds(ofElementWithID: "slider")
 
         await recap.play { composer in
-            composer._wk_drag(
+            composer.drag(
                 withStart: CGPoint(x: bounds.minX + bounds.width * start.fractionAcrossSlider, y: bounds.center.y),
                 end: CGPoint(x: bounds.minX, y: bounds.center.y),
                 duration: .seconds(0.2),
-                pressAndWait: .seconds(0.2)
+                tapAndWait: .seconds(0.2)
             )
         }
 
@@ -4474,6 +5187,39 @@ extension AppKitGesturesTests.Basic {
         case insidePlayer
         case visibleInsidePlayer
         case outsidePlayer
+    }
+
+    enum PDFPresentation: Sendable, CaseIterable {
+        case document
+        case embed
+        case embedInScrolledPage
+    }
+
+    enum HoverOpenedByClickScrollTarget: Sendable, CaseIterable {
+        case scrollerInMenu
+
+        case elementCoveringViewport
+    }
+
+    enum HoverZoomStyle: String, Sendable, CaseIterable {
+        case overlay
+
+        case lens
+    }
+
+    enum HoverZoomPanDirection: Sendable, CaseIterable {
+        case vertical
+
+        case horizontal
+
+        static let distance: CGFloat = 120
+
+        func end(from start: CGPoint) -> CGPoint {
+            switch self {
+            case .vertical: CGPoint(x: start.x, y: start.y - Self.distance)
+            case .horizontal: CGPoint(x: start.x - Self.distance, y: start.y)
+            }
+        }
     }
 
     enum ThinSliderDragStart: Sendable, CaseIterable {
@@ -4507,7 +5253,7 @@ extension AppKitGesturesTests.Basic {
         let endPoint = CGPoint(x: track.maxX, y: startPoint.y)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: startPoint, end: endPoint, duration: .seconds(0.2), release: true)
+            composer.drag(withStart: startPoint, end: endPoint, duration: .seconds(0.2))
         }
 
         await page.waitForPendingMouseEvents()
@@ -4657,9 +5403,9 @@ extension AppKitGesturesTests.Basic {
         let end = CGPoint(x: start.x + 250, y: start.y + 250)
 
         await recap.play { composer in
-            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.4), release: false)
+            composer.drag(withStart: start, end: end, duration: .seconds(0.4), lift: false)
             composer.advanceTime(0.4)
-            composer._wk_mouseUp()
+            composer.liftUpAtAllActivePoints()
         }
 
         await page.waitForNextPresentationUpdate()
@@ -4743,7 +5489,7 @@ extension AppKitGesturesTests.Basic {
         let bounds = try await screenBounds(ofElementWithID: id)
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: id, for: [.mouseover]))
         await recap.play { composer in
-            composer._wk_click(at: bounds.center, for: .seconds(0.05))
+            composer.humanTap(at: bounds.center, for: .seconds(0.05))
         }
         try await requireElementUnderMouse(isElementWithID: id)
     }
@@ -4772,7 +5518,7 @@ extension AppKitGesturesTests.Basic {
 
     private func performScroll(from start: CGPoint, to end: CGPoint) async throws {
         await recap.play { composer in
-            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.2))
+            composer.flick(withStart: start, end: end, duration: .seconds(0.2))
         }
         let scrolled = try await settledScrollPosition()
         try #require(scrolled.y > 0, "the gesture did not scroll the page")
@@ -4801,6 +5547,127 @@ extension AppKitGesturesTests.Basic {
         var rect = CGRect(viewportRect)
         rect.origin.y += Self.topInset
         return NSPoint(x: rect.midX, y: contentView.frame.height - rect.midY)
+    }
+}
+
+extension AppKitGesturesTests.Basic {
+    @Test(arguments: [0, 300])
+    func singleClickOnLinkShowsClickHighlight(scrollOffset: Int) async throws {
+        try await loadClickHighlightTarget(
+            "<a id='target' href='#' style='display: block; position: absolute; left: 100px; top: \(200 + scrollOffset)px; width: 200px; height: 50px;'>Link</a>",
+            scrollOffset: scrollOffset
+        )
+
+        try await clickTarget()
+
+        let expectedRect = try await viewRect(ofElementWithID: "target").insetBy(dx: -4, dy: -4)
+        #expect(page.clickHighlightRect == expectedRect)
+        #expect((page.clickHighlightColor?.alphaComponent ?? 0) > 0)
+    }
+
+    @Test
+    func clickHighlightFadesOutAfterClick() async throws {
+        try await loadClickHighlightTarget("<a id='target' href='#' style='display: block; width: 200px; height: 50px;'>Link</a>")
+
+        try await clickTarget()
+
+        #expect(page.clickHighlightRect != .zero)
+        try await waitForCondition("The click highlight fades out") {
+            !page.isShowingClickHighlight
+        }
+    }
+
+    @Test
+    func singleClickOnLargeClickableElementDoesNotShowClickHighlight() async throws {
+        try await loadClickHighlightTarget("<div id='target' style='width: 600px; height: 400px;'></div>")
+
+        try await clickTarget()
+
+        #expect(page.clickHighlightRect == .zero)
+    }
+
+    @Test
+    func singleClickOnLargeButtonShowsClickHighlight() async throws {
+        try await loadClickHighlightTarget("<button id='target' style='width: 600px; height: 400px;'>Button</button>")
+
+        try await clickTarget()
+
+        let expectedRect = try await viewRect(ofElementWithID: "target").insetBy(dx: -4, dy: -4)
+        #expect(page.clickHighlightRect == expectedRect)
+    }
+
+    @Test
+    func clickHighlightHonorsTransparentStyle() async throws {
+        try await loadClickHighlightTarget(
+            "<a id='target' href='#' style='display: block; width: 200px; height: 50px; -webkit-tap-highlight-color: transparent;'>Link</a>"
+        )
+
+        try await clickTarget()
+
+        #expect(page.clickHighlightRect != .zero)
+        #expect(page.clickHighlightColor?.alphaComponent == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func singleClickOnTextFieldShowsClickHighlightUnlessFocused(focused: Bool) async throws {
+        try await loadClickHighlightTarget(
+            "<input id='target' style='position: absolute; left: 100px; top: 100px; width: 300px; height: 40px; font-size: 20px;'>"
+        )
+
+        if focused {
+            try await page.callJavaScript {
+                "document.getElementById('target').focus();"
+            }
+            await page.waitForNextPresentationUpdate()
+        }
+
+        try await clickTarget()
+
+        if focused {
+            #expect(page.clickHighlightRect == .zero)
+        } else {
+            let expectedRect = try await viewRect(ofElementWithID: "target").insetBy(dx: -4, dy: -4)
+            #expect(page.clickHighlightRect == expectedRect)
+        }
+    }
+
+    private func loadClickHighlightTarget(_ markup: String, scrollOffset: Int = 0) async throws {
+        let html = """
+            <body style="margin: 0; height: 3000px;">
+            \(markup)
+            <script>
+            document.getElementById("target").addEventListener("click", event => {
+                event.preventDefault();
+                window.didClickTarget = true;
+            });
+            window.scrollTo(0, \(scrollOffset));
+            </script>
+            </body>
+            """
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+    }
+
+    private func clickTarget() async throws {
+        let targetBounds = try await screenBounds(ofElementWithID: "target")
+
+        await recap.play { composer in
+            composer.humanTap(at: targetBounds.center, for: .seconds(0.05))
+        }
+
+        await page.waitForPendingMouseEvents()
+        try await waitForCondition("The target is clicked") {
+            try await page.callJavaScript(returning: Bool.self) {
+                "return !!window.didClickTarget;"
+            }
+        }
+        await page.waitForNextPresentationUpdate()
+    }
+
+    private func viewRect(ofElementWithID id: String) async throws -> CGRect {
+        let viewportRect = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: id))
+        return CGRect(viewportRect).offsetBy(dx: 0, dy: Self.topInset)
     }
 }
 

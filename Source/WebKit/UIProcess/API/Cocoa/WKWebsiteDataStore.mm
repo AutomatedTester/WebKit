@@ -57,6 +57,7 @@
 #import "_WKWebPushActionInternal.h"
 #import "_WKWebsiteDataStoreConfigurationInternal.h"
 #import "_WKWebsiteDataStoreDelegate.h"
+#import <Network/Network.h>
 #import <WebCore/Credential.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/ResourceResponse.h>
@@ -65,6 +66,7 @@
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebCorePersistentCoders.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
@@ -78,10 +80,6 @@
 #import <wtf/persistence/PersistentDecoder.h>
 #import <wtf/persistence/PersistentEncoder.h>
 #import <wtf/text/CString.h>
-
-#if HAVE(NW_PROXY_CONFIG)
-#import <Network/Network.h>
-#endif
 
 #if PLATFORM(IOS_FAMILY)
 #import "UIKitSPI.h"
@@ -561,7 +559,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     [self _fetchAllIdentifiers:completionHandler];
 }
 
-#if HAVE(NW_PROXY_CONFIG)
 - (void)setProxyConfigurations:(NSArray<nw_proxy_config_t> *)proxyConfigurations
 {
     _proxyConfigurations = adoptNS([proxyConfigurations copy]);
@@ -588,8 +585,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 {
     return _proxyConfigurations.get();
 }
-
-#endif // HAVE(NW_PROXY_CONFIG)
 
 #pragma mark WKObject protocol implementation
 
@@ -629,7 +624,7 @@ struct WKWebsiteData {
         encoder << currentWKWebsiteDataSerializationVersion;
         encoder << dataTypesToEncode;
 
-        for (auto& dataTypeToEncode : dataTypesToEncode) {
+        for (auto& dataTypeToEncode : borrow(dataTypesToEncode)) {
             switch (dataTypeToEncode) {
             case WebKit::WebsiteDataType::LocalStorage:
                 if (!data->localStorage) {
@@ -690,7 +685,7 @@ struct WKWebsiteData {
             completionHandler(nullptr);
     });
 
-    for (auto& encodedDataType : *encodedDataTypes) {
+    for (auto& encodedDataType : borrow(*encodedDataTypes)) {
         switch (encodedDataType) {
         case WebKit::WebsiteDataType::LocalStorage: {
             std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorage;
@@ -842,6 +837,11 @@ struct WKWebsiteData {
 - (void)_setPrivateClickMeasurementDebugModeEnabled:(BOOL)enabled
 {
     protect(*_websiteDataStore)->setPrivateClickMeasurementDebugMode(enabled);
+}
+
+- (void)_setPrivateClickMeasurementPrivateRelayEnforcementEnabled:(BOOL)enabled
+{
+    protect(*_websiteDataStore)->setPrivateClickMeasurementPrivateRelayEnforcement(enabled);
 }
 
 - (BOOL)_storageSiteValidationEnabled
@@ -1126,6 +1126,11 @@ struct WKWebsiteData {
     });
 }
 
+- (void)_setLinkDecorationFilteringDataForTesting:(NSArray<NSString *> *)queryParameters completionHandler:(void (^)(void))completionHandler
+{
+    protect(*_websiteDataStore)->setLinkDecorationFilteringDataForTesting(makeVector<String>(queryParameters), makeBlockPtr(completionHandler));
+}
+
 - (void)_setPrivateTokenIPCForTesting:(bool)enabled
 {
     protect(*_websiteDataStore)->setPrivateTokenIPCForTesting(enabled);
@@ -1304,7 +1309,7 @@ struct WKWebsiteData {
 
     protect(protect(*_websiteDataStore)->networkProcess())->getPendingPushMessages(_websiteDataStore->sessionID(), [completionHandler = makeBlockPtr(completionHandler)] (const Vector<WebKit::WebPushMessage>& messages) {
         auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:messages.size()]);
-        for (auto& message : messages)
+        for (auto& message : borrow(messages))
             [result addObject:message.toDictionary().get()];
 
         RELEASE_LOG(Push, "Giving application %zu pending push messages", messages.size());
@@ -1530,13 +1535,33 @@ struct WKWebsiteData {
 #endif // ENGINEERING_BUILD
 }
 
++ (void)_requestDisabledSecurityFlagsForTesting
+{
+#if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
+    WebKit::SecurityFlagsController::singleton().requestRemoteListForTesting();
+#endif // ENGINEERING_BUILD
+}
+
 - (void)_isSecurityFlagEnabledInNetworkProcessForTesting:(NSString *)flagName completionHandler:(void(^)(NSNumber *))completionHandler
 {
 #if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
     protect(protect(*_websiteDataStore)->networkProcess())->isSecurityFlagEnabledForTesting(flagName, [completionHandlerCopy = makeBlockPtr(completionHandler)] (std::optional<bool> enabled) {
         completionHandlerCopy(enabled ? [NSNumber numberWithBool:*enabled] : nil);
     });
+#else
+    UNUSED_PARAM(flagName);
+    completionHandler(nil);
 #endif // ENGINEERING_BUILD
+}
+
++ (NSNumber *)_isSecurityFlagEnabledInUIProcessForTesting:(NSString *)flagName
+{
+#if defined(ENGINEERING_BUILD) && ENGINEERING_BUILD
+    auto name = String { flagName };
+    if (auto enabled = WebKit::securityFlags().isFlagEnabledNamedForTesting(name))
+        return [NSNumber numberWithBool:*enabled];
+#endif // ENGINEERING_BUILD
+    return nil;
 }
 
 + (void)_setWebPushActionHandler:(WKWebsiteDataStore *(^)(_WKWebPushAction *))handler
@@ -1618,6 +1643,14 @@ struct WKWebsiteData {
     });
 }
 
+- (void)_loadersAwaitingWebProcessTransferCountForTesting:(void(^)(NSUInteger))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->loadersAwaitingWebProcessTransferCountForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
 - (void)_fetchDataOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(void(^)(NSData *))completionHandler
 {
     completionHandler(nullptr);
@@ -1632,6 +1665,22 @@ struct WKWebsiteData {
 {
     auto completionHandlerCopy = makeBlockPtr(completionHandler);
     protect(*_websiteDataStore)->isStorageSuspendedForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
+- (void)_canPrefetchDNSForTesting:(void(^)(BOOL))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->canPrefetchDNSForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](auto result) {
+        completionHandlerCopy(result);
+    });
+}
+
+- (void)_prefetchedDNSHostnameCountForTesting:(void(^)(NSUInteger))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    protect(*_websiteDataStore)->prefetchedDNSHostnameCountForTesting([completionHandlerCopy = WTF::move(completionHandlerCopy)](uint64_t result) {
         completionHandlerCopy(result);
     });
 }
@@ -1712,8 +1761,8 @@ struct WKWebsiteData {
 {
     RetainPtr unhandled = adoptNS([[NSMutableSet alloc] init]);
 
-    for (BSAction *action in applicationActions) {
-        NSDictionary *object = [action.info objectForSetting:WebKit::WebPushD::pushActionSetting];
+    for (RetainPtr action : makeVector<RetainPtr<BSAction>>(applicationActions.allObjects)) {
+        NSDictionary *object = [action.get().info objectForSetting:WebKit::WebPushD::pushActionSetting];
         _WKWebPushAction *pushAction = [_WKWebPushAction webPushActionWithDictionary:object];
         if (!pushAction) {
             [unhandled addObject:action];
@@ -1723,11 +1772,11 @@ struct WKWebsiteData {
         RetainPtr dataStoreForPushAction = _webPushActionHandler.get()(pushAction);
         if (dataStoreForPushAction) {
             [dataStoreForPushAction _handleWebPushAction:pushAction];
-            if (action.canSendResponse)
+            if (action.get().canSendResponse)
                 [action sendResponse:BSActionResponse.response];
         } else {
             RELEASE_LOG_ERROR(Push, "Unable to handle a _WKWebPushAction: Client did not return a valid WKWebsiteDataStore");
-            if (action.canSendResponse)
+            if (action.get().canSendResponse)
                 [action sendResponse:[BSActionResponse responseForError:adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil]).get()]];
         }
     }

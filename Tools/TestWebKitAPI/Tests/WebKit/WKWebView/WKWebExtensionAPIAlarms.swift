@@ -85,12 +85,7 @@ struct WKWebExtensionAPIAlarmsTests {
         )
     }
 
-    // FIXME when rdar://174495016 is resolved.
-    #if WTF_PLATFORM_MAC
-    @Test(.disabled("rdar://174495016"))
-    #else
     @Test
-    #endif
     func delaySingleShot() async throws {
         try await loadAndRun(
             backgroundScript: """
@@ -108,6 +103,8 @@ struct WKWebExtensionAPIAlarmsTests {
 
                   if (fireCount++)
                       browser.test.notifyFail('This listener should not have been called more than once.')
+                  else
+                      browser.test.notifyPass()
                 }
 
                 browser.test.assertFalse(browser.alarms.onAlarm.hasListener(listener), 'Should not have onAlarm listener.')
@@ -116,13 +113,6 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertTrue(browser.alarms.onAlarm.hasListener(listener), 'Should have onAlarm listener.')
 
                 browser.alarms.create('single', { delayInMinutes: (delayInMilliseconds / 1000 / 60) })
-
-                setTimeout(() => {
-                  if (fireCount === 1)
-                      browser.test.notifyPass()
-                  else
-                      browser.test.notifyFail('This timeout should have been called after the alarm fired once.')
-                }, 500)
                 """
         )
     }
@@ -162,12 +152,7 @@ struct WKWebExtensionAPIAlarmsTests {
         )
     }
 
-    // FIXME when webkit.org/b/311933 is resolved.
-    #if WTF_PLATFORM_MAC
-    @Test(.disabled("webkit.org/b/311933"))
-    #else
     @Test
-    #endif
     func whenSingleShot() async throws {
         try await loadAndRun(
             backgroundScript: """
@@ -185,6 +170,8 @@ struct WKWebExtensionAPIAlarmsTests {
 
                   if (fireCount++)
                       browser.test.notifyFail('This listener should not have been called more than once.')
+                  else
+                      browser.test.notifyPass()
                 }
 
                 browser.test.assertFalse(browser.alarms.onAlarm.hasListener(listener), 'Should not have onAlarm listener.')
@@ -193,13 +180,6 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertTrue(browser.alarms.onAlarm.hasListener(listener), 'Should have onAlarm listener.')
 
                 browser.alarms.create('when', { when: (startDate + delayInMilliseconds) })
-
-                setTimeout(() => {
-                  if (fireCount === 1)
-                      browser.test.notifyPass()
-                  else
-                      browser.test.notifyFail('This timeout should have been called after the alarm fired once.')
-                }, 500)
                 """
         )
     }
@@ -422,6 +402,51 @@ struct WKWebExtensionAPIAlarmsTests {
                 browser.test.assertEq(result.name, 'two', 'Should create the alarm with the name passed as an argument.')
                 browser.test.assertEq(result.periodInMinutes, 1)
                 browser.test.assertEq(result.delayInMinutes, undefined)
+
+                browser.test.notifyPass()
+                """
+        )
+    }
+
+    @Test
+    func alarmNameLength() async throws {
+        try await loadAndRun(
+            backgroundScript: """
+                const longestName = 'a'.repeat(1024)
+                await browser.alarms.create(longestName, { periodInMinutes: 1 })
+
+                const result = await browser.alarms.get(longestName)
+                browser.test.assertEq(result?.name, longestName, 'Should accept a name of exactly 1024 bytes')
+
+                await browser.test.assertRejects(browser.alarms.create('a'.repeat(1025), { periodInMinutes: 1 }), /alarm name exceeds the limit of 1024 bytes/i)
+                browser.test.assertEq(await browser.alarms.get('a'.repeat(1025)), undefined, 'Should not create an alarm with a name over the limit')
+
+                // 600 two-byte characters are 1200 bytes but only 600 UTF-16 code units.
+                await browser.test.assertRejects(browser.alarms.create('é'.repeat(600), { periodInMinutes: 1 }), /alarm name exceeds the limit of 1024 bytes/i)
+
+                browser.test.notifyPass()
+                """
+        )
+    }
+
+    @Test
+    func maximumNumberOfAlarms() async throws {
+        try await loadAndRun(
+            backgroundScript: """
+                for (let i = 0; i < 500; ++i)
+                    await browser.alarms.create(`alarm-${i}`, { periodInMinutes: 1 })
+
+                browser.test.assertEq((await browser.alarms.getAll()).length, 500, 'Should have created 500 alarms')
+
+                await browser.test.assertRejects(browser.alarms.create('alarm-500', { periodInMinutes: 1 }), /cannot have more than 500 active alarms/i)
+                browser.test.assertEq(await browser.alarms.get('alarm-500'), undefined, 'Should not create an alarm over the limit')
+
+                await browser.alarms.create('alarm-0', { periodInMinutes: 2 })
+                browser.test.assertEq((await browser.alarms.get('alarm-0')).periodInMinutes, 2, 'Should replace an existing alarm at the limit')
+
+                await browser.alarms.clear('alarm-1')
+                await browser.alarms.create('alarm-500', { periodInMinutes: 1 })
+                browser.test.assertEq((await browser.alarms.get('alarm-500')).name, 'alarm-500', 'Should create an alarm after one was cleared')
 
                 browser.test.notifyPass()
                 """

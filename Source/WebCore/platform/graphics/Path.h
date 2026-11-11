@@ -52,6 +52,8 @@ public:
     explicit Path(const Vector<FloatPoint>& points);
     WEBCORE_EXPORT Path(Ref<PathImpl>&&);
 
+    static Path createNonTransient(Vector<PathSegment>&&);
+
     WEBCORE_EXPORT bool definitelyEqual(const Path&) const;
 
     void moveTo(const FloatPoint&);
@@ -65,7 +67,7 @@ public:
     void addRect(const FloatRect&);
     WEBCORE_EXPORT void addRoundedRect(const FloatRoundedRect&, PathRoundedRect::Strategy = PathRoundedRect::Strategy::PreferNative);
     void addRoundedRect(const FloatRect&, const FloatSize& roundingRadii, PathRoundedRect::Strategy = PathRoundedRect::Strategy::PreferNative);
-    void addContinuousRoundedRect(const FloatRect&, float cornerRadius);
+    WEBCORE_EXPORT void addContinuousRoundedRect(const FloatRect&, float cornerRadius);
     void addContinuousRoundedRect(const FloatRect&, float cornerWidth, float cornerHeight);
     void addRoundedRect(const LayoutRoundedRect&);
     void closeSubpath();
@@ -83,6 +85,8 @@ public:
 
     WEBCORE_EXPORT std::optional<PathSegment> singleSegment() const;
     std::optional<PathDataLine> singleDataLine() const;
+    // Returns the arc of a path that is exactly MoveTo(c), Arc(center c), LineTo(c): a pie wedge.
+    WEBCORE_EXPORT std::optional<PathArc> pieWedgeArc() const;
 
     bool isEmpty() const;
     bool definitelySingleLine() const;
@@ -110,9 +114,7 @@ public:
     FloatRect strokeBoundingRect(NOESCAPE const Function<void(GraphicsContext&)>& strokeStyleApplier = { }) const;
 
     WEBCORE_EXPORT void ensureImplForTesting();
-    WEBCORE_EXPORT const PathImpl* asImpl() const;
-
-    void setNotTransient();
+    NODELETE WEBCORE_EXPORT const PathImpl* asImpl() const;
 
 private:
     PlatformPathImpl& ensurePlatformPathImpl();

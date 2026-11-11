@@ -92,12 +92,13 @@ public:
     void clip(const FloatRect&) final;
     void clipRoundedRect(const FloatRoundedRect&) final;
     void clipPath(const Path&, WindRule = WindRule::EvenOdd) final;
+    // clipTransformedPath intentionally left as the base class implementation.
 
     void clipOut(const FloatRect&) final;
     void clipOutRoundedRect(const FloatRoundedRect&) final;
     void clipOut(const Path&) final;
 
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
 
     IntRect clipBounds() const final;
 
@@ -106,14 +107,13 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, RasterDrawingOptions = { }) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
-    ImageDrawResult drawImage(Image&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }, const ImageDrawingExtras* = nullptr) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, RasterDrawingOptions = { }) final;
     void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&) final;
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImagePaintingOptions) final;
+    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, RasterDrawingOptions) final;
 #endif
 
     using GraphicsContext::scale;
@@ -138,6 +138,8 @@ public:
     void drawLinesForText(const FloatPoint&, float thickness, std::span<const FloatSegment>, bool isPrinting, bool doubleLines, StrokeStyle) final;
 
     void drawDotsForDocumentMarker(const FloatRect&, DocumentMarkerLineStyle) final;
+
+    void drawMeshGradient(MeshGradient&, const FloatRect& destination) final;
 
     void beginPage(const FloatRect&) final;
     void endPage() final;

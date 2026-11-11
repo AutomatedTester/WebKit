@@ -547,6 +547,287 @@ class GLSLTest_ClampPointSize : public GLSLTest
 class GLSLTest_ES3 : public GLSLTest
 {};
 
+// Tests that screen-space derivatives are correct along the edge that two triangles of one draw
+// share. Some drivers skip the helper invocations of a 2x2 quad that the other triangle covers,
+// which makes derivatives and implicit texture levels wrong in a band along the edge. On Metal,
+// ANGLE works around it with a [[sample_mask]] output (writeHelperSampleMask) or a
+// [[barycentric_coord]] read (useBarycentricCoordinatesForHelperInvocations).
+//
+// The test draws a quad with a different projective q at each corner, so derivatives change along
+// the shared edge, once as one triangle strip and once as two draws of one triangle each. Helper
+// invocations cannot cross draws, so the two-draw image is correct, and the one-draw image must be
+// identical to it. The texture's mip levels have distinct colors.
+//
+// Metal Shader Validation (MTL_SHADER_VALIDATION=1, set by the test runner unless
+// --disable-debug-layers is passed) hides the driver bug, so without the workarounds the test only
+// fails when run with --disable-debug-layers.
+class GLSLHelperInvocationDerivativesTest_ES3 : public GLSLTest
+{
+  protected:
+    static constexpr GLsizei kSize        = 512;
+    static constexpr GLsizei kTextureSize = 256;
+
+    static std::string VertexShaderSource(bool essl3)
+    {
+        std::stringstream source;
+        source << (essl3 ? "#version 300 es\nin vec2 a_corner;\nin float a_q;\nout vec3 v_stq;\n"
+                         : "attribute vec2 a_corner;\nattribute float a_q;\nvarying vec3 v_stq;\n")
+               << "void main()\n{\n"
+               << "    v_stq = vec3(a_corner * 6.0 * a_q, a_q);\n"
+               << "    gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);\n}\n";
+        return source.str();
+    }
+
+    // |colorExpression| computes the color from v_stq, uv = v_stq.xy / v_stq.z and the sampler tex.
+    // derivativeColor(d) maps a derivative to one of 16 levels.
+    static std::string FragmentShaderSource(bool essl3, const char *colorExpression)
+    {
+        std::stringstream source;
+        if (essl3)
+        {
+            source
+                << "#version 300 es\nprecision highp float;\nin vec3 v_stq;\nout vec4 fragColor;\n";
+        }
+        else
+        {
+            source << "precision highp float;\nvarying vec3 v_stq;\n";
+        }
+        source << "uniform sampler2D tex;\n"
+               << "float derivativeColor(float d)\n{\n"
+               << "    return clamp(floor(log2(max(abs(d) * " << kTextureSize
+               << ".0, 1e-8))) + 4.0, 0.0, 15.0) / 15.0;\n}\n"
+               << "void main()\n{\n    vec2 uv = v_stq.xy / v_stq.z;\n"
+               << (essl3 ? "    fragColor = " : "    gl_FragColor = ") << colorExpression
+               << ";\n}\n";
+        return source.str();
+    }
+
+    void drawProjectedQuad(GLuint program, const std::array<GLfloat, 4> &q, bool oneTrianglePerDraw)
+    {
+        // Corners in triangle strip order: (0, 0), (1, 0), (0, 1), (1, 1). The shared edge runs
+        // from (1, 0) to (0, 1).
+        const std::array<GLfloat, 12> vertices = {0, 0, q[0], 1, 0, q[1], 0, 1, q[2], 1, 1, q[3]};
+        GLBuffer buffer;
+        glBindBuffer(GL_ARRAY_BUFFER, buffer);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+        const GLint cornerLocation = glGetAttribLocation(program, "a_corner");
+        const GLint qLocation      = glGetAttribLocation(program, "a_q");
+        ASSERT_NE(-1, cornerLocation);
+        ASSERT_NE(-1, qLocation);
+        glVertexAttribPointer(cornerLocation, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), nullptr);
+        glVertexAttribPointer(qLocation, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat),
+                              reinterpret_cast<const void *>(2 * sizeof(GLfloat)));
+        glEnableVertexAttribArray(cornerLocation);
+        glEnableVertexAttribArray(qLocation);
+
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        if (oneTrianglePerDraw)
+        {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 3);
+            glDrawArrays(GL_TRIANGLE_STRIP, 1, 3);
+        }
+        else
+        {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        }
+        glDisableVertexAttribArray(cornerLocation);
+        glDisableVertexAttribArray(qLocation);
+    }
+
+    void testDerivatives(bool essl3, const char *colorExpression)
+    {
+        ANGLE_GL_PROGRAM(program, VertexShaderSource(essl3).c_str(),
+                         FragmentShaderSource(essl3, colorExpression).c_str());
+        glUseProgram(program);
+
+        GLTexture texture;
+        glBindTexture(GL_TEXTURE_2D, texture);
+        for (GLint level = 0; (kTextureSize >> level) > 0; ++level)
+        {
+            const GLsizei levelSize = kTextureSize >> level;
+            const GLColor color(static_cast<GLubyte>(level * 97 % 256),
+                                static_cast<GLubyte>((level * 53 + 40) % 256),
+                                static_cast<GLubyte>((level * 29 + 200) % 256), 255);
+            std::vector<GLColor> pixels(levelSize * levelSize, color);
+            glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, levelSize, levelSize, 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, pixels.data());
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        GLTexture colorTexture;
+        glBindTexture(GL_TEXTURE_2D, colorTexture);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+        GLFramebuffer framebuffer;
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture,
+                               0);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glViewport(0, 0, kSize, kSize);
+
+        const std::array<std::array<GLfloat, 4>, 4> qs = {{
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            {1.0f, 3.0f, 0.5f, 2.0f},
+            {0.4f, 1.0f, 2.5f, 1.2f},
+            {2.0f, 0.5f, 1.0f, 4.0f},
+        }};
+        // With q constant, uv is affine and the whole quad has one level; the image must have more
+        // than one color for some q, or it cannot show a wrong level.
+        bool anyImageHasSeveralColors = false;
+        for (const std::array<GLfloat, 4> &q : qs)
+        {
+            std::vector<GLColor> expected(kSize * kSize);
+            drawProjectedQuad(program, q, true);
+            glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, expected.data());
+
+            std::vector<GLColor> actual(kSize * kSize);
+            drawProjectedQuad(program, q, false);
+            glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, actual.data());
+            ASSERT_GL_NO_ERROR();
+
+            anyImageHasSeveralColors =
+                anyImageHasSeveralColors ||
+                std::any_of(expected.begin(), expected.end(),
+                            [&](const GLColor &color) { return color != expected[0]; });
+
+            size_t differing         = 0;
+            size_t differingNearEdge = 0;
+            for (GLsizei y = 0; y < kSize; ++y)
+            {
+                for (GLsizei x = 0; x < kSize; ++x)
+                {
+                    const size_t index = y * kSize + x;
+                    if (actual[index] != expected[index])
+                    {
+                        ++differing;
+                        // The shared edge is the diagonal from (kSize - 1, 0) to (0, kSize - 1).
+                        if (std::abs(x + y - (kSize - 1)) <= 3)
+                        {
+                            ++differingNearEdge;
+                        }
+                    }
+                }
+            }
+            EXPECT_EQ(0u, differing) << "q = (" << q[0] << ", " << q[1] << ", " << q[2] << ", "
+                                     << q[3] << "): " << differingNearEdge
+                                     << " of the differing pixels are within 3 pixels of the "
+                                        "shared edge";
+        }
+        EXPECT_TRUE(anyImageHasSeveralColors);
+    }
+};
+
+// Tests programs that use every varying vector together with screen-space derivatives. On Metal,
+// derivatives make the translator add a helper invocation workaround to the fragment shader, which
+// must not take a varying slot or change the result.
+class GLSLMaxVaryingDerivativesTest_ES3 : public GLSLTest
+{
+  protected:
+    // Varying i is vec4(5 + 4i, 6 + 4i, 7 + 4i, 8 + 4i): every component of every varying differs.
+    static std::string VaryingValue(GLint index)
+    {
+        std::stringstream value;
+        value << "vec4(" << 5 + 4 * index << ".0, " << 6 + 4 * index << ".0, " << 7 + 4 * index
+              << ".0, " << 8 + 4 * index << ".0)";
+        return value.str();
+    }
+
+    static std::string VertexShaderSource(GLint vec4Count)
+    {
+        std::stringstream source;
+        source << "#version 300 es\nin vec4 " << essl3_shaders::PositionAttrib() << ";\n";
+        for (GLint i = 0; i < vec4Count; ++i)
+        {
+            source << "out vec4 v" << i << ";\n";
+        }
+        source << "void main()\n{\n    gl_Position = " << essl3_shaders::PositionAttrib()
+               << ";\n";
+        for (GLint i = 0; i < vec4Count; ++i)
+        {
+            source << "    v" << i << " = " << VaryingValue(i) << ";\n";
+        }
+        source << "}\n";
+        return source.str();
+    }
+
+    // The fragment shader outputs |colorExpression| if every varying has its expected value, and
+    // red otherwise. The texture coordinate v0.xy - vec2(4.5, 5.5) is (0.5, 0.5).
+    static std::string FragmentShaderSource(GLint vec4Count, const char *colorExpression)
+    {
+        std::stringstream source;
+        source << "#version 300 es\nprecision highp float;\nuniform sampler2D tex;\n";
+        for (GLint i = 0; i < vec4Count; ++i)
+        {
+            source << "in vec4 v" << i << ";\n";
+        }
+        source << "out vec4 fragColor;\nvoid main()\n{\n    bool varyingsCorrect = true;\n";
+        for (GLint i = 0; i < vec4Count; ++i)
+        {
+            source << "    varyingsCorrect = varyingsCorrect && all(lessThan(abs(v" << i << " - "
+                   << VaryingValue(i) << "), vec4(0.01)));\n";
+        }
+        source << "    vec4 color = " << colorExpression << ";\n"
+               << "    fragColor = varyingsCorrect ? color : vec4(1.0, 0.0, 0.0, 1.0);\n}\n";
+        return source.str();
+    }
+
+    // Checks that a program with one varying vector over the limit does not link, then draws with
+    // GL_MAX_VARYING_VECTORS varyings, single-sampled and 4x multisampled, and checks the result.
+    void testMaxVaryingVec4(const char *colorExpression)
+    {
+        GLint maxVaryings = 0;
+        glGetIntegerv(GL_MAX_VARYING_VECTORS, &maxVaryings);
+
+        GLuint overLimitProgram =
+            CompileProgram(VertexShaderSource(maxVaryings + 1).c_str(),
+                           FragmentShaderSource(maxVaryings + 1, colorExpression).c_str());
+        EXPECT_EQ(0u, overLimitProgram);
+
+        ANGLE_GL_PROGRAM(program, VertexShaderSource(maxVaryings).c_str(),
+                         FragmentShaderSource(maxVaryings, colorExpression).c_str());
+
+        GLTexture texture;
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     &GLColor::green);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+        const GLsizei width  = getWindowWidth();
+        const GLsizei height = getWindowHeight();
+
+        // Single-sampled.
+        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+        EXPECT_PIXEL_RECT_EQ(0, 0, width, height, GLColor::green);
+
+        // 4x multisampled, resolved to the default framebuffer.
+        GLRenderbuffer multisampledColor;
+        glBindRenderbuffer(GL_RENDERBUFFER, multisampledColor);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4, GL_RGBA8, width, height);
+        GLFramebuffer multisampledFramebuffer;
+        glBindFramebuffer(GL_FRAMEBUFFER, multisampledFramebuffer);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+                                  multisampledColor);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        glClear(GL_COLOR_BUFFER_BIT);
+        drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT,
+                          GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        EXPECT_PIXEL_RECT_EQ(0, 0, width, height, GLColor::green);
+        ASSERT_GL_NO_ERROR();
+    }
+};
+
 class GLSLPrecisionTest_ES3 : public GLSLTest
 {};
 
@@ -2817,6 +3098,142 @@ TEST_P(GLSLTest, MaxVaryingVec2Arrays)
     GLint maxVec2Arrays = (maxVaryings >> 1) << 1;
 
     VaryingTestBase(0, 0, 0, maxVec2Arrays, 0, 0, 0, 0, false, false, false, true);
+}
+
+// Test that a program that uses every varying vector and reads a texture with an implicit level
+// links, receives the varying values and draws correctly.
+TEST_P(GLSLMaxVaryingDerivativesTest_ES3, MaxVaryingVec4WithTexture)
+{
+    testMaxVaryingVec4("texture(tex, v0.xy - vec2(4.5, 5.5))");
+}
+
+// Test that a program that uses every varying vector and fwidth() links, receives the varying
+// values and draws correctly.
+TEST_P(GLSLMaxVaryingDerivativesTest_ES3, MaxVaryingVec4WithFwidth)
+{
+    testMaxVaryingVec4("vec4(0.0, 1.0, 0.0, 1.0 + min(fwidth(v0.x), 0.0))");
+}
+
+// Test that texture() in ESSL 3.00 gives the same result along the shared edge of two triangles as
+// in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture)
+{
+    testDerivatives(true, "texture(tex, uv)");
+}
+
+// Test that texture() in ESSL 3.00 gives the same result along the shared edge of two triangles as
+// in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureBias)
+{
+    testDerivatives(true, "texture(tex, uv, 0.5)");
+}
+
+// Test that textureProj() in ESSL 3.00 gives the same result along the shared edge of two triangles
+// as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureProjVec3)
+{
+    testDerivatives(true, "textureProj(tex, v_stq)");
+}
+
+// Test that textureProj() in ESSL 3.00 gives the same result along the shared edge of two triangles
+// as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureProjVec4)
+{
+    testDerivatives(true, "textureProj(tex, vec4(v_stq.xy, 0.0, v_stq.z))");
+}
+
+// Test that textureProj() in ESSL 3.00 gives the same result along the shared edge of two triangles
+// as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureProjBias)
+{
+    testDerivatives(true, "textureProj(tex, v_stq, 0.5)");
+}
+
+// Test that textureOffset() in ESSL 3.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureOffset)
+{
+    testDerivatives(true, "textureOffset(tex, uv, ivec2(1, 1))");
+}
+
+// Test that textureOffset() in ESSL 3.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureOffsetBias)
+{
+    testDerivatives(true, "textureOffset(tex, uv, ivec2(1, 1), 0.5)");
+}
+
+// Test that textureProjOffset() in ESSL 3.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureProjOffset)
+{
+    testDerivatives(true, "textureProjOffset(tex, v_stq, ivec2(1, 1))");
+}
+
+// Test that textureProjOffset() in ESSL 3.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, TextureProjOffsetBias)
+{
+    testDerivatives(true, "textureProjOffset(tex, v_stq, ivec2(1, 1), 0.5)");
+}
+
+// Test that dFdx() in ESSL 3.00 gives the same result along the shared edge of two triangles as
+// in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Dfdx)
+{
+    testDerivatives(true,
+                    "vec4(derivativeColor(dFdx(uv.x)), derivativeColor(dFdx(uv.y)), 0.0, 1.0)");
+}
+
+// Test that dFdy() in ESSL 3.00 gives the same result along the shared edge of two triangles as
+// in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Dfdy)
+{
+    testDerivatives(true,
+                    "vec4(derivativeColor(dFdy(uv.x)), derivativeColor(dFdy(uv.y)), 0.0, 1.0)");
+}
+
+// Test that fwidth() in ESSL 3.00 gives the same result along the shared edge of two triangles as
+// in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Fwidth)
+{
+    testDerivatives(true,
+                    "vec4(derivativeColor(fwidth(uv.x)), derivativeColor(fwidth(uv.y)), 0.0, 1.0)");
+}
+
+// Test that texture2D() in ESSL 1.00 gives the same result along the shared edge of two triangles
+// as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture2D)
+{
+    testDerivatives(false, "texture2D(tex, uv)");
+}
+
+// Test that texture2D() in ESSL 1.00 gives the same result along the shared edge of two triangles
+// as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture2DBias)
+{
+    testDerivatives(false, "texture2D(tex, uv, 0.5)");
+}
+
+// Test that texture2DProj() in ESSL 1.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture2DProjVec3)
+{
+    testDerivatives(false, "texture2DProj(tex, v_stq)");
+}
+
+// Test that texture2DProj() in ESSL 1.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture2DProjVec4)
+{
+    testDerivatives(false, "texture2DProj(tex, vec4(v_stq.xy, 0.0, v_stq.z))");
+}
+
+// Test that texture2DProj() in ESSL 1.00 gives the same result along the shared edge of two
+// triangles as in separate draws.
+TEST_P(GLSLHelperInvocationDerivativesTest_ES3, Texture2DProjBias)
+{
+    testDerivatives(false, "texture2DProj(tex, v_stq, 0.5)");
 }
 
 // Verify max varying with feedback and gl_line enabled
@@ -8597,6 +9014,95 @@ TEST_P(GLSLTest_ES3, NoPerspectiveSample)
     ANGLE_GL_PROGRAM(program, kVS, kFS);
 }
 
+// Test that an input array can be referenced without an index after one of its elements has been
+// used with an interpolation function.
+TEST_P(GLSLTest_ES3, InterpolantArrayReferencedWithoutIndex)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_shader_multisample_interpolation"));
+
+    constexpr char kVS[] =
+        R"(#version 300 es
+        #extension GL_OES_shader_multisample_interpolation : require
+
+        in vec4 a_position;
+
+        out mediump vec3 smoothArray[2];
+        centroid out mediump vec3 centroidArray[2];
+        sample out mediump vec3 sampleArray[2];
+
+        void main()
+        {
+            gl_Position = a_position;
+
+            // Keep the values constant so that every read returns the same result.
+            smoothArray[0] = vec3(10.0);
+            smoothArray[1] = vec3(11.0);
+            centroidArray[0] = vec3(20.0);
+            centroidArray[1] = vec3(21.0);
+            sampleArray[0] = vec3(30.0);
+            sampleArray[1] = vec3(31.0);
+        })";
+
+    constexpr char kFS[] =
+        R"(#version 300 es
+        #extension GL_OES_shader_multisample_interpolation : require
+
+        precision mediump float;
+
+        in vec3 smoothArray[2];
+        centroid in vec3 centroidArray[2];
+        sample in vec3 sampleArray[2];
+
+        out vec4 color;
+
+        bool check(vec3 values[2], float base)
+        {
+            return all(lessThan(abs(values[0] - vec3(base)), vec3(0.01))) &&
+                   all(lessThan(abs(values[1] - vec3(base + 1.0)), vec3(0.01)));
+        }
+
+        void main()
+        {
+            // Marks each input as an interpolant, which is what made the uses below fail.
+            vec3 unused = interpolateAtCentroid(smoothArray[0]) +
+                          interpolateAtCentroid(centroidArray[0]) +
+                          interpolateAtCentroid(sampleArray[0]);
+
+            // Assign the whole array.
+            vec3 assignedSmooth[2];
+            vec3 assignedCentroid[2];
+            vec3 assignedSample[2];
+            assignedSmooth = smoothArray;
+            assignedCentroid = centroidArray;
+            assignedSample = sampleArray;
+
+            // Initialize from the whole array.
+            vec3 initializedSmooth[2] = smoothArray;
+            vec3 initializedCentroid[2] = centroidArray;
+            vec3 initializedSample[2] = sampleArray;
+
+            // Pass the whole array to a function.
+            bool ok = check(smoothArray, 10.0) &&
+                      check(centroidArray, 20.0) &&
+                      check(sampleArray, 30.0) &&
+                      check(assignedSmooth, 10.0) &&
+                      check(assignedCentroid, 20.0) &&
+                      check(assignedSample, 30.0) &&
+                      check(initializedSmooth, 10.0) &&
+                      check(initializedCentroid, 20.0) &&
+                      check(initializedSample, 30.0) &&
+                      unused.x > 0.0;
+
+            color = ok ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+        })";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
 // Test that a shader with sample in / sample out can be used successfully when the varying
 // precision is different between VS and FS.
 TEST_P(GLSLTest_ES31, VaryingSampleInAndOutDifferentPrecision)
@@ -9807,6 +10313,44 @@ void main()
 
     EXPECT_PIXEL_COLOR_EQ(1, 1, GLColor::green);
 }
+
+// Test corner case involving comma and passing struct with sampler to function
+TEST_P(GLSLTest_ES3, SamplerInStructAsFunctionArgInCommaCornerCase)
+{
+    // The monomorphization AST pass run by multiple backends does not correctly handle comma
+    // expressions.
+    ANGLE_SKIP_TEST_IF(!getEGLWindow()->isFeatureEnabled(Feature::UseIr));
+
+    const char kFragmentShader[] = R"(#version 300 es
+precision mediump float;
+struct S
+{
+    sampler2D s;
+    int f;
+};
+uniform S u;
+int global = 0;
+
+out vec4 color;
+
+float sampleTex(S s) { ++global; return texture(s.s, vec2(0)).x; }
+float forwardToSample(S s) { return sampleTex(s); }
+
+// Need to forward `u` to `broken` via an intermediate call to cause multiple passes of
+// monomorphization in some backends before the tricky expression is handled.
+void broken(S s) { sampleTex((forwardToSample(s), u)); }
+void forward(S s) { broken(s); }
+
+void main() {
+    forward(u);
+    color = vec4(float(global) / 2.0, 0, 0, 1);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFragmentShader);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(1, 1, GLColor::red);
+}
+
 // Test that a global variable declared after main() works. This is a regression test for an issue
 // in global variable initialization.
 TEST_P(WebGLGLSLTest, GlobalVariableDeclaredAfterMain)
@@ -10432,6 +10976,69 @@ void main()
     ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
     drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Test switch/case where a variable is declared inside one of the cases and is accessed by a
+// subsequent case.  The variable shadows another outside the switch.
+TEST_P(GLSLTest_ES3, SwitchWithShadowVariableDeclaration)
+{
+    constexpr char kFS[] = R"(#version 300 es
+
+precision highp float;
+out vec4 my_FragColor;
+
+uniform int u_zero;
+
+void main()
+{
+    vec4 result = vec4(0, 0, 0, 1);
+    switch (u_zero)
+    {
+        case 0:
+            result.x = 1.0;
+            // Shadow the variable that is outside the switch
+            vec4 result = vec4(0, 1, 0, 0);
+        default:
+            result.w = 1.0;
+    }
+    my_FragColor = result;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+}
+
+// Test switch/case where a variable is declared inside one of the cases after branch and is
+// accessed by a subsequent case.  The variable shadows another outside the switch.
+TEST_P(GLSLTest_ES3, SwitchWithShadowVariableDeclarationInDeadCode)
+{
+    constexpr char kFS[] = R"(#version 300 es
+
+precision highp float;
+out vec4 my_FragColor;
+
+uniform int u_zero;
+
+void main()
+{
+    vec4 result = vec4(0, 0, 0, 1);
+    switch (u_zero)
+    {
+        case 0:
+            result.x = 1.0;
+            break;
+            // Shadow the variable that is outside the switch
+            vec4 result = vec4(0, 1, 0, 0);
+        default:
+            result.w = 1.0;
+    }
+    my_FragColor = result;
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
 }
 
 // Test that an empty switch/case statement is translated in a way that compiles and executes the
@@ -12186,6 +12793,40 @@ void main()
     drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor::yellow, 1);
     ASSERT_GL_NO_ERROR();
+}
+
+// Test that gl_FragCoord.zw are correct.  The translator replaces gl_FragCoord with a flipped copy,
+// and the .zw components must be carried over unchanged.
+TEST_P(GLSLTest_ES3, FragCoordZW)
+{
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 a_position;
+void main()
+{
+    // Clip-space w of 4 gives gl_FragCoord.w = 0.25.  z = 0 gives gl_FragCoord.z = 0.5.
+    gl_Position = vec4(a_position.xy * 4.0, 0.0, 4.0);
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 colorOut;
+void main()
+{
+    colorOut = vec4(gl_FragCoord.z, gl_FragCoord.w, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    drawQuad(program, "a_position", 0.5f);
+    ASSERT_GL_NO_ERROR();
+
+    const GLColor kExpected(128, 64, 0, 255);
+    const int w = getWindowWidth();
+    const int h = getWindowHeight();
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, kExpected, 1);
+    EXPECT_PIXEL_COLOR_NEAR(w - 1, 0, kExpected, 1);
+    EXPECT_PIXEL_COLOR_NEAR(0, h - 1, kExpected, 1);
+    EXPECT_PIXEL_COLOR_NEAR(w - 1, h - 1, kExpected, 1);
+    EXPECT_PIXEL_COLOR_NEAR(w / 2, h / 2, kExpected, 1);
 }
 
 bool SubrectEquals(const std::vector<GLColor> &bigArray,
@@ -18943,6 +19584,7 @@ TEST_P(GLSLTestLoops, ForContinueInSwitchComplex)
 {
     constexpr char kFS[] = R"(#version 300 es
 precision mediump float;
+precision highp int;
 out vec4 color;
 
 void main()
@@ -23193,6 +23835,69 @@ void main()
     ASSERT_GL_NO_ERROR();
 }
 
+// Test nested constant switch statements (the pattern from https://crbug.com/548066294).
+// The selector is length() in this test.
+TEST_P(GLSLTest_ES3, NestedConstantSwitchWithLength)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+int sideEffects = 0;
+int[1] one()
+{
+    sideEffects += 1;
+    return int[1](1);
+}
+int[2] two()
+{
+    sideEffects += 1;
+    return int[2](2, 2);
+}
+void main()
+{
+    int result = 0;
+    switch (one().length() - 1)
+    {
+        case 0:
+            result += 1;
+            switch (one().length())
+            {
+                case 0:
+                    result += 10;
+                    break;
+                case 1:
+                    result += 20;
+                    switch (two().length())
+                    {
+                        case 2:
+                            result += 300;
+                            break;
+                        default:
+                            result += 400;
+                            break;
+                    }
+                    break;
+                default:
+                    result += 50;
+                    break;
+            }
+            break;
+        case 1:
+            result += 1000;
+            break;
+        default:
+            result += 2000;
+            break;
+    }
+    color = result == 321 && sideEffects == 3 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+    ASSERT_GL_NO_ERROR();
+}
+
 // Test fall-through across cases in a constant switch.
 TEST_P(GLSLTest_ES3, FallThrough)
 {
@@ -24037,6 +24742,7 @@ TEST_P(GLSLTest_ES3, DenormFloatsToIntValues)
     constexpr char kFS[] =
         "#version 300 es\n"
         "precision highp float;\n"
+        "precision highp int;\n"
         "out vec4 out_color;\n"
         "uniform float u;\n"
         "void main()\n"
@@ -27635,6 +28341,94 @@ void main()
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::white);
 }
 
+// Test that uninitialized local struct containing arrays compiles when both
+// AvoidComplexExpressionsInStructConstructor and ForceInitShaderVariables are enabled.
+// https://crbug.com/562777838
+TEST_P(GLSLTest_ES3, StructConstructorUninitializedWithArrayMember)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+precision mediump int;
+uniform int u_zero;
+struct S {
+    int prime_numbers[10];
+};
+
+out vec4 color;
+void main()
+{
+    S s;
+    s.prime_numbers[0] = u_zero + 42;
+    color = vec4(s.prime_numbers[0] == 42, 0.0, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that uninitialized local array of structs compiles when both
+// AvoidComplexExpressionsInStructConstructor and ForceInitShaderVariables are enabled.
+// https://crbug.com/562777838
+TEST_P(GLSLTest_ES3, StructConstructorUninitializedArrayOfStructs)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+precision mediump int;
+uniform int u_zero;
+struct BST {
+    int data;
+    int leftIndex;
+    int rightIndex;
+};
+
+out vec4 color;
+void main()
+{
+    BST tree[10];
+    tree[0].data = u_zero + 42;
+    color = vec4(tree[0].data == 42, 0.0, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that uninitialized nested local struct containing arrays compiles when both
+// AvoidComplexExpressionsInStructConstructor and ForceInitShaderVariables are enabled.
+// https://crbug.com/562777838
+TEST_P(GLSLTest_ES3, StructConstructorUninitializedNestedWithArrayMember)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform float u_zero;
+struct Leaf {
+    float a[4];
+};
+struct Branch {
+    Leaf leaves[3];
+};
+struct Tree {
+    Branch branches[2];
+};
+
+out vec4 color;
+void main()
+{
+    Tree t;
+    t.branches[1].leaves[2].a[3] = u_zero + 1.0;
+    color = vec4(t.branches[1].leaves[2].a[3] == 1.0, 0.0, 0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
 // Test that having dynamic indexing of a vector inside the right hand side of logical or works
 // correctly.
 TEST_P(GLSLTest_ES3, DynamicIndexingOfVectorOnRightSideOfLogicalOr)
@@ -28383,6 +29177,25 @@ void main()
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(63, 191, 127, 255), 1);
     ASSERT_GL_NO_ERROR();
 }
+
+// Test `bool_var ? bvec4(true) : bvec4(false)`
+TEST_P(GLSLTest_ES3, BoolSelectorBVecConstantValues)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform bool b;
+out vec4 color;
+void main()
+{
+    bvec4 result = b ? bvec4(true) : bvec4(false);
+    color = vec4(!result.x, result.yz, !result.w);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
 }  // anonymous namespace
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND_ES31_AND_ES32(
@@ -28390,8 +29203,14 @@ ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND_ES31_AND_ES32(
     ES3_OPENGL().enable(Feature::ForceInitShaderVariables),
     ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGL().enable(Feature::AvoidComplexExpressionsInStructConstructor),
+    ES3_OPENGL()
+        .enable(Feature::AvoidComplexExpressionsInStructConstructor)
+        .enable(Feature::ForceInitShaderVariables),
     ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGLES().enable(Feature::AvoidComplexExpressionsInStructConstructor),
+    ES3_OPENGLES()
+        .enable(Feature::AvoidComplexExpressionsInStructConstructor)
+        .enable(Feature::ForceInitShaderVariables),
     ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision),
     ES3_VULKAN().enable(Feature::ForceInitShaderVariables),
     ES3_VULKAN().disable(Feature::SupportsSPIRV14),
@@ -28408,14 +29227,30 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(
     ES3_OPENGL().enable(Feature::ForceInitShaderVariables),
     ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGL().enable(Feature::AvoidComplexExpressionsInStructConstructor),
+    ES3_OPENGL()
+        .enable(Feature::AvoidComplexExpressionsInStructConstructor)
+        .enable(Feature::ForceInitShaderVariables),
     ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGLES().enable(Feature::AvoidComplexExpressionsInStructConstructor),
+    ES3_OPENGLES()
+        .enable(Feature::AvoidComplexExpressionsInStructConstructor)
+        .enable(Feature::ForceInitShaderVariables),
     ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision),
     ES3_VULKAN().enable(Feature::ForceInitShaderVariables),
     ES3_VULKAN().disable(Feature::SupportsSPIRV14),
     ES3_VULKAN().enable(Feature::EmulatedPrerotation90),
     ES3_VULKAN().enable(Feature::EmulatedPrerotation180),
     ES3_VULKAN().enable(Feature::EmulatedPrerotation270));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLMaxVaryingDerivativesTest_ES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    GLSLMaxVaryingDerivativesTest_ES3,
+    ES3_METAL().disable(Feature::UseBarycentricCoordinatesForHelperInvocations));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLHelperInvocationDerivativesTest_ES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    GLSLHelperInvocationDerivativesTest_ES3,
+    ES3_METAL().disable(Feature::UseBarycentricCoordinatesForHelperInvocations));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLPrecisionTest_ES3);
 ANGLE_INSTANTIATE_TEST_ES3_AND(

@@ -88,9 +88,7 @@ public:
         case StringUse:
         case StringOrOtherUse:
         case SymbolUse:
-        case AnyBigIntUse:
         case HeapBigIntUse:
-        case BigInt32Use:
         case StringObjectUse:
         case StringOrStringObjectUse:
         case NotStringVarUse:
@@ -280,7 +278,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case IsUndefinedOrNull:
     case IsBoolean:
     case IsNumber:
-    case IsBigInt:
     case NumberIsInteger:
     case IsObject:
     case IsCallable:
@@ -316,7 +313,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Int52Rep:
     case BooleanToNumber:
     case FiatInt52:
-    case HasIndexedProperty:
     case CheckStructureImmediate:
     case GetMyArgumentByVal:
     case GetMyArgumentByValOutOfBounds:
@@ -433,6 +429,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetVectorLength:
     case ArrayPop:
     case ArrayShift:
+    case HasIndexedProperty:
     case StringAt:
     case StringCharAt:
     case StringCharCodeAt:
@@ -458,6 +455,11 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetTypedArrayByteOffset:
     case GetTypedArrayByteOffsetAsInt52:
         return !(state.forNode(node->child1()).m_type & ~(SpecTypedArrayView));
+
+    case TypedArraySet: {
+        SpeculatedType expected = speculationFromTypedArrayType(node->typedArrayType());
+        return !(state.forNode(node->child1()).m_type & ~expected) && !(state.forNode(node->child2()).m_type & ~expected);
+    }
 
     case PutByValDirect:
     case PutByVal:
@@ -668,6 +670,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case Construct:
     case DirectConstruct:
     case CallVarargs:
+    case CallVarargsWithSpread:
     case CallDirectEval:
     case TailCallVarargsInlinedCaller:
     case TailCallForwardVarargsInlinedCaller:
@@ -678,6 +681,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CallCustomAccessorSetter:
     case VarargsLength:
     case LoadVarargs:
+    case VarargsLengthWithSpread:
+    case LoadVarargsWithSpread:
     case CallForwardVarargs:
     case ConstructForwardVarargs:
     case NewObject:
@@ -701,6 +706,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewSet:
     case NewWeakMap:
     case NewWeakSet:
+    case NewProxyObject:
     case NewSymbol:
     case ProfileType:
     case ProfileControlFlow:
@@ -864,10 +870,10 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case ValueDiv:
     case ValueMod:
     case ValuePow:
-        return node->isBinaryUseKind(AnyBigIntUse) || node->isBinaryUseKind(BigInt32Use) || node->isBinaryUseKind(HeapBigIntUse);
+        return node->isBinaryUseKind(HeapBigIntUse);
 
     case ValueBitNot:
-        return node->child1().useKind() == AnyBigIntUse || node->child1().useKind() == BigInt32Use || node->child1().useKind() == HeapBigIntUse;
+        return node->child1().useKind() == HeapBigIntUse;
 
     case LastNodeType:
         RELEASE_ASSERT_NOT_REACHED();

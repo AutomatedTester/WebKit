@@ -140,12 +140,14 @@ void SMILTimeContainer::begin()
     // In this case pass on 'seekToTime=true' to updateAnimations().
     m_beginTime = m_resumeTime = now - m_presetStartTime;
     updateAnimations(SMILTime(m_presetStartTime), m_presetStartTime ? true : false);
-    m_presetStartTime = 0_s;
 
     if (m_pauseTime) {
         m_pauseTime = now;
+        m_accumulatedActiveTime = m_presetStartTime;
         m_timer.stop();
     }
+
+    m_presetStartTime = 0_s;
 }
 
 void SMILTimeContainer::pause()
@@ -238,7 +240,7 @@ void SMILTimeContainer::updateDocumentOrderIndexes()
 
 struct PriorityCompare {
     PriorityCompare(SMILTime elapsed) : m_elapsed(elapsed) {}
-    bool LEGACY_NODELETE operator()(auto& a, auto& b)
+    NODELETE bool operator()(auto& a, auto& b)
     {
         // FIXME: This should also consider possible timing relations between the elements.
         SMILTime aBegin = a->intervalBegin();

@@ -54,6 +54,8 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
+#include "CoreVideoSoftLink.h"
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCVPXVideoEncoder);
@@ -72,13 +74,13 @@ static WorkQueue& vpxEncoderQueueSingleton()
 
 class LibWebRTCVPXInternalVideoEncoder : public ThreadSafeRefCounted<LibWebRTCVPXInternalVideoEncoder> , public webrtc::EncodedImageCallback {
 public:
-    static Ref<LibWebRTCVPXInternalVideoEncoder> create(LibWebRTCVPXVideoEncoder::Type type, VideoEncoder::DescriptionCallback&& descriptionCallback, VideoEncoder::OutputCallback&& outputCallback) { return adoptRef(*new LibWebRTCVPXInternalVideoEncoder(type, WTF::move(descriptionCallback), WTF::move(outputCallback))); }
+    NODELETE static Ref<LibWebRTCVPXInternalVideoEncoder> create(LibWebRTCVPXVideoEncoder::Type type, VideoEncoder::DescriptionCallback&& descriptionCallback, VideoEncoder::OutputCallback&& outputCallback) { return adoptRef(*new LibWebRTCVPXInternalVideoEncoder(type, WTF::move(descriptionCallback), WTF::move(outputCallback))); }
     ~LibWebRTCVPXInternalVideoEncoder() = default;
 
     int initialize(LibWebRTCVPXVideoEncoder::Type, const VideoEncoder::Config&);
 
     Ref<VideoEncoder::EncodePromise> encode(VideoEncoder::RawFrame&&, bool shouldGenerateKeyFrame);
-    void close() { m_isClosed = true; }
+    NODELETE void close() { m_isClosed = true; }
     void setRates(uint64_t bitRate, double frameRate);
 
 private:
@@ -92,6 +94,8 @@ private:
     int64_t m_timestamp { 0 };
     int64_t m_timestampOffset { 0 };
     std::optional<uint64_t> m_duration;
+    VideoFrameRotation m_rotation { VideoFrameRotation::None };
+    bool m_isMirrored { false };
     bool m_isClosed { false };
     VideoEncoder::Config m_config;
     bool m_isInitialized { false };
@@ -274,6 +278,8 @@ Ref<VideoEncoder::EncodePromise> LibWebRTCVPXInternalVideoEncoder::encode(VideoE
         m_timestampOffset = 1 - rawFrame.timestamp;
     m_timestamp = rawFrame.timestamp;
     m_duration = rawFrame.duration;
+    m_rotation = rawFrame.frame->rotation();
+    m_isMirrored = rawFrame.frame->isMirrored();
 
     auto frameType = (shouldGenerateKeyFrame || !m_hasEncoded) ? webrtc::VideoFrameType::kVideoFrameKey : webrtc::VideoFrameType::kVideoFrameDelta;
     std::vector<webrtc::VideoFrameType> frameTypes { frameType };
@@ -353,7 +359,9 @@ webrtc::EncodedImageCallback::Result LibWebRTCVPXInternalVideoEncoder::OnEncoded
         encodedImage._frameType == webrtc::VideoFrameType::kVideoFrameKey,
         m_timestamp,
         m_duration,
-        frameTemporalIndex
+        frameTemporalIndex,
+        m_rotation,
+        m_isMirrored
     };
 
     if (m_shouldCallDescriptionCallback) {

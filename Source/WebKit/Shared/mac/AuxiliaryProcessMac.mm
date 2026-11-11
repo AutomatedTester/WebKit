@@ -69,10 +69,6 @@
 #import <rootless.h>
 #endif
 
-#if __has_include(<WebKitAdditions/DyldCallbackAdditions.h>)
-#import <WebKitAdditions/DyldCallbackAdditions.h>
-#endif
-
 SOFT_LINK_SYSTEM_LIBRARY(libsystem_info)
 SOFT_LINK_OPTIONAL(libsystem_info, mbr_close_connections, int, (), ());
 SOFT_LINK_OPTIONAL(libsystem_info, lookup_close_connections, int, (), ());
@@ -202,8 +198,7 @@ static std::optional<Vector<uint8_t>> fileContents(const String& path)
         return std::nullopt;
 
     std::array<uint8_t, 4096> chunk;
-    Vector<uint8_t> contents;
-    contents.reserveInitialCapacity(chunk.size());
+    Vector<uint8_t> contents(ReserveCapacityTag { }, chunk.size());
     while (auto bytesRead = fileHandle.read(chunk).value_or(0))
         contents.append(std::span { chunk }.first(bytesRead));
     contents.shrinkToFit();
@@ -416,8 +411,7 @@ static SandboxProfilePtr compileAndCacheSandboxProfile(const SandboxInfo& info)
 
     const size_t expectedFileSize = sizeof(cachedHeader) + cachedHeader.headerSize + (haveBuiltin ? cachedHeader.builtinSize : 0) + cachedHeader.dataSize;
 
-    Vector<uint8_t> cacheFile;
-    cacheFile.reserveInitialCapacity(expectedFileSize);
+    Vector<uint8_t> cacheFile(ReserveCapacityTag { }, expectedFileSize);
     cacheFile.append(asByteSpan(cachedHeader));
     cacheFile.append(info.header.span());
     if (haveBuiltin)

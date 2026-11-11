@@ -87,15 +87,7 @@ private:
         if (optimizeForX86() || optimizeForARM64()) {
             fixIntOrBooleanEdge(leftChild);
             fixIntOrBooleanEdge(rightChild);
-            // We need to be careful about skipping overflow check because div / mod can generate non integer values
-            // from (Int32, Int32) inputs. For now, we always check non-zero divisor.
-            if (bytecodeCanTruncateInteger(node->arithNodeFlags()) && bytecodeCanIgnoreNaNAndInfinity(node->arithNodeFlags()) && bytecodeCanIgnoreNegativeZero(node->arithNodeFlags())) {
-                node->setArithMode(Arith::Unchecked);
-                node->clearFlags(NodeMustGenerate);
-            } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                node->setArithMode(Arith::CheckOverflow);
-            else
-                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+            node->setArithMode(Arith::CheckOverflowAndNegativeZero);
             return;
         }
 
@@ -111,10 +103,7 @@ private:
 
         node->setOp(DoubleAsInt32);
         node->children.initialize(Edge(newDivision, DoubleRepUse), Edge(), Edge());
-        if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-            node->setArithMode(Arith::CheckOverflow);
-        else
-            node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+        node->setArithMode(Arith::CheckOverflowAndNegativeZero);
 
     }
 
@@ -140,13 +129,7 @@ private:
         if ((node->op() == ArithMod || node->op() == ValueMod) && m_graph.modShouldSpeculateInt52(node)) {
             fixEdge<Int52RepUse>(leftChild);
             fixEdge<Int52RepUse>(rightChild);
-            if (bytecodeCanIgnoreNaNAndInfinity(node->arithNodeFlags()) && bytecodeCanIgnoreNegativeZero(node->arithNodeFlags())) {
-                node->setArithMode(Arith::Unchecked);
-                node->clearFlags(NodeMustGenerate);
-            } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                node->setArithMode(Arith::CheckOverflow);
-            else
-                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+            node->setArithMode(Arith::CheckOverflowAndNegativeZero);
             node->setResult(NodeResultInt52);
             return;
         }
@@ -159,25 +142,16 @@ private:
     
     void fixupArithMul(Node* node, Edge& leftChild, Edge& rightChild)
     {
-        if (m_graph.binaryArithShouldSpeculateInt32(node, FixupPass)) {
+        if (m_graph.mulShouldSpeculateInt32(node, FixupPass)) {
             fixIntOrBooleanEdge(leftChild);
             fixIntOrBooleanEdge(rightChild);
-            if (bytecodeCanTruncateInteger(node->arithNodeFlags())) {
-                node->setArithMode(Arith::Unchecked);
-                node->clearFlags(NodeMustGenerate);
-            } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()) || leftChild.node() == rightChild.node())
-                node->setArithMode(Arith::CheckOverflow);
-            else
-                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+            node->setArithMode(Arith::CheckOverflowAndNegativeZero);
             return;
         }
         if (m_graph.binaryArithShouldSpeculateInt52(node, FixupPass)) {
             fixEdge<Int52RepUse>(leftChild);
             fixEdge<Int52RepUse>(rightChild);
-            if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()) || leftChild.node() == rightChild.node())
-                node->setArithMode(Arith::CheckOverflow);
-            else
-                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+            node->setArithMode(Arith::CheckOverflowAndNegativeZero);
             node->setResult(NodeResultInt52);
             return;
         }
@@ -227,30 +201,6 @@ private:
                 fixEdge<HeapBigIntUse>(node->child2());
                 break;
             }
-#if USE(BIGINT32)
-            if (node->child1()->shouldSpeculateBigInt()) {
-                if (m_graph.unaryArithShouldSpeculateBigInt32(node, FixupPass)) {
-                    node->setOp(op == Inc ? ValueAdd : ValueSub);
-                    Node* nodeConstantOne = m_insertionSet.insertNode(m_indexInBlock, SpecBigInt32, JSConstant, node->origin, OpInfo(m_graph.freeze(jsBigInt32(1))));
-                    node->children.setChild2(Edge(nodeConstantOne));
-                    fixEdge<BigInt32Use>(node->child1());
-                    fixEdge<BigInt32Use>(node->child2());
-                    // The default of NodeResultJS is good enough for now.
-                    // FIXME: consider having a special representation for small BigInts instead.
-                    break;
-                }
-
-                // FIXME: the freezing does not appear useful (since the JSCell is kept alive by vm), but it refuses to compile otherwise.
-                // FIXME: we might optimize inc/dec to a specialized function call instead in that case.
-                node->setOp(op == Inc ? ValueAdd : ValueSub);
-                Node* nodeConstantOne = m_insertionSet.insertNode(m_indexInBlock, SpecBigInt32, JSConstant, node->origin, OpInfo(m_graph.freeze(jsBigInt32(1))));
-                node->children.setChild2(Edge(nodeConstantOne));
-                fixEdge<AnyBigIntUse>(node->child1());
-                fixEdge<AnyBigIntUse>(node->child2());
-                // The default of NodeResultJS is good here
-                break;
-            }
-#endif // USE(BIGINT32)
 
             if (node->child1()->shouldSpeculateUntypedForArithmetic()) {
                 fixEdge<UntypedUse>(node->child1());
@@ -297,20 +247,6 @@ private:
                 break;
             }
 
-#if USE(BIGINT32)
-            if (m_graph.binaryArithShouldSpeculateBigInt32(node, FixupPass)) {
-                fixEdge<BigInt32Use>(child1);
-                fixEdge<BigInt32Use>(child2);
-                break;
-            }
-
-            if (Node::shouldSpeculateBigInt(child1.node(), child2.node())) {
-                fixEdge<AnyBigIntUse>(child1);
-                fixEdge<AnyBigIntUse>(child2);
-                break;
-            }
-#endif
-
             if (Node::shouldSpeculateUntypedForArithmetic(node->child1().node(), node->child2().node())) {
                 fixEdge<UntypedUse>(child1);
                 fixEdge<UntypedUse>(child2);
@@ -318,8 +254,6 @@ private:
             }
 
             if (attemptToMakeIntegerAdd(node)) {
-                // FIXME: Clear ArithSub's NodeMustGenerate when ArithMode is unchecked
-                // https://bugs.webkit.org/show_bug.cgi?id=190607
                 node->setOp(ArithSub);
                 break;
             }
@@ -343,19 +277,6 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-#if USE(BIGINT32)
-            if (Node::shouldSpeculateBigInt(node->child1().node(), node->child2().node())) {
-                if (Node::shouldSpeculateBigInt32(node->child1().node(), node->child2().node())) {
-                    fixEdge<BigInt32Use>(node->child1());
-                    fixEdge<BigInt32Use>(node->child2());
-                } else {
-                    fixEdge<AnyBigIntUse>(node->child1());
-                    fixEdge<AnyBigIntUse>(node->child2());
-                }
-                node->clearFlags(NodeMustGenerate);
-                break;
-            }
-#endif
 
             if (Node::shouldSpeculateUntypedForBitOps(node->child1().node(), node->child2().node())) {
                 fixEdge<UntypedUse>(node->child1());
@@ -400,14 +321,7 @@ private:
             } else if (operandEdge.node()->shouldSpeculateBigInt()) {
                 node->clearFlags(NodeMustGenerate);
 
-#if USE(BIGINT32)
-                if (operandEdge.node()->shouldSpeculateBigInt32())
-                    fixEdge<BigInt32Use>(operandEdge);
-                else
-                    fixEdge<AnyBigIntUse>(operandEdge);
-#else
                 fixEdge<HeapBigIntUse>(operandEdge);
-#endif
             } else if (operandEdge.node()->shouldSpeculateUntypedForBitOps())
                 fixEdge<UntypedUse>(operandEdge);
             else {
@@ -485,13 +399,7 @@ private:
             if (node->child1()->shouldSpeculateInt32OrBoolean() && node->canSpeculateInt32(FixupPass)) {
                 node->setOp(ArithNegate);
                 fixIntOrBooleanEdge(node->child1());
-                if (bytecodeCanTruncateInteger(node->arithNodeFlags())) {
-                    node->setArithMode(Arith::Unchecked);
-                    node->clearFlags(NodeMustGenerate);
-                } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                    node->setArithMode(Arith::CheckOverflow);
-                else
-                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 node->setResult(NodeResultInt32);
                 break;
             }
@@ -499,10 +407,7 @@ private:
             if (m_graph.unaryArithShouldSpeculateInt52(node, FixupPass)) {
                 node->setOp(ArithNegate);
                 fixEdge<Int52RepUse>(node->child1());
-                if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                    node->setArithMode(Arith::CheckOverflow);
-                else
-                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 node->setResult(NodeResultInt52);
                 break;
             }
@@ -556,14 +461,6 @@ private:
             if (m_graph.binaryArithShouldSpeculateHeapBigInt(node)) {
                 fixEdge<HeapBigIntUse>(child1);
                 fixEdge<HeapBigIntUse>(child2);
-#if USE(BIGINT32)
-            } else if (m_graph.binaryArithShouldSpeculateBigInt32(node, FixupPass)) {
-                fixEdge<BigInt32Use>(child1);
-                fixEdge<BigInt32Use>(child2);
-            } else if (Node::shouldSpeculateBigInt(child1.node(), child2.node())) {
-                fixEdge<AnyBigIntUse>(child1);
-                fixEdge<AnyBigIntUse>(child2);
-#endif
             } else {
                 fixEdge<UntypedUse>(child1);
                 fixEdge<UntypedUse>(child2);
@@ -624,8 +521,6 @@ private:
             
         case ArithAdd:
         case ArithSub: {
-            // FIXME: Clear ArithSub's NodeMustGenerate when ArithMode is unchecked
-            // https://bugs.webkit.org/show_bug.cgi?id=190607
             if (attemptToMakeIntegerAdd(node))
                 break;
             fixDoubleOrBooleanEdge(node->child1());
@@ -638,22 +533,13 @@ private:
         case ArithNegate: {
             if (node->child1()->shouldSpeculateInt32OrBoolean() && node->canSpeculateInt32(FixupPass)) {
                 fixIntOrBooleanEdge(node->child1());
-                if (bytecodeCanTruncateInteger(node->arithNodeFlags())) {
-                    node->setArithMode(Arith::Unchecked);
-                    node->clearFlags(NodeMustGenerate);
-                } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                    node->setArithMode(Arith::CheckOverflow);
-                else
-                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 node->setResult(NodeResultInt32);
                 break;
             }
             if (m_graph.unaryArithShouldSpeculateInt52(node, FixupPass)) {
                 fixEdge<Int52RepUse>(node->child1());
-                if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                    node->setArithMode(Arith::CheckOverflow);
-                else
-                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 node->setResult(NodeResultInt52);
                 break;
             }
@@ -674,19 +560,6 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-#if USE(BIGINT32)
-            if (Node::shouldSpeculateBigInt(leftChild.node(), rightChild.node())) {
-                if (m_graph.binaryArithShouldSpeculateBigInt32(node, FixupPass)) {
-                    fixEdge<BigInt32Use>(node->child1());
-                    fixEdge<BigInt32Use>(node->child2());
-                } else {
-                    fixEdge<AnyBigIntUse>(node->child1());
-                    fixEdge<AnyBigIntUse>(node->child2());
-                }
-                node->clearFlags(NodeMustGenerate);
-                break;
-            }
-#endif
 
             if (node->canSpeculateInt32(node->sourceFor(FixupPass)) && !m_graph.hasExitSite(node->origin.semantic, BadType)) {
                 auto convertToInt32 = [&](Edge& edge) {
@@ -699,12 +572,7 @@ private:
                 auto fixupNode = [&](Node* node) {
                     node->setOp(ArithMul);
                     node->setResult(NodeResultNumber);
-                    if (bytecodeCanTruncateInteger(node->arithNodeFlags()))
-                        node->setArithMode(Arith::Unchecked);
-                    else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()) || leftChild.node() == rightChild.node())
-                        node->setArithMode(Arith::CheckOverflow);
-                    else
-                        node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 };
 
                 if (leftChild->shouldSpeculateInt32() && rightChild->shouldSpeculateString()) {
@@ -790,13 +658,6 @@ private:
                 fixEdge<HeapBigIntUse>(rightChild);
                 break;
             }
-#if USE(BIGINT32)
-            if (Node::shouldSpeculateBigInt(leftChild.node(), rightChild.node())) {
-                fixEdge<AnyBigIntUse>(leftChild);
-                fixEdge<AnyBigIntUse>(rightChild);
-                break; 
-            }
-#endif
 
             if (Node::shouldSpeculateUntypedForArithmetic(leftChild.node(), rightChild.node())) {
                 fixEdge<UntypedUse>(leftChild);
@@ -844,11 +705,7 @@ private:
             if (node->child1()->shouldSpeculateInt32OrBoolean()
                 && node->canSpeculateInt32(FixupPass)) {
                 fixIntOrBooleanEdge(node->child1());
-                if (bytecodeCanTruncateInteger(node->arithNodeFlags())) {
-                    node->setArithMode(Arith::Unchecked);
-                    node->clearFlags(NodeMustGenerate);
-                } else
-                    node->setArithMode(Arith::CheckOverflow);
+                node->setArithMode(Arith::CheckOverflow);
                 node->setResult(NodeResultInt32);
                 break;
             }
@@ -868,13 +725,6 @@ private:
                 fixEdge<HeapBigIntUse>(node->child2());
                 break;
             }
-#if USE(BIGINT32)
-            if (Node::shouldSpeculateBigInt(node->child1().node(), node->child2().node())) {
-                fixEdge<AnyBigIntUse>(node->child1());
-                fixEdge<AnyBigIntUse>(node->child2());
-                break;
-            }
-#endif
 
             if (Node::shouldSpeculateUntypedForArithmetic(node->child1().node(), node->child2().node())) {
                 fixEdge<UntypedUse>(node->child1());
@@ -1004,27 +854,11 @@ private:
                     node->clearFlags(NodeMustGenerate);
                 return;
             }
-#if USE(BIGINT32)
-            if (Node::shouldSpeculateBigInt32(node->child1().node(), node->child2().node())) {
-                fixEdge<BigInt32Use>(node->child1());
-                fixEdge<BigInt32Use>(node->child2());
-                node->clearFlags(NodeMustGenerate);
-                return;
-            }
-            if (Node::shouldSpeculateBigInt(node->child1().node(), node->child2().node())) {
-                fixEdge<AnyBigIntUse>(node->child1());
-                fixEdge<AnyBigIntUse>(node->child2());
-                node->clearFlags(NodeMustGenerate);
-                return;
-            }
-#endif
             if (Node::shouldSpeculateNumberOrBoolean(node->child1().node(), node->child2().node())) {
                 fixDoubleOrBooleanEdge(node->child1());
                 fixDoubleOrBooleanEdge(node->child2());
             }
 
-            // FIXME: We can convert BigInt32 to Double in Compare nodes since they do not require ToNumber semantics.
-            // https://bugs.webkit.org/show_bug.cgi?id=211407
             if (node->op() != CompareEq
                 && node->child1()->shouldSpeculateNotCellNorBigInt()
                 && node->child2()->shouldSpeculateNotCellNorBigInt()) {
@@ -1790,8 +1624,12 @@ private:
             blessArrayOperation(arrayEdge, Edge(), storageEdge);
             fixEdge<KnownCellUse>(arrayEdge);
 
-            // Convert `array.push()` to GetArrayLength.
+            // Convert `array.push()` to GetArrayLength. It must still throw when length is not
+            // writable, which only ArrayStorage arrays can be, so those exit and let the baseline
+            // code do the push.
             if (!elementCount && node->arrayMode().supportsSelfLength()) {
+                if (!arrayModeImpliesWritableLength(node->arrayMode().type()))
+                    m_insertionSet.insertNode(m_indexInBlock, SpecNone, ForceOSRExit, node->origin);
                 node->setOpAndDefaultFlags(GetArrayLength);
                 node->child1() = arrayEdge;
                 node->child2() = storageEdge;
@@ -2116,11 +1954,33 @@ private:
                 return;
             }
 
+            if (node->child1()->shouldSpeculateInt32()) {
+                fixEdge<Int32Use>(node->child1());
+                node->convertToToString();
+                node->clearFlags(NodeMustGenerate);
+                return;
+            }
+
+            if (node->child1()->shouldSpeculateInt52()) {
+                fixEdge<Int52RepUse>(node->child1());
+                node->convertToToString();
+                node->clearFlags(NodeMustGenerate);
+                return;
+            }
+
+            if (node->child1()->shouldSpeculateNumber()) {
+                fixEdge<DoubleRepUse>(node->child1());
+                node->convertToToString();
+                node->clearFlags(NodeMustGenerate);
+                return;
+            }
+
             if (node->child1()->shouldSpeculateStringObject()
                 && m_graph.canOptimizeStringObjectAccess(node->origin.semantic)) {
                 addCheckStructureForOriginalStringObjectUse(StringObjectUse, node->origin, node->child1().node());
                 fixEdge<StringObjectUse>(node->child1());
                 node->convertToToString();
+                node->clearFlags(NodeMustGenerate);
                 return;
             }
 
@@ -2129,6 +1989,7 @@ private:
                 addCheckStructureForOriginalStringObjectUse(StringOrStringObjectUse, node->origin, node->child1().node());
                 fixEdge<StringOrStringObjectUse>(node->child1());
                 node->convertToToString();
+                node->clearFlags(NodeMustGenerate);
                 return;
             }
             break;
@@ -2152,6 +2013,12 @@ private:
             break;
         }
 
+        case NewProxyObject: {
+            fixEdge<ObjectUse>(node->child1());
+            fixEdge<ObjectUse>(node->child2());
+            break;
+        }
+
         case NewRegExpUntyped: {
             if (node->child1()->shouldSpeculateString() && node->child2()->shouldSpeculateString()) {
                 fixEdge<StringUse>(node->child1());
@@ -2171,7 +2038,7 @@ private:
 
         case NewArrayWithSpread: {
             watchHavingABadTime(node);
-            
+
             BitVector* bitVector = node->bitVector();
             for (unsigned i = node->numChildren(); i--;) {
                 if (bitVector->get(i))
@@ -2183,22 +2050,24 @@ private:
             break;
         }
 
-        case Spread: {
-            // Note: We care about performing the protocol on our child's global object, not necessarily ours.
-            
-            watchHavingABadTime(node->child1().node());
+        case CallVarargsWithSpread: {
+            BitVector* bitVector = node->bitVector();
+            unsigned numArgs = node->numChildren() - 2;
+            for (unsigned e = 0; e < numArgs; ++e) {
+                if (bitVector->get(e))
+                    fixEdge<KnownCellUse>(m_graph.m_varArgChildren[node->firstChild() + 2 + e]);
+                else
+                    fixEdge<UntypedUse>(m_graph.m_varArgChildren[node->firstChild() + 2 + e]);
+            }
+            break;
+        }
 
-            // When we go down the fast path, we don't consult the prototype chain, so we must prove
-            // that it doesn't contain any indexed properties, and that any holes will result in
-            // jsUndefined().
-            if (node->child1()->shouldSpeculateArray()
-                && m_graph.isWatchingArrayPrototypeChainIsSaneWatchpoint(node->child1().node())
-                && m_graph.isWatchingArrayIteratorProtocolWatchpoint(node->child1().node())
-                && m_graph.isWatchingHavingABadTimeWatchpoint(node->child1().node()))
+        case Spread: {
+            // Note: This is only speculating the operand is an Array/Set respectively. This gates
+            // optimizations that elide the iterator protocol but don't guarantee it can be.
+            if (node->child1()->shouldSpeculateArray())
                 fixEdge<ArrayUse>(node->child1());
-            else if (node->child1()->shouldSpeculateSetObject()
-                && m_graph.isWatchingSetIteratorProtocolWatchpoint(node->child1().node())
-                && m_graph.isWatchingHavingABadTimeWatchpoint(node->child1().node()))
+            else if (node->child1()->shouldSpeculateSetObject())
                 fixEdge<SetObjectUse>(node->child1());
             else
                 fixEdge<CellUse>(node->child1());
@@ -3222,10 +3091,6 @@ private:
                 fixEdge<BooleanUse>(node->child2());
             else if (node->child2()->shouldSpeculateInt32())
                 fixEdge<Int32Use>(node->child2());
-#if USE(BIGINT32)
-            else if (node->child2()->shouldSpeculateBigInt32())
-                fixEdge<BigInt32Use>(node->child2());
-#endif
             else if (node->child2()->shouldSpeculateSymbol())
                 fixEdge<SymbolUse>(node->child2());
             else if (node->child2()->shouldSpeculateObject())
@@ -3310,13 +3175,6 @@ private:
                 fixEdge<StringUse>(node->child1());
                 break;
             }
-
-#if USE(BIGINT32)
-            if (node->child1()->shouldSpeculateBigInt32()) {
-                fixEdge<BigInt32Use>(node->child1());
-                break;
-            }
-#endif
 
             if (node->child1()->shouldSpeculateHeapBigInt()) {
                 fixEdge<HeapBigIntUse>(node->child1());
@@ -3743,6 +3601,13 @@ private:
             break;
         }
 
+        case TypedArraySet: {
+            fixEdge<KnownCellUse>(node->child1());
+            fixEdge<KnownCellUse>(node->child2());
+            fixEdge<Int32Use>(node->child3());
+            break;
+        }
+
         case ForwardVarargs:
             fixEdge<KnownInt32Use>(node->child1());
             break;
@@ -3752,7 +3617,8 @@ private:
             if (node->child1()->shouldSpeculateOther()) {
                 insertCheck<OtherUse>(node->child1().node());
                 m_graph.convertToConstant(node, jsNumber(1));
-            }
+            } else if (node->child1()->op() == Spread && !node->loadVarargsData()->offset)
+                fixEdge<KnownCellUse>(node->child1());
             break;
         }
 
@@ -3761,6 +3627,33 @@ private:
             // Actually this is common that we are passing undefined / null.
             if (node->child2()->shouldSpeculateOther())
                 fixEdge<OtherUse>(node->child2());
+            else if (node->child2()->op() == Spread && !node->loadVarargsData()->offset)
+                fixEdge<KnownCellUse>(node->child2());
+            break;
+        }
+
+        case VarargsLengthWithSpread: {
+            BitVector* bitVector = node->bitVector();
+            unsigned numArgs = node->numChildren();
+            for (unsigned e = 0; e < numArgs; ++e) {
+                if (bitVector->get(e))
+                    fixEdge<KnownCellUse>(m_graph.m_varArgChildren[node->firstChild() + e]);
+                else
+                    fixEdge<UntypedUse>(m_graph.m_varArgChildren[node->firstChild() + e]);
+            }
+            break;
+        }
+
+        case LoadVarargsWithSpread: {
+            fixEdge<KnownInt32Use>(m_graph.m_varArgChildren[node->firstChild()]);
+            BitVector* bitVector = node->bitVector();
+            unsigned numArgs = node->numChildren() - 1;
+            for (unsigned e = 0; e < numArgs; ++e) {
+                if (bitVector->get(e))
+                    fixEdge<KnownCellUse>(m_graph.m_varArgChildren[node->firstChild() + 1 + e]);
+                else
+                    fixEdge<UntypedUse>(m_graph.m_varArgChildren[node->firstChild() + 1 + e]);
+            }
             break;
         }
 
@@ -3820,7 +3713,6 @@ private:
         case IsUndefinedOrNull:
         case IsBoolean:
         case IsNumber:
-        case IsBigInt:
         case IsCallable:
         case IsConstructor:
         case CreateDirectArguments:
@@ -4192,14 +4084,7 @@ private:
             }
 
             if (node->child1()->shouldSpeculateBigInt()) {
-#if USE(BIGINT32)
-                if (node->child1()->shouldSpeculateBigInt32())
-                    fixEdge<BigInt32Use>(node->child1());
-                else
-                    fixEdge<AnyBigIntUse>(node->child1());
-#else
                 fixEdge<HeapBigIntUse>(node->child1());
-#endif
                 node->convertToIdentity();
                 return;
             }
@@ -4276,17 +4161,6 @@ private:
 
     void fixupToNumberOrToNumericOrCallNumberConstructor(Node* node)
     {
-#if USE(BIGINT32)
-        if (node->op() == CallNumberConstructor) {
-            if (node->child1()->shouldSpeculateBigInt32()) {
-                fixEdge<BigInt32Use>(node->child1());
-                node->clearFlags(NodeMustGenerate);
-                node->setResult(NodeResultInt32);
-                return;
-            }
-        }
-#endif
-
         // If the prediction of the child is BigInt, we attempt to convert ToNumeric to Identity, since it can only return a BigInt when fed a BigInt.
         if (node->op() == ToNumeric) {
             if (m_graph.unaryArithShouldSpeculateHeapBigInt(node)) {
@@ -4296,14 +4170,7 @@ private:
             }
 
             if (node->child1()->shouldSpeculateBigInt()) {
-#if USE(BIGINT32)
-                if (node->child1()->shouldSpeculateBigInt32())
-                    fixEdge<BigInt32Use>(node->child1());
-                else
-                    fixEdge<AnyBigIntUse>(node->child1());
-#else
                 fixEdge<HeapBigIntUse>(node->child1());
-#endif
                 node->convertToIdentity();
                 return;
             }
@@ -4339,10 +4206,7 @@ private:
                 // In that case, let's receive the child value as a Double value and convert it to Int32. This case happens in misc-bugs-847389-jpeg2000.
                 fixEdge<DoubleRepUse>(node->child1());
                 node->setOp(DoubleAsInt32);
-                if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                    node->setArithMode(Arith::CheckOverflow);
-                else
-                    node->setArithMode(Arith::CheckOverflowAndNegativeZero);
+                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
                 return;
             }
 
@@ -4910,7 +4774,7 @@ private:
         return std::tuple { arrayModes, flags };
     }
 
-    static std::optional<ArrayModes> LEGACY_NODELETE refineArrayModesForMultiPutByVal(Node*, ArrayModes arrayModes)
+    NODELETE static std::optional<ArrayModes> refineArrayModesForMultiPutByVal(Node*, ArrayModes arrayModes)
     {
         constexpr ArrayModes supportedArrays = 0
             | asArrayModesIgnoringTypedArrays(ArrayWithInt32)
@@ -4948,25 +4812,25 @@ private:
         return arrayModes;
     }
 
-    bool LEGACY_NODELETE alwaysUnboxSimplePrimitives()
+    NODELETE bool alwaysUnboxSimplePrimitives()
     {
         return false;
     }
 
     template<UseKind useKind>
-    void LEGACY_NODELETE observeUseKindOnNode(Node* node)
+    NODELETE void observeUseKindOnNode(Node* node)
     {
         if (useKind == UntypedUse)
             return;
         observeUseKindOnNode(node, useKind);
     }
 
-    void LEGACY_NODELETE observeUseKindOnEdge(Edge edge)
+    NODELETE void observeUseKindOnEdge(Edge edge)
     {
         observeUseKindOnNode(edge.node(), edge.useKind());
     }
 
-    void LEGACY_NODELETE observeUseKindOnNode(Node* node, UseKind useKind)
+    NODELETE void observeUseKindOnNode(Node* node, UseKind useKind)
     {
         if (node->op() != GetLocal)
             return;
@@ -5013,21 +4877,19 @@ private:
                 || isCellSpeculation(variable->prediction()))
                 m_profitabilityChanged |= variable->mergeIsProfitableToUnbox(true);
             break;
-        // FIXME: what should we do about BigInt32Use and AnyBigIntUse ?
-        // Also more broadly, what about all of the UseKinds which are not listed in that switch?
         default:
             break;
         }
     }
     
     template<UseKind useKind>
-    void LEGACY_NODELETE fixEdge(Edge& edge)
+    NODELETE void fixEdge(Edge& edge)
     {
         observeUseKindOnNode<useKind>(edge.node());
         edge.setUseKind(useKind);
     }
     
-    unsigned LEGACY_NODELETE indexForChecks()
+    NODELETE unsigned indexForChecks()
     {
         unsigned index = m_indexInBlock;
         while (!m_block->at(index)->origin.exitOK)
@@ -5182,10 +5044,7 @@ private:
             truncateConstantsIfNecessary(node, mode);
             fixIntOrBooleanEdge(node->child1());
             fixIntOrBooleanEdge(node->child2());
-            if (bytecodeCanTruncateInteger(node->arithNodeFlags()))
-                node->setArithMode(Arith::Unchecked);
-            else
-                node->setArithMode(Arith::CheckOverflow);
+            node->setArithMode(Arith::CheckOverflow);
             return true;
         }
         
@@ -5322,14 +5181,6 @@ private:
             return;
         }
 
-#if USE(BIGINT32)
-        if (node->child1()->shouldSpeculateBigInt32()) {
-            fixEdge<BigInt32Use>(node->child1());
-            node->convertToIdentity();
-            return;
-        }
-#endif
-
         fixEdge<UntypedUse>(node->child1());
     }
 
@@ -5424,7 +5275,7 @@ private:
         return false;
     }
 
-    void LEGACY_NODELETE fixupCheckJSCast(Node* node)
+    NODELETE void fixupCheckJSCast(Node* node)
     {
         fixEdge<CellUse>(node->child1());
     }
@@ -5624,20 +5475,6 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
-#if USE(BIGINT32)
-        if (Node::shouldSpeculateBigInt32(node->child1().node(), node->child2().node())) {
-            fixEdge<BigInt32Use>(node->child1());
-            fixEdge<BigInt32Use>(node->child2());
-            node->setOpAndDefaultFlags(CompareStrictEq);
-            return;
-        }
-        if (Node::shouldSpeculateBigInt(node->child1().node(), node->child2().node())) {
-            fixEdge<AnyBigIntUse>(node->child1());
-            fixEdge<AnyBigIntUse>(node->child2());
-            node->setOpAndDefaultFlags(CompareStrictEq);
-            return;
-        }
-#endif
         if (!m_graph.hasExitSite(node->origin.semantic, BadStringType)) {
             if (node->child1()->shouldSpeculateStringIdent() && node->child2()->shouldSpeculateStringIdent()) {
                 fixEdge<StringIdentUse>(node->child1());
@@ -5749,8 +5586,6 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
-#if !USE(BIGINT32)
-        // As long as a BigInt32 and a HeapBigInt can compare equal, it is not sound to replace compareStrictEq by a simple comparison of the JSValue in the following cases.
         if (node->child1()->shouldSpeculateNeitherDoubleNorHeapBigIntNorString()
             && node->child2()->shouldSpeculateNotDouble()) {
             fixEdge<NeitherDoubleNorHeapBigIntNorStringUse>(node->child1());
@@ -5779,7 +5614,6 @@ private:
             node->setOpAndDefaultFlags(CompareStrictEq);
             return;
         }
-#endif // !USE(BIGINT32)
     }
 
     void fixupChecksInBlock(BasicBlock* block)

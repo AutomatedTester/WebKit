@@ -32,6 +32,7 @@
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <WebCore/NotificationData.h>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 
 namespace WebKit {
@@ -83,11 +84,9 @@ void WebNotificationManagerMessageHandler::clearNotifications(const Vector<WTF::
 {
     Ref serviceWorkerNotificationHandler = ServiceWorkerNotificationHandler::singleton();
 
-    Vector<WTF::UUID> persistentNotifications;
-    Vector<WTF::UUID> pageNotifications;
-    persistentNotifications.reserveInitialCapacity(notificationIDs.size());
-    pageNotifications.reserveInitialCapacity(notificationIDs.size());
-    for (auto& notificationID : notificationIDs) {
+    Vector<WTF::UUID> persistentNotifications(ReserveCapacityTag { }, notificationIDs.size());
+    Vector<WTF::UUID> pageNotifications(ReserveCapacityTag { }, notificationIDs.size());
+    for (auto& notificationID : borrow(notificationIDs)) {
         if (serviceWorkerNotificationHandler->handlesNotification(notificationID))
             persistentNotifications.append(notificationID);
         else

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebBackForwardCacheEntry.h"
 
+#include "FrameProcess.h"
 #include "Logging.h"
 #include "SuspendedPageProxy.h"
 #include "WebBackForwardCache.h"
@@ -34,6 +35,7 @@
 #include "WebFrameProxy.h"
 #include "WebProcessMessages.h"
 #include "WebProcessProxy.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -122,6 +124,13 @@ HashSet<Ref<WebProcessProxy>> WebBackForwardCacheEntry::allProcesses() const
     return result;
 }
 
+void WebBackForwardCacheEntry::setMainFrameProcess(FrameProcess& frameProcess)
+{
+    ASSERT(!m_suspendedPage);
+    ASSERT(frameProcess.process().coreProcessIdentifier() == m_processIdentifier);
+    m_mainFrameProcess = frameProcess;
+}
+
 void WebBackForwardCacheEntry::setCachedChildren(Vector<Ref<WebFrameProxy>>&& children)
 {
     ASSERT(m_cachedChildren.isEmpty());
@@ -134,7 +143,7 @@ std::pair<Vector<Ref<WebFrameProxy>>, Vector<Ref<WebProcessProxy>>> WebBackForwa
     auto children = std::exchange(m_cachedChildren, { });
     Vector<Ref<WebProcessProxy>> processes;
     HashSet<WebCore::ProcessIdentifier> visited;
-    for (auto& root : children) {
+    for (auto& root : borrow(children)) {
         Ref rootProcess = root->process();
         if (visited.add(rootProcess->coreProcessIdentifier()).isNewEntry)
             processes.append(WTF::move(rootProcess));

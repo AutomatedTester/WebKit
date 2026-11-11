@@ -130,7 +130,7 @@ static Position nextLineCandidatePosition(Node* node, const VisiblePosition& vis
     return Position();
 }
 
-static bool isTextOrLineBreakBox(InlineIterator::LeafBoxIterator box)
+NODELETE static bool isTextOrLineBreakBox(InlineIterator::LeafBoxIterator box)
 {
     return box && (box->isText() || box->renderer().isBR());
 }
@@ -176,7 +176,7 @@ static const InlineIterator::LeafBoxIterator logicallyPreviousBox(const VisibleP
     if (auto previousBox = previousTextOrLineBreakBox(startBox, orderCache))
         return previousBox;
 
-    if (auto previousLineBox = startBox->lineBox()->previous()) {
+    if (auto previousLineBox = startBox->lineBox().previous()) {
         // FIXME: Why isn't previousBoxInDifferentLine set here?
         if (auto previousBox = endTextOrLineBreakBox(previousLineBox, orderCache))
             return previousBox;
@@ -187,7 +187,7 @@ static const InlineIterator::LeafBoxIterator logicallyPreviousBox(const VisibleP
         if (!startNode)
             break;
 
-        Position position = previousLineCandidatePosition(startNode.get(), visiblePosition, ContentIsEditable);
+        Position position = previousLineCandidatePosition(startNode.get(), visiblePosition, EditableType::Content);
         if (position.isNull())
             break;
 
@@ -214,7 +214,7 @@ static const InlineIterator::LeafBoxIterator logicallyNextBox(const VisiblePosit
     if (auto nextBox = nextTextOrLineBreakBox(startBox, orderCache))
         return nextBox;
 
-    if (auto nextLineBox = startBox->lineBox()->next()) {
+    if (auto nextLineBox = startBox->lineBox().next()) {
         // FIXME: Why isn't previousBoxInDifferentLine set here?
         if (auto nextBox = startTextOrLineBreakBox(nextLineBox, orderCache))
             return nextBox;
@@ -225,7 +225,7 @@ static const InlineIterator::LeafBoxIterator logicallyNextBox(const VisiblePosit
         if (!startNode)
             break;
 
-        Position position = nextLineCandidatePosition(startNode.get(), visiblePosition, ContentIsEditable);
+        Position position = nextLineCandidatePosition(startNode.get(), visiblePosition, EditableType::Content);
         if (position.isNull())
             break;
 
@@ -262,7 +262,7 @@ static UBreakIterator* wordBreakIteratorForMinOffsetBoundary(const VisiblePositi
     string.clear();
 
     if (previousBox) {
-        auto& previousTextBox = downcast<InlineIterator::TextBoxIterator>(previousBox);
+        auto previousTextBox = InlineIterator::TextBoxIterator { previousBox };
         previousBoxLength = previousTextBox->length();
         append(string, previousTextBox->originalText());
     }
@@ -288,7 +288,7 @@ static UBreakIterator* wordBreakIteratorForMaxOffsetBoundary(const VisiblePositi
     append(string, textBox->originalText());
 
     if (nextBox) {
-        auto& nextTextBox = downcast<InlineIterator::TextBoxIterator>(nextBox);
+        auto nextTextBox = InlineIterator::TextBoxIterator { nextBox };
         append(string, nextTextBox->originalText());
     }
 
@@ -348,7 +348,7 @@ static VisiblePosition visualWordPosition(const VisiblePosition& visiblePosition
             continue;
         }
 
-        auto& textBox = downcast<InlineIterator::TextBoxIterator>(box);
+        auto textBox = InlineIterator::TextBoxIterator { box };
         unsigned previousBoxLength = 0;
         bool previousBoxInDifferentLine = false;
         bool nextBoxInDifferentLine = false;
@@ -852,7 +852,7 @@ static VisiblePosition endPositionForLine(const VisiblePosition& c, LineEndpoint
     if (is<HTMLBRElement>(*endNode))
         pos = positionBeforeNode(*endNode);
     else if (RefPtr endTextNode = dynamicDowncast<Text>(*endNode); endTextNode && is<InlineIterator::TextBox>(*endBox)) {
-        auto& endTextBox = downcast<InlineIterator::TextBox>(*endBox);
+        auto endTextBox = downcast<InlineIterator::TextBox>(*endBox);
         int endOffset = endTextBox.start();
         if (!endTextBox.isLineBreak())
             endOffset += endTextBox.length();
@@ -977,7 +977,7 @@ VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, Lay
 
     InlineIterator::LineBoxIterator lineBox;
     if (auto box = visiblePosition.inlineBoxAndOffset().box) {
-        lineBox = box->lineBox()->previous();
+        lineBox = box->lineBox().previous();
         // We want to skip zero height boxes.
         // This could happen in case of a line with trailing floats.
         // A line whose content is a block level box (block-in-inline) is not a line to move the caret
@@ -1003,15 +1003,14 @@ VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, Lay
         if (!box)
             return VisiblePosition();
         CheckedRef renderer = box->renderer();
-        RefPtr node = renderer->node();
+        RefPtr node = renderer->nonPseudoNode();
         if (node && editingIgnoresContent(*node))
             return positionInParentBeforeNode(*node);
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
         CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer.get());
         auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script);
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script);
     }
 
     // Could not find a previous line. This means we must already be on the first line.
@@ -1037,7 +1036,7 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
 
     InlineIterator::LineBoxIterator lineBox;
     if (auto box = visiblePosition.inlineBoxAndOffset().box) {
-        lineBox = box->lineBox()->next();
+        lineBox = box->lineBox().next();
         // We want to skip zero height boxes.
         // This could happen in case of a line with trailing floats.
         // A line whose content is a block level box (block-in-inline) is not a line to move the caret
@@ -1068,15 +1067,14 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
         if (!box)
             return VisiblePosition();
         CheckedRef renderer = box->renderer();
-        RefPtr node = renderer->node();
+        RefPtr node = renderer->nonPseudoNode();
         if (node && editingIgnoresContent(*node))
             return VisiblePosition(positionInParentBeforeNode(*node), VisiblePosition::defaultAffinity, visiblePosition.allowUserSelectNone());
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
         CheckedPtr renderBox = dynamicDowncast<RenderBox>(renderer.get());
         auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script, visiblePosition.allowUserSelectNone());
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script, visiblePosition.allowUserSelectNone());
     }
 
     // Could not find a next line. This means we must already be on the last line.
@@ -1142,9 +1140,9 @@ RefPtr<Node> findStartOfParagraph(Node* startNode, Node* highestRoot, Node* star
     RefPtr n = startNode;
     bool startNodeIsEditable = startNode->hasEditableStyle();
     while (n) {
-        if (boundaryCrossingRule == CannotCrossEditingBoundary && !Position::nodeIsUserSelectAll(n.get()) && n->hasEditableStyle() != startNodeIsEditable)
+        if (boundaryCrossingRule == EditingBoundaryCrossingRule::CannotCross && !Position::nodeIsUserSelectAll(n.get()) && n->hasEditableStyle() != startNodeIsEditable)
             break;
-        if (boundaryCrossingRule == CanSkipOverEditingBoundary) {
+        if (boundaryCrossingRule == EditingBoundaryCrossingRule::CanSkipOver) {
             while (n && n->hasEditableStyle() != startNodeIsEditable)
                 n = NodeTraversal::previousPostOrder(*n, startBlock);
             if (!n || !n->isDescendantOf(highestRoot))
@@ -1200,9 +1198,9 @@ RefPtr<Node> findEndOfParagraph(Node* startNode, Node* highestRoot, Node* stayIn
     RefPtr n = startNode;
     bool startNodeIsEditable = startNode->hasEditableStyle();
     while (n) {
-        if (boundaryCrossingRule == CannotCrossEditingBoundary && !Position::nodeIsUserSelectAll(n.get()) && n->hasEditableStyle() != startNodeIsEditable)
+        if (boundaryCrossingRule == EditingBoundaryCrossingRule::CannotCross && !Position::nodeIsUserSelectAll(n.get()) && n->hasEditableStyle() != startNodeIsEditable)
             break;
-        if (boundaryCrossingRule == CanSkipOverEditingBoundary) {
+        if (boundaryCrossingRule == EditingBoundaryCrossingRule::CanSkipOver) {
             while (n && n->hasEditableStyle() != startNodeIsEditable)
                 n = NodeTraversal::next(*n, stayInsideBlock);
             if (!n || !n->isDescendantOf(highestRoot))
@@ -1313,12 +1311,12 @@ VisiblePosition endOfParagraph(const VisiblePosition& c, EditingBoundaryCrossing
 // FIXME: isStartOfParagraph(startOfNextParagraph(pos)) is not always true
 VisiblePosition startOfNextParagraph(const VisiblePosition& visiblePosition)
 {
-    VisiblePosition paragraphEnd(endOfParagraph(visiblePosition, CanSkipOverEditingBoundary));
-    VisiblePosition afterParagraphEnd(paragraphEnd.next(CannotCrossEditingBoundary));
+    VisiblePosition paragraphEnd(endOfParagraph(visiblePosition, EditingBoundaryCrossingRule::CanSkipOver));
+    VisiblePosition afterParagraphEnd(paragraphEnd.next(EditingBoundaryCrossingRule::CannotCross));
     // The position after the last position in the last cell of a table
     // is not the start of the next paragraph.
     if (isFirstPositionAfterTable(afterParagraphEnd))
-        return afterParagraphEnd.next(CannotCrossEditingBoundary);
+        return afterParagraphEnd.next(EditingBoundaryCrossingRule::CannotCross);
     return afterParagraphEnd;
 }
 
@@ -1393,12 +1391,12 @@ bool inSameBlock(const VisiblePosition& a, const VisiblePosition& b)
 
 bool isStartOfBlock(const VisiblePosition& pos)
 {
-    return pos.isNotNull() && pos == startOfBlock(pos, CanCrossEditingBoundary);
+    return pos.isNotNull() && pos == startOfBlock(pos, EditingBoundaryCrossingRule::CanCross);
 }
 
 bool isEndOfBlock(const VisiblePosition& pos)
 {
-    return pos.isNotNull() && pos == endOfBlock(pos, CanCrossEditingBoundary);
+    return pos.isNotNull() && pos == endOfBlock(pos, EditingBoundaryCrossingRule::CanCross);
 }
 
 // ---------
@@ -1446,12 +1444,12 @@ VisiblePosition endOfDocument(const VisiblePosition& c)
 
 bool isStartOfDocument(const VisiblePosition& p)
 {
-    return p.isNotNull() && p.previous(CanCrossEditingBoundary).isNull();
+    return p.isNotNull() && p.previous(EditingBoundaryCrossingRule::CanCross).isNull();
 }
 
 bool isEndOfDocument(const VisiblePosition& p)
 {
-    return p.isNotNull() && p.next(CanCrossEditingBoundary).isNull();
+    return p.isNotNull() && p.next(EditingBoundaryCrossingRule::CanCross).isNull();
 }
 
 // ---------
@@ -1483,7 +1481,7 @@ VisiblePosition rightBoundaryOfLine(const VisiblePosition& c, TextDirection dire
     return direction == TextDirection::LTR ? logicalEndOfLine(c, reachedBoundary) : logicalStartOfLine(c, reachedBoundary);
 }
 
-static bool LEGACY_NODELETE directionIsDownstream(SelectionDirection direction)
+NODELETE static bool directionIsDownstream(SelectionDirection direction)
 {
     if (direction == SelectionDirection::Backward)
         return false;
@@ -1755,7 +1753,7 @@ VisiblePosition positionOfNextBoundaryOfGranularity(const VisiblePosition& vp, T
 {
     switch (granularity) {
     case TextGranularity::CharacterGranularity:
-        return nextCharacterBoundaryInDirection(vp, direction, CanCrossEditingBoundary);
+        return nextCharacterBoundaryInDirection(vp, direction, EditingBoundaryCrossingRule::CanCross);
     case TextGranularity::WordGranularity:
         return nextWordBoundaryInDirection(vp, direction);
     case TextGranularity::SentenceGranularity:
@@ -1858,14 +1856,14 @@ void charactersAroundPosition(const VisiblePosition& position, char32_t& oneAfte
     VisiblePosition startPosition = position;
     VisiblePosition endPosition = position;
 
-    VisiblePosition nextPosition = nextCharacterBoundaryInDirection(position, SelectionDirection::Forward, CannotCrossEditingBoundary);
+    VisiblePosition nextPosition = nextCharacterBoundaryInDirection(position, SelectionDirection::Forward, EditingBoundaryCrossingRule::CannotCross);
     if (nextPosition.isNotNull())
         endPosition = nextPosition;
 
-    VisiblePosition previousPosition = nextCharacterBoundaryInDirection(position, SelectionDirection::Backward, CannotCrossEditingBoundary);
+    VisiblePosition previousPosition = nextCharacterBoundaryInDirection(position, SelectionDirection::Backward, EditingBoundaryCrossingRule::CannotCross);
     if (previousPosition.isNotNull()) {
         startPosition = previousPosition;
-        previousPosition = nextCharacterBoundaryInDirection(previousPosition, SelectionDirection::Backward, CannotCrossEditingBoundary);
+        previousPosition = nextCharacterBoundaryInDirection(previousPosition, SelectionDirection::Backward, EditingBoundaryCrossingRule::CannotCross);
         if (previousPosition.isNotNull())
             startPosition = previousPosition;
     }

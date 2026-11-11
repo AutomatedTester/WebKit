@@ -34,7 +34,9 @@
 #include "FloatRoundedRect.h"
 #include "GeometryUtilities.h"
 #include "GraphicsContext.h"
+#include "ImageBuffer.h"
 #include "InlineIteratorInlineBox.h"
+#include "NativeImage.h"
 #include "ObjectSizeNegotiation.h"
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
@@ -293,7 +295,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
             shouldPaintBackgroundImage = false;
         }
 
-        if (layerClip == FillBox::Text)
+        if (layerClip == FillBox::Text || layerClip == FillBox::BorderAreaText)
             layerClip = FillBox::BorderBox;
     }
 
@@ -364,6 +366,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         switch (*clipForBorder) {
         case FillBox::BorderBox:
         case FillBox::BorderArea:
+        case FillBox::BorderAreaText:
         case FillBox::Text:
         case FillBox::NoClip: {
             auto borderShape = borderShapeRespectingBleedAvoidance(closedEdges, isBorderFill);
@@ -434,7 +437,10 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
             maskContext.translate(-transparencyLayerBounds.location());
 
             paintFunction(maskContext, borderRect, transparencyLayerBounds);
-            context.clipToImageBuffer(*maskImage, transparencyLayerBounds);
+            RefPtr maskNativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(maskImage));
+            if (!maskNativeImage)
+                return;
+            context.clipToNativeImage(*maskNativeImage, transparencyLayerBounds);
         } else {
             paintFunction(context, borderRect, transparencyLayerBounds);
             context.setCompositeOperation(CompositeOperator::SourceIn);
@@ -482,6 +488,15 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
             auto borderPaintInfo = PaintInfo { context, LayoutRect { paintRect }, PaintPhase::BlockBackground, PaintBehavior::ForceBlackBorder };
             auto borderPainter = BorderPainter { m_renderer, borderPaintInfo };
             borderPainter.paintBorder(borderRect, m_renderer.usedStyle());
+        });
+        break;
+    }
+    case FillBox::BorderAreaText: {
+        setupMaskingBackgroundClip(rect, [&](GraphicsContext& context, const LayoutRect& borderRect, const FloatRect& paintRect) {
+            auto borderPaintInfo = PaintInfo { context, LayoutRect { paintRect }, PaintPhase::BlockBackground, PaintBehavior::ForceBlackBorder };
+            auto borderPainter = BorderPainter { m_renderer, borderPaintInfo };
+            borderPainter.paintBorder(borderRect, m_renderer.usedStyle());
+            m_renderer.paintMaskForTextFillBox(context, paintRect, inlineBoxIterator, scrolledPaintRect);
         });
         break;
     }
@@ -551,7 +566,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         auto& clientForBackgroundImage = backgroundObject ? *backgroundObject : m_renderer;
 
         geometry.clip(LayoutRect(pixelSnappedRect));
-        bool isFirstLine = inlineBoxIterator && inlineBoxIterator->lineBox()->isFirst();
+        bool isFirstLine = inlineBoxIterator && inlineBoxIterator->lineBox().isFirst();
         if (!geometry.destinationRect.isEmpty() && bgImage->canDrawAtSize(clientForBackgroundImage, geometry.tileSize)) {
             // image-orientation does not apply to mask images (https://drafts.csswg.org/css-images-3/#propdef-image-orientation).
             auto orientation = [&] {
@@ -563,7 +578,20 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
 
             auto concreteObjectSize = ConcreteObjectSize::fixed(geometry.tileSizeWithoutPixelSnapping);
 
-            ImagePaintingOptions options = {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+            auto invertContent = [&] {
+                if (bgImage->drawsSVGImage())
+                    return AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage, *bgImage) ? InvertContent::Yes : InvertContent::No;
+                if constexpr (std::is_same_v<Layer, Style::MaskLayer>)
+                    return InvertContent::No;
+                if (AXCustomColorModeController::shouldForceInvertBitmapImage(clientForBackgroundImage, *bgImage))
+                    return InvertContent::Forced;
+                return AXCustomColorModeController::shouldInvertBackgroundImage(clientForBackgroundImage, *bgImage, geometry.destinationRect.size(), geometry.tileSize) ? InvertContent::Yes : InvertContent::No;
+            };
+#endif
+
+            ImageDrawDescriptor descriptor {
+                concreteObjectSize,
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
                 layerBlendMode,
                 bgImage->decodingModeForImageDraw(m_renderer, m_paintInfo),
@@ -572,7 +600,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 layer.layer.maskMode() == Style::MaskMode::Luminance ? DrawLuminanceMask::Yes : DrawLuminanceMask::No,
                 document().settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-                bgImage->drawsSVGImage() && AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage, *bgImage) ? InvertContent::Yes : InvertContent::No,
+                invertContent(),
 #endif
                 document().settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
                 document().settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
@@ -580,7 +608,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
             };
 
-            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, concreteObjectSize, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options, isFirstLine);
+            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, descriptor, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, isFirstLine);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
                 protect(bgImage->cachedImage())->addClientWaitingForAsyncDecoding(protect(m_renderer)->cachedImageClient());
@@ -588,7 +616,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
 
             if (drawResult != ImageDrawResult::DidNothing && !context.paintingDisabled()) {
                 if (m_renderer.element())
-                    protect(m_renderer)->element()->setHasEverPaintedImages(true);
+                    m_renderer.element()->setHasEverPaintedImages(true);
 
                 if (RefPtr image = bgImage->cachedImage(); image && image->currentFrameIsComplete()) {
                     if (auto styleable = Styleable::fromRenderer(m_renderer))
@@ -611,7 +639,7 @@ void BackgroundPainter::clipRoundedInnerRect(GraphicsContext& context, const Flo
     context.clipRoundedRect(clipRect);
 }
 
-static inline std::optional<LayoutUnit> LEGACY_NODELETE getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
+NODELETE static inline std::optional<LayoutUnit> getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
 {
     if (int numberOfTiles = areaSize / tileSize; numberOfTiles > 1)
         return (areaSize - numberOfTiles * tileSize) / (numberOfTiles - 1);
@@ -650,7 +678,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
     bool fixedAttachment = fillLayer.attachment() == FillAttachment::FixedBackground && !isTransformed;
 
     LayoutRect destinationRect(borderBoxRect);
-    float snappingScaleFactor = protect(renderer)->document().pixelSnappingScaleFactor();
+    float snappingScaleFactor = renderer.document().pixelSnappingScaleFactor();
     if (!fixedAttachment) {
         LayoutUnit right;
         LayoutUnit bottom;
@@ -676,13 +704,13 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
             positioningAreaSize = downcast<RenderBox>(renderer).borderBoxSize() - LayoutSize(left + right, top + bottom);
             positioningAreaSize = LayoutSize(snapSizeToDevicePixel(positioningAreaSize, LayoutPoint(), snappingScaleFactor));
             if (renderer.writingMode().isBlockFlipped()) {
-                LayoutRect flippedRootBorderBox = downcast<RenderBox>(renderer).borderBoxRectInContainer();
-                view.flipForWritingMode(flippedRootBorderBox);
-                left += flippedRootBorderBox.x() - borderBoxRect.x();
-                top += flippedRootBorderBox.y() - borderBoxRect.y();
+                LayoutRect physicalRootBorderBox = downcast<RenderBox>(renderer).borderBoxRectInContainer();
+                view.blockStartRelativeToPhysical(physicalRootBorderBox);
+                left += physicalRootBorderBox.x() - borderBoxRect.x();
+                top += physicalRootBorderBox.y() - borderBoxRect.y();
             }
-            if (protect(view)->frameView().hasExtendedBackgroundRectForPainting()) {
-                LayoutRect extendedBackgroundRect = protect(view)->frameView().extendedBackgroundRectForPainting();
+            if (view.frameView().hasExtendedBackgroundRectForPainting()) {
+                LayoutRect extendedBackgroundRect = view.frameView().extendedBackgroundRectForPainting();
                 left += (renderer.marginLeft() - extendedBackgroundRect.x());
                 top += (renderer.marginTop() - extendedBackgroundRect.y());
             }
@@ -829,7 +857,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
 template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(const RenderBoxModelObject& renderer, const Layer& fillLayer, Style::ZoomFactor zoom, const LayoutSize& positioningAreaSize)
 {
     RefPtr image = fillLayer.image().tryStyleImage();
-    auto devicePixelSize = LayoutUnit { 1.0 / protect(renderer)->document().deviceScaleFactor() };
+    auto devicePixelSize = LayoutUnit { 1.0 / renderer.document().deviceScaleFactor() };
 
     using Sizing = typename FillLayerSizingKind<Layer>::type;
 
@@ -842,7 +870,8 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
     LayoutSize imageIntrinsicSize;
     if (image) {
         imageIntrinsicSize = renderer.calculateImageIntrinsicDimensions(*image, layerSizing, RenderBoxModelObject::ScaleByUsedZoom::Yes);
-        imageIntrinsicSize.scale(1 / image->imageScaleFactor(), 1 / image->imageScaleFactor());
+        auto inverseResolution = narrowPrecisionToFloat(1 / image->imageResolution().value);
+        imageIntrinsicSize.scale(inverseResolution, inverseResolution);
     } else
         imageIntrinsicSize = positioningAreaSize;
 
@@ -1177,8 +1206,7 @@ bool BackgroundPainter::boxShadowShouldBeAppliedToBackground(const RenderBoxMode
         return false;
 
     if (auto* imageRenderer = dynamicDowncast<RenderImage>(renderer)) {
-        // FIXME: Remove suppression once rdar://189998365 is fixed.
-        SUPPRESS_MEMORY_UNSAFE_CAST return !const_cast<RenderImage&>(*imageRenderer).backgroundIsKnownToBeObscured(paintOffset);
+        return !const_cast<RenderImage&>(*imageRenderer).backgroundIsKnownToBeObscured(paintOffset);
     }
 
     return true;

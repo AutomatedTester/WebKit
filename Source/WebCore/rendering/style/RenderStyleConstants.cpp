@@ -98,6 +98,18 @@ TextStream& operator<<(TextStream& ts, AnimationPlayState playState)
     return ts;
 }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+TextStream& operator<<(TextStream& ts, AppleColorFilterOverride colorFilterOverride)
+{
+    switch (colorFilterOverride) {
+    case AppleColorFilterOverride::None: ts << "none"_s; break;
+    case AppleColorFilterOverride::Preserve: ts << "preserve"_s; break;
+    case AppleColorFilterOverride::Force: ts << "force"_s; break;
+    }
+    return ts;
+}
+#endif
+
 TextStream& operator<<(TextStream& ts, AspectRatioType aspectRatioType)
 {
     switch (aspectRatioType) {
@@ -573,6 +585,7 @@ TextStream& operator<<(TextStream& ts, FillBox fill)
     case FillBox::ContentBox: ts << "content-box"_s; break;
     case FillBox::BorderArea: ts << "border-area"_s; break;
     case FillBox::Text: ts << "text"_s; break;
+    case FillBox::BorderAreaText: ts << "border-area text"_s; break;
     case FillBox::NoClip: ts << "no-clip"_s; break;
     }
     return ts;

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CoordinatedPlatformLayerBufferSkiaImage.h"
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
 #include "SkiaUtilities.h"
 
 #if ENABLE(WEBGL)
@@ -51,6 +51,10 @@ namespace WebCore {
 std::unique_ptr<CoordinatedPlatformLayerBufferSkiaImage> CoordinatedPlatformLayerBufferSkiaImage::create(const sk_sp<SkImage>& image, const sk_sp<GrContextThreadSafeProxy>& threadSafeGrContext)
 {
     sk_sp<SkImage> skiaImage = image->isTextureBacked() ? SkiaUtilities::createPromiseImageIfNeeded(image, threadSafeGrContext) : image;
+    // Skia makes no promise image once the compositor's context is abandoned, as when the page closes.
+    if (!skiaImage)
+        return nullptr;
+
     return makeUnique<CoordinatedPlatformLayerBufferSkiaImage>(WTF::move(skiaImage), image->isOpaque() ? AlphaMode::Opaque : AlphaMode::Premultiplied, Rotation::None);
 }
 
@@ -108,6 +112,8 @@ std::unique_ptr<CoordinatedPlatformLayerBufferSkiaImage> CoordinatedPlatformLaye
         +[](void* userData) {
             std::unique_ptr<PromiseWebGLImageContext> context(static_cast<PromiseWebGLImageContext*>(userData));
         }, context.release());
+    if (!skiaImage)
+        return nullptr;
 
     return makeUnique<CoordinatedPlatformLayerBufferSkiaImage>(WTF::move(skiaImage), alphaMode, Rotation::None);
 }
@@ -121,4 +127,4 @@ CoordinatedPlatformLayerBufferSkiaImage::CoordinatedPlatformLayerBufferSkiaImage
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)

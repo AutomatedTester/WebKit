@@ -460,6 +460,19 @@ TEST_P(FramebufferMultiviewTest, IncompleteViewTargetsLayered)
                                      2);
     ASSERT_GL_NO_ERROR();
     ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    // Test that non-overlapping view ranges of the same texture are complete, whereas overlapping
+    // view ranges of the same texture are rejected on D3D11 (and in hardened/WebGL contexts).
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, tex, 0, 2, 2);
+    ASSERT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glFramebufferTextureMultiviewOVR(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, tex, 0, 1, 2);
+    ASSERT_GL_NO_ERROR();
+    if (IsD3D11())
+    {
+        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_UNSUPPORTED, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    }
 }
 
 // Test that glClear clears the contents of the color buffer for only the attached layers to a
@@ -551,9 +564,9 @@ TEST_P(FramebufferMultiviewLayeredClearTest, ClearBufferfi)
     glClearStencil(0xFF);
 
     // Clear the color and stencil buffers of each layer.
-    for (size_t i = 0u; i < mNonMultiviewFBO.size(); ++i)
+    for (GLuint fbo : mNonMultiviewFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mNonMultiviewFBO[i]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
 
@@ -565,9 +578,9 @@ TEST_P(FramebufferMultiviewLayeredClearTest, ClearBufferfi)
     // the test.
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glStencilFunc(GL_EQUAL, 0x00, 0xFF);
-    for (size_t i = 0u; i < mNonMultiviewFBO.size(); ++i)
+    for (GLuint fbo : mNonMultiviewFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mNonMultiviewFBO[i]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glUniform3f(mColorUniformLoc, 0.0f, 1.0f, 0.0f);
         drawQuad(program, "vPos", 0.0f, 1.0f, true);
     }
@@ -679,9 +692,9 @@ TEST_P(FramebufferMultiviewLayeredClearTest, ScissoredClearBufferfi)
     glClearStencil(0xFF);
 
     // Clear the color and stencil buffers of each layer.
-    for (size_t i = 0u; i < mNonMultiviewFBO.size(); ++i)
+    for (GLuint fbo : mNonMultiviewFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mNonMultiviewFBO[i]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
 
@@ -697,9 +710,9 @@ TEST_P(FramebufferMultiviewLayeredClearTest, ScissoredClearBufferfi)
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     glStencilFunc(GL_EQUAL, 0x00, 0xFF);
     glUniform3f(mColorUniformLoc, 0.0f, 1.0f, 0.0f);
-    for (size_t i = 0u; i < mNonMultiviewFBO.size(); ++i)
+    for (GLuint fbo : mNonMultiviewFBO)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, mNonMultiviewFBO[i]);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         drawQuad(program, "vPos", 0.0f, 1.0f, true);
     }
     EXPECT_EQ(GLColor::red, getLayerColor(0, GL_COLOR_ATTACHMENT0, 0, 0));

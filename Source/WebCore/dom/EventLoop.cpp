@@ -50,9 +50,9 @@ public:
     enum class Type : bool { OneShot, Repeating };
     static Ref<EventLoopTimer> create(Type type, std::unique_ptr<EventLoopTask>&& task) { return adoptRef(*new EventLoopTimer(type, WTF::move(task))); }
 
-    Type LEGACY_NODELETE type() const { return m_type; }
-    EventLoopTaskGroup* LEGACY_NODELETE group() const { return m_task ? m_task->group() : nullptr; }
-    bool LEGACY_NODELETE isSuspended() const { return m_suspended; }
+    NODELETE Type type() const { return m_type; }
+    NODELETE EventLoopTaskGroup* group() const { return m_task ? m_task->group() : nullptr; }
+    NODELETE bool isSuspended() const { return m_suspended; }
 
     void stop()
     {
@@ -147,6 +147,8 @@ private:
         if (!m_task)
             return;
         WeakPtr group = m_task->group();
+        if (group)
+            group->didFireTimer();
         m_task->execute();
         if (group && m_type == Type::OneShot)
             group->removeScheduledTimer(*this);
@@ -466,7 +468,7 @@ void EventLoopTaskGroup::markAsReadyToStop()
 
     for (Ref timer : m_timers)
         timer->stop();
-    if (RefPtr eventLoop = m_eventLoop.get())
+    if (auto* eventLoop = m_eventLoop.get())
         eventLoop->invalidateNextTimerFireTimeCache();
 
     if (wasSuspended && !isStoppedPermanently()) {
@@ -642,6 +644,12 @@ void EventLoopTaskGroup::removeRepeatingTimer(EventLoopTimer& timer)
     if (RefPtr eventLoop = m_eventLoop.get())
         eventLoop->removeRepeatingTimer(timer);
     m_timers.remove(timer);
+}
+
+void EventLoopTaskGroup::didFireTimer()
+{
+    if (RefPtr eventLoop = m_eventLoop)
+        eventLoop->invalidateNextTimerFireTimeCache();
 }
 
 void EventLoopTaskGroup::didChangeTimerAlignmentInterval(EventLoopTimerHandle handle)

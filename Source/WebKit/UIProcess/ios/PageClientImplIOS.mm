@@ -53,6 +53,7 @@
 #import "UIKitSPI.h"
 #import "UIKitUtilities.h"
 #import "UndoOrRedo.h"
+#import "VideoPresentationManagerProxy.h"
 #import "ViewSnapshotStore.h"
 #import "WKContentView.h"
 #import "WKContentViewInteraction.h"
@@ -195,6 +196,13 @@ bool PageClientImpl::isActiveViewVisible()
         return true;
 #endif
 
+#if HAVE(AVEXPERIENCECONTROLLER)
+    if (page && page->preferences().isAVExperienceControllerFullscreenEnabled()) {
+        if (RefPtr videoPresentationManager = page->videoPresentationManager(); videoPresentationManager && videoPresentationManager->hasMode(WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard))
+            return true;
+    }
+#endif
+
     return false;
 }
 
@@ -296,9 +304,9 @@ void PageClientImpl::didCreateContextInModelProcessForVisibilityPropagation(Laye
     [m_contentView _modelProcessDidCreateContextForVisibilityPropagation];
 }
 
-void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::NodeIdentifier> nodeID)
+void PageClientImpl::didReceiveInteractiveModelElement(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::NodeIdentifier> nodeID)
 {
-    [m_contentView didReceiveInteractiveModelElement:nodeID];
+    [m_contentView didReceiveInteractiveModelElement:nodeID frameID:frameID];
 }
 #endif // ENABLE(MODEL_PROCESS)
 
@@ -344,7 +352,7 @@ void PageClientImpl::preferencesDidChange()
         return;
 
     if (auto page = webView->_page) {
-        if (CheckedPtr scrollingCoordinator = page->scrollingCoordinatorProxy())
+        if (RefPtr scrollingCoordinator = page->scrollingCoordinatorProxy())
             scrollingCoordinator->overlayRegionsEnabledChanged();
     }
 #else
@@ -686,10 +694,6 @@ CALayer* PageClientImpl::textIndicatorInstallationLayer()
     return [contentView() textIndicatorInstallationLayer];
 }
 
-void PageClientImpl::enterAcceleratedCompositingMode(const LayerTreeContext& layerTreeContext)
-{
-}
-
 void PageClientImpl::makeViewBlank(bool makeBlank)
 {
     [contentView() layer].opacity = makeBlank ? 0 : 1;
@@ -716,15 +720,6 @@ void PageClientImpl::clearBrowsingWarningIfForMainFrameNavigation()
 bool PageClientImpl::hasBrowsingWarning() const
 {
     return !![webView() _safeBrowsingWarning];
-}
-
-void PageClientImpl::exitAcceleratedCompositingMode()
-{
-    notImplemented();
-}
-
-void PageClientImpl::updateAcceleratedCompositingMode(const LayerTreeContext&)
-{
 }
 
 void PageClientImpl::didPerformDictionaryLookup(const DictionaryPopupInfo& dictionaryPopupInfo)
@@ -772,11 +767,6 @@ void PageClientImpl::didCommitLayerTree(const RemoteLayerTreeTransaction& layerT
     PageClientImplCocoa::didCommitLayerTree(layerTreeTransaction, mainFrameData, pageData, transactionID);
 
     [contentView() _didCommitLayerTree:layerTreeTransaction mainFrameData:mainFrameData pageData:pageData transactionID:transactionID];
-}
-
-void PageClientImpl::didCommitMainFrameData(const MainFrameData& mainFrameData)
-{
-    PageClientImplCocoa::didCommitMainFrameData(mainFrameData);
 }
 
 void PageClientImpl::layerTreeCommitComplete()
@@ -865,8 +855,7 @@ bool PageClientImpl::handleRunOpenPanel(const WebPageProxy& page, const WebFrame
     }
 #endif
 
-    [contentView() _showRunOpenPanel:&parameters frameInfo:frameInfo resultListener:&listener];
-    return true;
+    return [contentView() _showRunOpenPanel:&parameters frameInfo:frameInfo resultListener:&listener];
 }
 
 bool PageClientImpl::showShareSheet(ShareDataWithParsedURL&& shareData, WTF::CompletionHandler<void(bool)>&& completionHandler)
@@ -1277,6 +1266,13 @@ void PageClientImpl::didCleanupFullscreen()
 {
 #if ENABLE(FULLSCREEN_API)
     [[webView() fullScreenWindowController] didCleanupFullscreen];
+#endif
+
+#if HAVE(AVEXPERIENCECONTROLLER)
+    if (RetainPtr webView = this->webView()) {
+        if (RefPtr page = webView->_page; page && page->preferences().isAVExperienceControllerFullscreenEnabled())
+            page->activityStateDidChange(WebCore::ActivityState::IsVisible);
+    }
 #endif
 }
 

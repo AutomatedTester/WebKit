@@ -142,9 +142,9 @@ ImageBuffer* FilterImage::imageBufferFromPixelBuffer()
     auto imageBufferRect = IntRect { { }, m_absoluteImageRect.size() };
 
     if (pixelBufferSlot(AlphaPremultiplication::Premultiplied))
-        imageBuffer->putPixelBuffer(*pixelBufferSlot(AlphaPremultiplication::Premultiplied), imageBufferRect);
+        imageBuffer->putPixelBuffer(protect(*pixelBufferSlot(AlphaPremultiplication::Premultiplied)).get(), imageBufferRect);
     else if (pixelBufferSlot(AlphaPremultiplication::Unpremultiplied))
-        imageBuffer->putPixelBuffer(*pixelBufferSlot(AlphaPremultiplication::Unpremultiplied), imageBufferRect);
+        imageBuffer->putPixelBuffer(protect(*pixelBufferSlot(AlphaPremultiplication::Unpremultiplied)).get(), imageBufferRect);
 
     return m_imageBuffer.get();
 }
@@ -314,6 +314,17 @@ RefPtr<PixelBuffer> FilterImage::getPixelBuffer(AlphaPremultiplication alphaForm
 }
 
 bool FilterImage::copyPixelBuffer(PixelBuffer& destinationPixelBuffer, const IntRect& sourceRect)
+{
+    if (unsafeCopyPixelBuffer(destinationPixelBuffer, sourceRect))
+        return true;
+
+    // Callers treat a failed copy as "no input" and do not check the result, so the
+    // destination must read as transparent black rather than as uninitialized memory.
+    destinationPixelBuffer.zeroFill();
+    return false;
+}
+
+bool FilterImage::unsafeCopyPixelBuffer(PixelBuffer& destinationPixelBuffer, const IntRect& sourceRect)
 {
     auto alphaFormat = destinationPixelBuffer.format().alphaFormat;
     auto& colorSpace = destinationPixelBuffer.format().colorSpace;

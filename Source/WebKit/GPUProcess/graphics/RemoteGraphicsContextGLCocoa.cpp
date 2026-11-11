@@ -31,15 +31,16 @@
 #include "GPUConnectionToWebProcess.h"
 #include "IPCUtilities.h"
 #include "RemoteSharedResourceCache.h"
+#include "StreamConnectionWorkQueue.h"
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/SharedMemory.h>
 #include <wtf/MachSendRight.h>
+#include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if ENABLE(VIDEO)
 #include "RemoteVideoFrameObjectHeap.h"
-#include <WebCore/GraphicsContextGLCV.h>
 #include <WebCore/MediaSampleAVFObjC.h>
 #include <WebCore/VideoFrameCV.h>
 #endif
@@ -47,22 +48,30 @@
 namespace WebKit {
 
 #if ENABLE(VIDEO)
-void RemoteGraphicsContextGL::copyTextureFromVideoFrame(WebKit::SharedVideoFrame&& frame, PlatformGLObject texture, uint32_t target, int32_t level, uint32_t internalFormat, uint32_t format, uint32_t type, bool premultiplyAlpha, bool flipY, CompletionHandler<void(bool)>&& completionHandler)
+void RemoteGraphicsContextGL::copyTextureFromVideoFrame(WebKit::SharedVideoFrame&& frame, PlatformGLObject texture, uint32_t target, int32_t level, uint32_t internalFormat, uint32_t type, bool unpackFlipY, bool unpackPremultiplyAlpha, CompletionHandler<void(bool)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
     RefPtr videoFrame = m_sharedVideoFrameReader.read(WTF::move(frame));
     if (!videoFrame) {
         ASSERT_IS_TESTING_IPC();
+        protect(m_context)->recordVideoUploadForTesting(WebCore::GraphicsContextGLVideoUploadOutcome::NoFrame, 0);
         completionHandler(false);
         return;
     }
     if (!m_objectNames.isValidKey(texture)) {
         ASSERT_IS_TESTING_IPC();
+        completionHandler(false);
         return;
     }
     texture = m_objectNames.get(texture);
-    bool result = protect(m_context)->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, format, type, premultiplyAlpha, flipY);
+    bool result = protect(m_context)->copyTextureFromVideoFrame(*videoFrame, texture, target, level, internalFormat, type, unpackFlipY, unpackPremultiplyAlpha);
     completionHandler(result);
+}
+
+void RemoteGraphicsContextGL::getLastVideoUploadForTesting(CompletionHandler<void(WebCore::GraphicsContextGLVideoUploadRecord)>&& completionHandler)
+{
+    assertIsCurrent(workQueue());
+    completionHandler(protect(m_context)->lastVideoUploadForTesting().value_or(WebCore::GraphicsContextGLVideoUploadRecord { }));
 }
 
 void RemoteGraphicsContextGL::setSharedVideoFrameSemaphore(IPC::Semaphore&& semaphore)
@@ -90,6 +99,11 @@ public:
     void platformWorkQueueInitialize(WebCore::GraphicsContextGLAttributes&&) final;
     void prepareForDisplay(IPC::Semaphore&&, CompletionHandler<void(WTF::MachSendRight&&)>&&) final;
 private:
+    void scheduleIdleSpareDrawingBufferRelease();
+    void idleSpareDrawingBufferReleaseTimerFired();
+
+    bool m_idleSpareDrawingBufferReleaseScheduled WTF_GUARDED_BY_CAPABILITY(workQueue()) { false };
+    bool m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled WTF_GUARDED_BY_CAPABILITY(workQueue()) { false };
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteGraphicsContextGLCocoa);
@@ -126,6 +140,41 @@ void RemoteGraphicsContextGLCocoa::prepareForDisplay(IPC::Semaphore&& finishedSe
     if (WebCore::IOSurface* surface = context->displayBufferSurface())
         sendRight = surface->createSendRight();
     completionHandler(WTF::move(sendRight));
+    m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled = true;
+    if (context->hasSpareDrawingBuffersInUse())
+        scheduleIdleSpareDrawingBufferRelease();
+}
+
+static constexpr Seconds idleSpareDrawingBufferReleaseDelay = 200_ms;
+
+void RemoteGraphicsContextGLCocoa::scheduleIdleSpareDrawingBufferRelease()
+{
+    assertIsCurrent(workQueue());
+    if (m_idleSpareDrawingBufferReleaseScheduled)
+        return;
+    m_idleSpareDrawingBufferReleaseScheduled = true;
+    m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled = false;
+    RunLoop::mainSingleton().dispatchAfter(idleSpareDrawingBufferReleaseDelay, [protectedThis = protect(*this)] mutable {
+        Ref workQueue = protectedThis->workQueue();
+        workQueue->dispatch([protectedThis = WTF::move(protectedThis)] {
+            protectedThis->idleSpareDrawingBufferReleaseTimerFired();
+        });
+    });
+}
+
+void RemoteGraphicsContextGLCocoa::idleSpareDrawingBufferReleaseTimerFired()
+{
+    assertIsCurrent(workQueue());
+    m_idleSpareDrawingBufferReleaseScheduled = false;
+    RefPtr context = m_context;
+    if (!context)
+        return;
+    if (m_didDisplaySinceIdleSpareDrawingBufferReleaseScheduled) {
+        if (context->hasSpareDrawingBuffersInUse())
+            scheduleIdleSpareDrawingBufferRelease();
+        return;
+    }
+    context->releaseIdleSpareDrawingBuffers();
 }
 
 }

@@ -34,7 +34,7 @@
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/PlatformImage.h>
 #include <WebCore/PlatformLayer.h>
-#include <WebCore/PlaybackSessionInterfaceIOS.h>
+#include <WebCore/PlaybackSessionInterfaceCocoa.h>
 #include <WebCore/VideoFullscreenCaptions.h>
 #include <WebCore/VideoPresentationLayerProvider.h>
 #include <WebCore/VideoPresentationModel.h>
@@ -61,6 +61,10 @@ namespace WebCore {
 
 class FloatRect;
 class FloatSize;
+
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+enum class CallToActionLabel : uint8_t;
+#endif
 
 class VideoPresentationInterfaceIOS
     : public VideoPresentationModelClient
@@ -90,11 +94,15 @@ public:
     WEBCORE_EXPORT void audioSessionCategoryChanged(WebCore::AudioSessionCategory, WebCore::AudioSessionMode, WebCore::RouteSharingPolicy) override;
     WEBCORE_EXPORT void routingContextUIDChanged(const String&) final;
 
+#if ENABLE(MEDIA_SESSION_CALL_TO_ACTION)
+    virtual void callToActionChanged(std::optional<CallToActionLabel>) { }
+#endif
+
     // PlaybackSessionModelClient
     WEBCORE_EXPORT void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName, const String& localizedRouteName) override;
 
     WEBCORE_EXPORT void setVideoPresentationModel(VideoPresentationModel*);
-    PlaybackSessionInterfaceIOS& playbackSessionInterface() const { return m_playbackSessionInterface.get(); }
+    PlaybackSessionInterfaceCocoa& playbackSessionInterface() const { return m_playbackSessionInterface.get(); }
     PlaybackSessionModel* playbackSessionModel() const { return m_playbackSessionInterface->playbackSessionModel(); }
     virtual void setSpatialImmersive(bool) { }
     WEBCORE_EXPORT virtual void setupFullscreen(const FloatRect& initialRect, const FloatSize& videoDimensions, UIView* parentView, HTMLMediaElementEnums::VideoFullscreenMode, bool allowsPictureInPicturePlayback, bool standby, bool blocksReturnToFullscreenFromPictureInPicture);
@@ -198,7 +206,7 @@ public:
 #endif
 
 protected:
-    WEBCORE_EXPORT VideoPresentationInterfaceIOS(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT VideoPresentationInterfaceIOS(PlaybackSessionInterfaceCocoa&);
 
     RunLoop::Timer m_watchdogTimer;
     RetainPtr<UIView> m_parentView;
@@ -273,7 +281,7 @@ private:
 
     bool m_finalizeSetupNeedsVideoContentLayer { false };
     bool m_finalizeSetupNeedsReturnVideoContentLayer { false };
-    const Ref<PlaybackSessionInterfaceIOS> m_playbackSessionInterface;
+    const Ref<PlaybackSessionInterfaceCocoa> m_playbackSessionInterface;
     const RetainPtr<UIView> m_pipPlacard;
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)

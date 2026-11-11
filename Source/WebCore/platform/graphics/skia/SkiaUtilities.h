@@ -51,6 +51,7 @@ namespace WebCore {
 
 class BitmapTexture;
 class GLFence;
+class IntSize;
 enum class BlendMode : uint8_t;
 enum class CompositeOperator : uint8_t;
 
@@ -96,27 +97,11 @@ sk_sp<SkSurface> createSurface(GrDirectContext*, const BitmapTexture&, const SkS
 // original image's color type, alpha type, and color space.
 sk_sp<SkImage> rewrapImageForContext(GrDirectContext*, const SkImage&);
 
-// Extracts the GL texture ID from a GPU-backed SkImage, if available.
-std::optional<unsigned> retrieveGLTextureID(const SkImage&);
-
-// Flushes the surface, submits pending GPU commands, and creates a GLFence
-// for async synchronization. Falls back to synchronous submit if fences
-// are not supported or creation fails, and returns nullptr.
-std::unique_ptr<GLFence> flushAndSubmitSurfaceWithFence(GrDirectContext*, SkSurface*);
-
-// Flushes the image, submits pending GPU commands, and creates a GLFence
-// for async synchronization. Falls back to synchronous submit if fences
-// are not supported or creation fails, and returns nullptr.
-std::unique_ptr<GLFence> flushAndSubmitImageWithFence(GrDirectContext*, const sk_sp<SkImage>&);
-
-// Flushes and submits pending GPU commands and creates a GLFence for async
-// synchronization. Falls back to synchronous submit if fences are not
-// supported or creation fails, and returns nullptr.
-std::unique_ptr<GLFence> flushAndSubmitWithFence(GrDirectContext*);
-
 SkBlendMode toSkiaBlendMode(BlendMode, std::optional<CompositeOperator> = std::nullopt);
 
 sk_sp<SkImage> createPromiseImageIfNeeded(const sk_sp<SkImage>&, const sk_sp<GrContextThreadSafeProxy>&);
+
+sk_sp<SkImage> scaleImagePixels(const sk_sp<SkImage>&, const IntSize& scaledSize);
 
 } // namespace SkiaUtilities
 } // namespace WebCore

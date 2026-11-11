@@ -40,7 +40,7 @@ public:
     RenderVideo(HTMLVideoElement&, Style::ComputedStyle&&);
     virtual ~RenderVideo();
 
-    WEBCORE_EXPORT HTMLVideoElement& LEGACY_NODELETE videoElement() const;
+    NODELETE WEBCORE_EXPORT HTMLVideoElement& videoElement() const;
 
     IntRect videoBox() const;
     WEBCORE_EXPORT IntRect videoBoxInMainFrameView() const;
@@ -54,7 +54,7 @@ public:
     // bypass is active.
     bool isBypassingObjectViewBoxForPictureInPicture() const;
 
-    static IntSize LEGACY_NODELETE defaultSize();
+    NODELETE static IntSize defaultSize();
 
     bool supportsAcceleratedRendering() const;
     void acceleratedRenderingStateChanged();
@@ -66,8 +66,6 @@ public:
 
     void updateFromElement() final;
 
-    WEBCORE_EXPORT RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const final;
-
     bool hasVideoMetadata() const;
     bool hasPosterFrameSize() const;
     bool hasDefaultObjectSize() const;
@@ -76,6 +74,8 @@ private:
     void willBeDestroyed() override;
     void mediaElement() const = delete;
 
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     void intrinsicSizeChanged() final;
     LayoutSize calculateIntrinsicSizeInternal();
     LayoutSize calculateIntrinsicSize();
@@ -83,7 +83,6 @@ private:
 
     std::optional<LayoutRect> objectFitContentsRectForFullscreenCompositing(const LayoutRect&) const;
     LayoutSize posterAwareIntrinsicSize() const;
-    NaturalDimensions zoomedNaturalDimensions() const final;
 
     void imageChanged(WrappedImagePtr, const IntRect*) final;
 
@@ -105,6 +104,9 @@ private:
 
     bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const final;
     void invalidateLineLayout();
+
+    RefPtr<ShareableBitmap> createShareableBitmap(const CreateShareableBitmapFromImageOptions& = { }) const final;
+    Ref<NativePromise<Ref<ShareableBitmap>, void>> createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions& = { }) const final;
 
     LayoutSize m_cachedImageSize;
 };

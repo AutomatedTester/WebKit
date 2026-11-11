@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ContentInversion.h"
 #include "DrawingAreaInfo.h"
 #include "FrameTreeCreationParameters.h"
 #include "LayerTreeContext.h"
@@ -57,6 +58,7 @@
 #include <WebCore/MediaProducer.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
@@ -119,9 +121,6 @@ struct WebPageCreationParameters {
     OptionSet<WebCore::ActivityState> activityState { };
     
     WebPreferencesStore store { };
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    DrawingAreaType drawingAreaType { };
-#endif
     DrawingAreaIdentifier drawingAreaIdentifier;
     WebPageProxyIdentifier webPageProxyIdentifier;
     WebPageGroupData pageGroupData;
@@ -203,6 +202,7 @@ struct WebPageCreationParameters {
     bool useElevatedUserInterfaceLevel { false };
     bool allowPostingLegacySynchronousMessages { false };
     bool backgroundTextExtractionEnabled { false };
+    ContentInversion contentInversion { ContentInversion::System };
 
 #if PLATFORM(MAC)
     std::optional<WebCore::ColorSpace> colorSpace { };
@@ -241,9 +241,6 @@ struct WebPageCreationParameters {
     Vector<SandboxExtension::Handle> gpuIOKitExtensionHandles { };
     Vector<SandboxExtension::Handle> gpuMachExtensionHandles { };
 #endif
-#if ENABLE(TILED_CA_DRAWING_AREA)
-    SandboxExtension::Handle renderServerMachExtensionHandle { };
-#endif
 #if HAVE(STATIC_FONT_REGISTRY) && !ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)
     Vector<SandboxExtension::Handle> fontMachExtensionHandles { };
 #endif
@@ -281,10 +278,6 @@ struct WebPageCreationParameters {
 
     bool needsScrollGeometryUpdates { false };
 
-    // WebRTC members.
-    bool iceCandidateFilteringEnabled { true };
-    bool enumeratingAllNetworkInterfacesEnabled { false };
-
     UserContentControllerParameters userContentControllerParameters;
 
 #if ENABLE(WK_WEB_EXTENSIONS)
@@ -306,19 +299,11 @@ struct WebPageCreationParameters {
     String processDisplayName { };
 
     bool shouldCaptureAudioInUIProcess { false };
-    bool shouldCaptureAudioInGPUProcess { false };
     bool shouldCaptureVideoInUIProcess { false };
-    bool shouldCaptureVideoInGPUProcess { false };
     bool shouldCaptureDisplayInUIProcess { false };
-    bool shouldCaptureDisplayInGPUProcess { false };
-    bool shouldRenderCanvasInGPUProcess { false };
+#if !PLATFORM(COCOA)
     bool shouldRenderDOMInGPUProcess { false };
-    bool shouldPlayMediaInGPUProcess { false };
-#if ENABLE(WEBGL)
-    bool shouldRenderWebGLInGPUProcess { false };
 #endif
-    bool shouldEnableVP8Decoder { false };
-    bool shouldEnableVP9Decoder { false };
 #if ENABLE(APP_BOUND_DOMAINS)
     bool limitsNavigationsToAppBoundDomains { false };
 #endif
@@ -355,6 +340,7 @@ struct WebPageCreationParameters {
     std::optional<ProvisionalFrameCreationParameters> provisionalFrameCreationParameters { };
     WebCore::FrameIdentifier mainFrameIdentifier;
     String openedMainFrameName;
+    WebCore::RegistrableDomain openedByScriptDomain;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
     URL mainFrameOpenerURL;
     WebCore::SandboxFlags initialSandboxFlags;
@@ -407,6 +393,9 @@ struct WebPageCreationParameters {
     bool shouldForceSiteIsolationAlwaysOnForTesting { false };
     bool shouldEnableNetworkInstrumentation { false };
     bool shouldEnablePageInstrumentation { false };
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    std::optional<bool> imageAnimationEnabledOverride { };
+#endif
 };
 
 } // namespace WebKit

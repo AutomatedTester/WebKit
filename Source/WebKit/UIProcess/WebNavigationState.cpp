@@ -96,26 +96,45 @@ API::Navigation* WebNavigationState::navigation(WebCore::NavigationIdentifier na
 RefPtr<API::Navigation> WebNavigationState::takeNavigation(WebCore::NavigationIdentifier navigationID)
 {
     ASSERT(m_navigations.contains(navigationID));
-    
-    return m_navigations.take(navigationID);
+
+    RefPtr navigation = m_navigations.take(navigationID);
+    if (navigation)
+        navigation->clearAgentClusterKeyingReservation();
+    return navigation;
+}
+
+RefPtr<API::Navigation> WebNavigationState::findNavigation(NOESCAPE const Function<bool(API::Navigation&)>& predicate) const
+{
+    for (Ref navigation : m_navigations.values()) {
+        if (predicate(navigation))
+            return navigation;
+    }
+    return nullptr;
 }
 
 void WebNavigationState::didDestroyNavigation(WebCore::ProcessIdentifier processID, WebCore::NavigationIdentifier navigationID)
 {
     auto it = m_navigations.find(navigationID);
-    if (it != m_navigations.end() && (*it).value->processID() == processID)
+    if (it != m_navigations.end() && (*it).value->processID() == processID) {
+        protect(it->value)->clearAgentClusterKeyingReservation();
         m_navigations.remove(it);
+    }
 }
 
 void WebNavigationState::clearAllNavigations()
 {
+    for (Ref navigation : m_navigations.values())
+        navigation->clearAgentClusterKeyingReservation();
     m_navigations.clear();
 }
 
 void WebNavigationState::clearNavigationsFromProcess(WebCore::ProcessIdentifier processID)
 {
     m_navigations.removeIf([&](auto& entry) {
-        return entry.value->processID() == processID;
+        if (entry.value->processID() != processID)
+            return false;
+        protect(entry.value)->clearAgentClusterKeyingReservation();
+        return true;
     });
 }
 

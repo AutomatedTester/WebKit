@@ -142,6 +142,7 @@
     macro(fromCharCode) \
     macro(get) \
     macro(getOwnPropertyDescriptor) \
+    macro(getPrototypeOf) \
     macro(global) \
     macro(go) \
     macro(granularity) \
@@ -179,6 +180,7 @@
     macro(instructionCount) \
     macro(isArray) \
     macro(isEnabled) \
+    macro(isExtensible) \
     macro(isPrototypeOf) \
     macro(isRawJSON) \
     macro(isView) \
@@ -241,9 +243,11 @@
     macro(parseInt) \
     macro(parseFloat) \
     macro(pluralCategories) \
+    macro(preventExtensions) \
     macro(profiledBytecodes) \
     macro(propertyIsEnumerable) \
     macro(prototype) \
+    macro(proxy) \
     macro(raw) \
     macro(rawJSON) \
     macro(read) \
@@ -255,6 +259,7 @@
     macro(resolve) \
     macro(reject) \
     macro(reason) \
+    macro(revoke) \
     macro(roundingIncrement) \
     macro(roundingMode) \
     macro(roundingPriority) \
@@ -266,6 +271,7 @@
     macro(selectRange) \
     macro(sensitivity) \
     macro(set) \
+    macro(setPrototypeOf) \
     macro(size) \
     macro(slice) \
     macro(smallestUnit) \

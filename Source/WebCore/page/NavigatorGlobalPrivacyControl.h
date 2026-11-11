@@ -32,7 +32,7 @@ class WorkerNavigator;
 
 class NavigatorGlobalPrivacyControl {
 public:
-    static bool globalPrivacyControlEnabled(Navigator&);
+    NODELETE static bool globalPrivacyControlEnabled(Navigator&);
     static bool globalPrivacyControlEnabled(WorkerNavigator&);
 };
 }

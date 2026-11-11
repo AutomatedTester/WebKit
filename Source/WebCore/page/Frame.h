@@ -49,6 +49,7 @@ class FrameLoaderClient;
 class FrameLoadRequest;
 class FrameView;
 class HTMLFrameOwnerElement;
+class LocalFrame;
 class NavigationScheduler;
 class Page;
 class RenderWidget;
@@ -83,7 +84,7 @@ public:
 
     DOMWindow* window() const { return virtualWindow(); }
     FrameTree& tree() const LIFETIME_BOUND { return m_treeNode; }
-    WEBCORE_EXPORT std::optional<uint64_t> LEGACY_NODELETE indexInFrameTreeSiblings() const;
+    NODELETE WEBCORE_EXPORT std::optional<uint64_t> indexInFrameTreeSiblings() const;
     WEBCORE_EXPORT Vector<uint64_t> pathToFrame() const;
     FrameIdentifier frameID() const { return m_frameID; }
     WEBCORE_EXPORT SecurityOrigin& topOrigin() const;
@@ -98,11 +99,12 @@ public:
     WEBCORE_EXPORT void setOpenerForWebKitLegacy(Frame*);
     const Frame* opener() const { return m_opener.get(); }
     Frame* opener() { return m_opener.get(); }
-    bool LEGACY_NODELETE hasOpenedFrames() const;
+    NODELETE bool hasOpenedFrames() const;
     WEBCORE_EXPORT void detachFromAllOpenedFrames();
     virtual bool isRootFrame() const = 0;
 #if ASSERT_ENABLED
     WEBCORE_EXPORT static bool isRootFrameIdentifier(FrameIdentifier);
+    static void frameExistsOnlyForCachedPages(LocalFrame&);
 #endif
 
     WEBCORE_EXPORT void detachFromPage();
@@ -136,7 +138,7 @@ public:
     virtual void updateSandboxFlags(SandboxFlags, NotifyUIProcess);
     virtual void updateReferrerPolicy(ReferrerPolicy) { }
 
-    WEBCORE_EXPORT RenderWidget* LEGACY_NODELETE ownerRenderer() const; // Renderer for the element that contains this frame.
+    NODELETE WEBCORE_EXPORT RenderWidget* ownerRenderer() const; // Renderer for the element that contains this frame.
 
     WEBCORE_EXPORT void setOwnerPermissionsPolicy(OwnerPermissionsPolicyData&&);
     WEBCORE_EXPORT std::optional<OwnerPermissionsPolicyData> ownerPermissionsPolicy() const;
@@ -166,13 +168,13 @@ public:
     // values on the frame owner element and its ancestors.
     WEBCORE_EXPORT float frameScaleFactor() const;
 
-    // The scale factor of a child frame with respect to this frame.
-    virtual float frameScaleFactorForChild(const Frame&) const = 0;
+    // The frame owner zoom factor of a child frame.
+    virtual float frameOwnerZoomFactorForChild(const Frame&) const = 0;
 
     WEBCORE_EXPORT virtual void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize, NotifyUIProcess = NotifyUIProcess::Yes);
 
-    bool LEGACY_NODELETE isPrinting() const { return m_isPrinting; }
-    WEBCORE_EXPORT RefPtr<Frame> LEGACY_NODELETE parent() const;
+    NODELETE bool isPrinting() const { return m_isPrinting; }
+    NODELETE WEBCORE_EXPORT RefPtr<Frame> parent() const;
 
 protected:
     Frame(Page&, FrameIdentifier, FrameType, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, AddToFrameTree = AddToFrameTree::Yes);

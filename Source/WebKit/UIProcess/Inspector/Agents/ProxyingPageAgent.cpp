@@ -26,7 +26,9 @@
 #include "config.h"
 #include "ProxyingPageAgent.h"
 
+#include "APIData.h"
 #include "HandleMessage.h"
+#include "ProvisionalFrameProxy.h"
 #include "ProxyingPageAgentMessages.h"
 #include "ValidationProcedures.h"
 #include "WebFrameProxy.h"
@@ -36,11 +38,13 @@
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/SecurityOriginData.h>
+#include <wtf/Borrow.h>
 #include <wtf/Box.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/Function.h>
 #include <wtf/JSONValues.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/Base64.h>
 
 #define EXTRACT_WITH_MESSAGE_CHECK(name, untrusted, ...) \
     EXTRACT_WITH_MESSAGE_CHECK_BASE(connection, name, untrusted, (void)0, __VA_ARGS__)
@@ -173,6 +177,14 @@ void ProxyingPageAgent::frameSwappedOutOfProcess(FrameIdentifier frameID, Proces
     m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, oldProcessID));
 }
 
+void ProxyingPageAgent::provisionalFrameDiscarded(FrameIdentifier frameID, ProcessIdentifier processID)
+{
+    if (!m_enabled)
+        return;
+
+    m_frontendDispatcher->frameDetached(IdentifierRegistry::protocolFrameId(frameID, processID));
+}
+
 // MARK: - Frontend lifecycle
 
 void ProxyingPageAgent::didCreateFrontendAndBackend()
@@ -205,6 +217,9 @@ void ProxyingPageAgent::enableInstrumentationForProcess(WebProcessProxy& webProc
     // exactly once per (process, page) registration, guarded above.
     if (m_showPaintRects)
         webProcess.send(Messages::WebInspectorBackend::SetShowPaintRects { true }, pageID);
+
+    for (auto& [setting, value] : m_settingOverrides)
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { setting, value }, pageID);
 
     // Sent before the provisional frame's load is allowed to start (see WebFrameProxy::prepareForProvisionalLoadInProcess),
     // so the first document committed in a new process already sees the script.
@@ -259,9 +274,33 @@ CommandResult<void> ProxyingPageAgent::enable()
     if (!preferences->siteIsolationEnabled())
         return { };
 
+    if (m_enabled)
+        return { };
+
     m_enabled = true;
 
+    // Register once per frame, not once per process: WebPageInspectorController releases one registration per
+    // frame, so a process registered once would be released while it still hosts other frames.
+    for (RefPtr frame = inspectedPage->mainFrame(); frame; frame = frame->traverseNext().frame) {
+        if (auto pageID = frame->webPageIDInCurrentProcess()) {
+            Ref process = frame->process();
+            enableInstrumentationForProcess(process, *pageID);
+        }
+
+        // Released by willDestroyProvisionalFrame, or carried to the new process by didCommitProvisionalFrame.
+        if (RefPtr provisionalFrame = frame->provisionalFrame()) {
+            Ref process = provisionalFrame->process();
+            enableInstrumentationForProcess(process, inspectedPage->webPageIDInProcess(process));
+        }
+    }
+
+    // Processes that host this page's WebPage but no frame (e.g. the process of a popup in the same browsing context group,
+    // which holds only a remote page). They were instrumented when enable() registered every process once, so keep doing that.
+    // Nothing releases these per frame, so they are held on purpose until disable(): a process that later hosts a frame and
+    // loses it goes 1->2->1 and stays registered.
     inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (m_instrumentedProcessPageCounts.contains(std::make_pair(webProcess.coreProcessIdentifier(), pageID)))
+            return;
         Ref protectedWebProcess { webProcess };
         enableInstrumentationForProcess(protectedWebProcess, pageID);
     });
@@ -271,6 +310,8 @@ CommandResult<void> ProxyingPageAgent::enable()
 
 CommandResult<void> ProxyingPageAgent::disable()
 {
+    m_settingOverrides.clear();
+
     if (!m_enabled)
         return { };
 
@@ -333,7 +374,7 @@ Ref<Protocol::Page::FrameResourceTree> ProxyingPageAgent::buildFrameTree(const W
     if (auto it = resourcesByFrame.find(frame.frameID()); it != resourcesByFrame.end()) {
         if (loaderId.isEmpty())
             loaderId = it->value.loaderId;
-        for (auto& resource : it->value.resources)
+        for (auto& resource : borrow(it->value.resources))
             resources->addItem(ResourceUtilities::buildResourceObject(resource));
     }
 
@@ -426,7 +467,7 @@ void ProxyingPageAgent::getResourceTree(Ref<GetResourceTreeCallback>&& callback)
     for (auto& entry : framesByProcess.values()) {
         Ref process = *entry.process;
         process->sendWithAsyncReply(Messages::WebInspectorBackend::GetFrameResourceData { WTF::move(entry.frameIDs) }, [resourcesByFrame, aggregator](Vector<std::pair<FrameIdentifier, FrameResourceData>>&& items) {
-            for (auto& item : items)
+            for (auto& item : borrow(items))
                 resourcesByFrame->set(item.first, WTF::move(item.second));
         }, inspectedPage->webPageIDInProcess(process));
     }
@@ -443,8 +484,22 @@ CommandResult<void> ProxyingPageAgent::overrideUserAgent(const String&)
     return { };
 }
 
-CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting, std::optional<bool>&&)
+// Only the frontend may set this: relaying settings from a WebContent process would let one site change another site's process.
+CommandResult<void> ProxyingPageAgent::overrideSetting(Protocol::Page::Setting setting, std::optional<bool>&& value)
 {
+    auto settingName = Protocol::Helpers::getEnumConstantValue(setting);
+    if (value)
+        m_settingOverrides.set(settingName, *value);
+    else
+        m_settingOverrides.remove(settingName);
+
+    if (!m_enabled)
+        return { };
+
+    forEachInstrumentedProcess([&](auto& webProcess, auto pageID) {
+        webProcess.send(Messages::WebInspectorBackend::SetSettingOverride { settingName, value }, pageID);
+    });
+
     return { };
 }
 
@@ -453,20 +508,21 @@ CommandResult<void> ProxyingPageAgent::overrideUserPreference(Protocol::Page::Us
     return { };
 }
 
-// FIXME: <https://webkit.org/b/308900> Forward cookie commands to correct WebContent process.
+// Required by PageBackendDispatcherHandler. These commands are targetTypes ["page"], so the frontend
+// sends them to the WebContent page target; under Site Isolation it uses the Storage domain instead.
 CommandResult<Ref<JSON::ArrayOf<Protocol::Page::Cookie>>> ProxyingPageAgent::getCookies()
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    return makeUnexpected("Page.getCookies is not supported for this target; use Storage.getCookies"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::setCookie(Ref<JSON::Object>&&, std::optional<bool>&&)
 {
-    return { };
+    return makeUnexpected("Page.setCookie is not supported for this target; use Storage.setCookie"_s);
 }
 
 CommandResult<void> ProxyingPageAgent::deleteCookie(const String&, const String&)
 {
-    return { };
+    return makeUnexpected("Page.deleteCookie is not supported for this target; use Storage.deleteCookies"_s);
 }
 
 void ProxyingPageAgent::getResourceContent(const Protocol::Network::FrameId& frameId, const String& url, Ref<GetResourceContentCallback>&& callback)
@@ -553,7 +609,7 @@ void ProxyingPageAgent::searchInResource(const Protocol::Network::FrameId& frame
             return;
         }
         auto array = JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>::create();
-        for (auto& match : matches) {
+        for (auto& match : borrow(matches)) {
             array->addItem(Protocol::GenericTypes::SearchMatch::create()
                 .setLineNumber(match.lineNumber)
                 .setLineContent(match.lineContent)
@@ -673,7 +729,7 @@ void ProxyingPageAgent::searchInResources(const String& text, std::optional<bool
     Ref aggregator = CallbackAggregator::create([callback, resultsByProcess]() mutable {
         auto array = JSON::ArrayOf<Protocol::Page::SearchResult>::create();
         for (auto& [processID, results] : *resultsByProcess) {
-            for (auto& r : results) {
+            for (auto& r : borrow(results)) {
                 // Page.SearchResult.frameId is required, so skip any result lacking a frameID
                 // (WebInspectorBackend always sets it; see SearchResult in InspectorResourceUtilities.h).
                 if (!r.frameID)
@@ -743,9 +799,15 @@ CommandResult<String> ProxyingPageAgent::snapshotRect(int, int, int, int, Protoc
 }
 
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
-CommandResult<String> ProxyingPageAgent::archive()
+void ProxyingPageAgent::archive(Ref<ArchiveCallback>&& callback)
 {
-    return makeUnexpected("Not yet implemented under Site Isolation"_s);
+    protect(m_inspectedPage.get())->getWebArchiveData([callback = WTF::move(callback)](API::Data* data) {
+        if (!data) {
+            callback->sendFailure("Could not create web archive"_s);
+            return;
+        }
+        callback->sendSuccess(base64EncodeToString(data->span()));
+    });
 }
 #endif
 

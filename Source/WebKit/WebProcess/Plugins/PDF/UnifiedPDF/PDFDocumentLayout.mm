@@ -35,7 +35,7 @@
 #import <wtf/Borrow.h>
 #import <wtf/text/TextStream.h>
 
-#import "PDFKitSoftLink.h"
+#import <pal/cocoa/PDFKitSoftLink.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -518,8 +518,7 @@ Vector<PDFLayoutRow> PDFDocumentLayout::rows() const
     if (!m_pdfDocument)
         return { };
 
-    Vector<PDFLayoutRow> rows;
-    rows.reserveInitialCapacity(rowCount());
+    Vector<PDFLayoutRow> rows(ReserveCapacityTag { }, rowCount());
 
     auto pageCount = this->pageCount();
 

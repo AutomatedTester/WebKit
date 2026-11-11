@@ -165,14 +165,14 @@ template<> struct CSSValueCreation<MaskBorderWidth> { auto operator()(CSSValuePo
 // MARK: - Blending
 
 template<> struct Blending<MaskBorderWidthValue> {
-    bool LEGACY_NODELETE canBlend(const MaskBorderWidthValue&, const MaskBorderWidthValue&);
-    auto requiresInterpolationForAccumulativeIteration(const MaskBorderWidthValue&, const MaskBorderWidthValue&) -> bool;
+    NODELETE bool canBlend(const MaskBorderWidthValue&, const MaskBorderWidthValue&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const MaskBorderWidthValue&, const MaskBorderWidthValue&);
     auto blend(const MaskBorderWidthValue&, const MaskBorderWidthValue&, const BlendingContext&) -> MaskBorderWidthValue;
 };
 
 template<> struct Blending<MaskBorderWidth> {
-    auto canBlend(const MaskBorderWidth&, const MaskBorderWidth&) -> bool;
-    auto requiresInterpolationForAccumulativeIteration(const MaskBorderWidth&, const MaskBorderWidth&) -> bool;
+    NODELETE bool canBlend(const MaskBorderWidth&, const MaskBorderWidth&);
+    NODELETE bool requiresInterpolationForAccumulativeIteration(const MaskBorderWidth&, const MaskBorderWidth&);
     auto blend(const MaskBorderWidth&, const MaskBorderWidth&, const BlendingContext&) -> MaskBorderWidth;
 };
 

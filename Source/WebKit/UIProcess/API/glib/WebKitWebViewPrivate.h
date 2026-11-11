@@ -54,11 +54,11 @@ class WebKitWebResourceLoadManager;
 
 WebKit::WebPageProxy& webkitWebViewGetPage(WebKitWebView*);
 void webkitWebViewWillStartLoad(WebKitWebView*);
-void webkitWebViewLoadChanged(WebKitWebView*, WebKitLoadEvent);
+void webkitWebViewLoadChanged(WebKitWebView*, WebKitLoadEvent, API::Navigation* = nullptr);
 void webkitWebViewLoadFailed(WebKitWebView*, WebKitLoadEvent, const String& failingURI, GError*);
 void webkitWebViewLoadFailedWithTLSErrors(WebKitWebView*, const String& failingURI, GError*, GTlsCertificateFlags, GTlsCertificate*);
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
-void webkitWebViewGetLoadDecisionForIcons(WebKitWebView*, const HashMap<WebKit::CallbackID, WebCore::LinkIcon>&, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&&);
+void webkitWebViewGetLoadDecisionForIcons(WebKitWebView*, const Vector<std::pair<WebKit::CallbackID, WebCore::LinkIcon>>&, CompletionHandler<void(HashSet<WebKit::CallbackID>&&)>&&);
 void webkitWebViewSetIcon(WebKitWebView*, const WebCore::LinkIcon&, API::Data&);
 void webkitWebViewUpdatePageIcons(WebKitWebView*);
 #endif
@@ -101,6 +101,7 @@ void webkitWebViewInsecureContentDetected(WebKitWebView*, WebKitInsecureContentE
 bool webkitWebViewEmitShowNotification(WebKitWebView*, WebKitNotification*);
 void webkitWebViewWebProcessTerminated(WebKitWebView*, WebKitWebProcessTerminationReason);
 void webkitWebViewIsPlayingAudioChanged(WebKitWebView*);
+void webkitWebViewHasProtectedMediaChanged(WebKitWebView*);
 void webkitWebViewMediaCaptureStateDidChange(WebKitWebView*, WebCore::MediaProducer::MediaStateFlags);
 void webkitWebViewSelectionDidChange(WebKitWebView*);
 void webkitWebViewDidChangePageScale(WebKitWebView*);

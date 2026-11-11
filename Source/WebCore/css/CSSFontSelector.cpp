@@ -52,6 +52,7 @@
 #include "StyleProperties.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
+#include <wtf/OrderedHashSet.h>
 #include <wtf/Ref.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/AtomString.h>
@@ -256,7 +257,7 @@ void CSSFontSelector::addFontPaletteValuesRule(const StyleRuleFontPaletteValues&
         return;
 
     for (auto& fontFamily : fontFamilies)
-        m_paletteMap.set(std::make_pair(fontFamily, name), fontPaletteValuesRule.fontPaletteValues());
+        m_paletteMap.set(std::make_pair(fontFamily, name), fontPaletteValuesRule.customPalette());
 
     ++m_version;
 }
@@ -299,7 +300,7 @@ void CSSFontSelector::dispatchInvalidationCallbacks()
 
 void CSSFontSelector::opportunisticallyStartFontDataURLLoading(const FontCascadeDescription& description, const AtomString& familyName)
 {
-    const auto& segmentedFontFace = m_cssFontFaceSet->fontFace(description.fontSelectionRequest(), familyName);
+    RefPtr segmentedFontFace = m_cssFontFaceSet->fontFace(description.fontSelectionRequest(), description.variantCaps(), familyName);
     if (!segmentedFontFace)
         return;
 
@@ -309,7 +310,7 @@ void CSSFontSelector::opportunisticallyStartFontDataURLLoading(const FontCascade
 
     auto trustedType = context->settingsValues().downloadableBinaryFontTrustedTypes;
 
-    for (auto& face : segmentedFontFace->constituentFaces())
+    for (Ref face : segmentedFontFace->constituentFaces())
         face->opportunisticallyStartFontDataURLLoading(trustedType);
 }
 
@@ -361,19 +362,18 @@ std::optional<AtomString> CSSFontSelector::resolveGenericFamily(const FontDescri
     return std::nullopt;
 }
 
-const FontPaletteValues& CSSFontSelector::lookupFontPaletteValues(const AtomString& familyName, const FontDescription& fontDescription) const
+FontPaletteValues CSSFontSelector::lookupFontPaletteValues(const AtomString& familyName, const FontDescription& fontDescription) const
 {
-    static NeverDestroyed<FontPaletteValues> emptyFontPaletteValues;
-
-    auto paletteName = fontDescription.fontPalette().ident();
-    if (!paletteName)
-        return emptyFontPaletteValues.get();
-
-    auto iterator = m_paletteMap.find(std::make_pair(familyName, *paletteName));
-    if (iterator == m_paletteMap.end())
-        return emptyFontPaletteValues.get();
-
-    return iterator->value;
+    Vector<FontPaletteValues::CustomPalette> customPalettes;
+    for (auto& paletteName : fontDescription.fontPalette().referencedIdentifiers()) {
+        auto iterator = m_paletteMap.find(std::make_pair(familyName, paletteName));
+        if (iterator == m_paletteMap.end())
+            continue;
+        auto& customPalette = iterator->value;
+        if (customPalette.basePalette || !customPalette.overrideColors.isEmpty())
+            customPalettes.append(customPalette);
+    }
+    return FontPaletteValues { WTF::move(customPalettes) };
 }
 
 RefPtr<FontFeatureValues> CSSFontSelector::lookupFontFeatureValues(const AtomString& familyName) const
@@ -459,7 +459,7 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
         }
     };
 
-    const auto& fontPaletteValues = lookupFontPaletteValues(familyName, fontDescription);
+    auto fontPaletteValues = lookupFontPaletteValues(familyName, fontDescription);
     auto fontFeatureValues = lookupFontFeatureValues(familyName);
 
     // Handle the generic math font family a bit differently.
@@ -484,7 +484,7 @@ FontRanges CSSFontSelector::fontRangesForFamily(const FontDescription& fontDescr
     if (resolveGenericFamilyFirst)
         resolveAndAssignGenericFamily();
     RefPtr document = dynamicDowncast<Document>(m_context.get());
-    if (RefPtr face = m_cssFontFaceSet->fontFace(fontDescriptionForLookup->fontSelectionRequest(), familyForLookup)) {
+    if (RefPtr face = m_cssFontFaceSet->fontFace(fontDescriptionForLookup->fontSelectionRequest(), fontDescriptionForLookup->variantCaps(), familyForLookup)) {
         if (document && document->settings().webAPIStatisticsEnabled())
             ResourceLoadObserver::singleton().logFontLoad(*document, familyForLookup.string(), true);
         return { face->fontRanges(*fontDescriptionForLookup, fontPaletteValues, fontFeatureValues), isGenericFontFamily };

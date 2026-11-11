@@ -76,7 +76,7 @@ namespace WebCore {
 using LayerToPlatformCALayerMap = HashMap<void*, PlatformCALayer*>;
 
 static Lock layerToPlatformLayerMapLock;
-static LayerToPlatformCALayerMap& LEGACY_NODELETE layerToPlatformLayerMap() WTF_REQUIRES_LOCK(layerToPlatformLayerMapLock)
+NODELETE static LayerToPlatformCALayerMap& layerToPlatformLayerMap() WTF_REQUIRES_LOCK(layerToPlatformLayerMapLock)
 {
     static NeverDestroyed<LayerToPlatformCALayerMap> layerMap;
     return layerMap;
@@ -198,7 +198,7 @@ void PlatformCALayerCocoa::setOwner(PlatformCALayerClient* owner)
         [static_cast<WebAnimationDelegate*>(m_delegate.get()) setOwner:this];        
 }
 
-static NSString *LEGACY_NODELETE toCAFilterType(PlatformCALayer::FilterType type)
+NODELETE static NSString *toCAFilterType(PlatformCALayer::FilterType type)
 {
     switch (type) {
     case PlatformCALayer::FilterType::Linear: return kCAFilterLinear;
@@ -1017,6 +1017,13 @@ void PlatformCALayerCocoa::setShadowPath(const Path& path)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     [m_layer setShadowPath:protect(path.platformPath())];
+    END_BLOCK_OBJC_EXCEPTIONS
+}
+
+void PlatformCALayerCocoa::setHidesFromScreenCapture(bool hides)
+{
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+    [m_layer _web_setHidesFromScreenCapture:hides];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 

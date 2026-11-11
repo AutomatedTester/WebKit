@@ -69,13 +69,14 @@ set(WEBKIT_SWIFT_UPCOMING_FEATURE_FLAGS
     "-enable-upcoming-feature ExistentialAny"
     "-enable-upcoming-feature InternalImportsByDefault"
     "-enable-upcoming-feature MemberImportVisibility"
+    "-enable-upcoming-feature NonisolatedNonsendingByDefault"
 )
 
 set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
     "-enable-experimental-feature DebugDescriptionMacro"
     "-enable-experimental-feature ForeignReferenceTypeInheritance"
     "-enable-experimental-feature ImportCxxMembersLazily"
-    "-enable-experimental-feature SuppressedAssociatedTypes"
+    "-enable-experimental-feature SafeInteropWrappers"
     "-enable-experimental-feature SuppressedAssociatedTypesWithDefaults"
 )
 
@@ -89,24 +90,25 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_FLAGS
 set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
     "-Werror ForeignReferenceType"
     "-Werror RegionIsolation"
+    "-Werror SendableClosureCaptures"
     "-Werror StrictMemorySafety"
 )
 
 set(WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS
     "-Werror ExistentialAny"
+    "-Werror NoUsage"
+    "-Werror NoUseUnstructuredThrowingTask"
+    "-Werror UnnecessaryEffectMarker"
+    "-Werror UnusedImportAccess"
+    "-Werror VariableNeverMutated"
     ${WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS}
 )
-
-if (CMAKE_Swift_LANGUAGE_VERSION VERSION_GREATER_EQUAL 6.4)
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUsage")
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUseUnstructuredThrowingTask")
-endif ()
 
 set(WEBKIT_SWIFT_CLANG_IMPORTER_FLAGS
     "-Xcc -fvisibility=hidden"
 )
 
-# Avoid failing due to a nested process sandbox (e.g. when building from an agent session). 
+# Avoid failing due to a nested process sandbox (e.g. when building from an agent session).
 # Xcode does not do this by default.
 set(WEBKIT_SWIFT_MACRO_FLAGS
     -disable-sandbox
@@ -152,6 +154,12 @@ webkit_add_swift_options(
 set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
     ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
 
+# Ninja tricks compilers into turning off color support. See the matching clang
+# flags in WebKitCompilerFlags.cmake.
+if (CMAKE_GENERATOR STREQUAL "Ninja")
+    webkit_add_swift_options(-color-diagnostics)
+endif ()
+
 if (APPLE)
     webkit_add_swift_options(
         ${WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS}
@@ -179,9 +187,8 @@ if (APPLE)
         )
     endif ()
 
-    # FIXME: Consider building with -wmo in release / performance builds.
     webkit_add_swift_options(
-        -enable-batch-mode
+        "$<$<AND:$<COMPILE_LANGUAGE:Swift>,$<CONFIG:Debug>>:-enable-batch-mode>"
     )
 else ()
     webkit_add_swift_options(
