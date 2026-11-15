@@ -97,6 +97,8 @@ public:
     inline LayoutRect marginBoxRect() const;
     LayoutRect borderBoxRect() const { return { { }, borderBoxSize() }; }
     LayoutRect paddingBoxRect() const;
+    // The box midway between the padding box and the border box.
+    LayoutRect halfBorderBoxRect() const;
     inline LayoutRect contentBoxRect() const;
     inline LayoutRect paddingBoxRectIncludingScrollbar() const;
 
@@ -489,9 +491,6 @@ public:
     ControlPart* ensureControlPartForDecorations();
 
     virtual void paintObject(PaintInfo&, const LayoutPoint&) { ASSERT_NOT_REACHED(); }
-    virtual void paintBoxDecorations(PaintInfo&, const LayoutPoint&);
-    virtual void paintMask(PaintInfo&, const LayoutPoint&);
-    virtual void paintClippingMask(PaintInfo&, const LayoutPoint&);
     void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
 
     virtual void adjustBorderBoxRectForPainting(LayoutRect&) { };
@@ -637,13 +636,8 @@ protected:
     virtual bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const;
     virtual bool computeBackgroundIsKnownToBeObscured(const LayoutPoint& paintOffset);
 
-    void paintMaskImages(const PaintInfo&, const LayoutRect&);
-
     void clipToPaddingBoxShape(GraphicsContext&, const LayoutPoint&, float deviceScaleFactor) const;
     void clipToContentBoxShape(GraphicsContext&, const LayoutPoint&, float deviceScaleFactor) const;
-
-    BleedAvoidance determineBleedAvoidance(GraphicsContext&) const;
-    bool backgroundHasOpaqueTopLayer() const;
 
     void computeOutOfFlowPositionedLogicalWidth(LogicalExtentComputedValues&) const;
 

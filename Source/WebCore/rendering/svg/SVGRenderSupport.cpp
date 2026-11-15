@@ -355,7 +355,7 @@ void SVGRenderSupport::layoutChildren(RenderElement& start, bool selfNeedsLayout
     }
 
     if (!layoutSizeChanged) {
-        ASSERT(elementsThatDidNotReceiveLayout.isEmptyIgnoringNullReferences());
+        ASSERT(elementsThatDidNotReceiveLayout.computeIsEmpty());
         return;
     }
 
@@ -444,6 +444,7 @@ inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType 
     bool isBoxRelativeToRendererGeometry = true;
     switch (boxType) {
     case CSSBoxType::BorderBox:
+    case CSSBoxType::HalfBorderBox:
     case CSSBoxType::MarginBox:
     case CSSBoxType::StrokeBox:
     case CSSBoxType::BoxMissing:

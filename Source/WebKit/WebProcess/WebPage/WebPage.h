@@ -1580,7 +1580,7 @@ public:
     void drawToSnapshot(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
 
     // Submessage for a frame delivered during web page snapshot draw.
-    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode, const WebCore::FloatSize& scale);
 
     void addResourceRequest(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&, const WebCore::DocumentLoader*, WebCore::LocalFrame*);
     void removeResourceRequest(WebCore::ResourceLoaderIdentifier, WebCore::LocalFrame*);
@@ -2334,8 +2334,9 @@ public:
     // root of the snapshot creates it; a frame asked to paint into one records into what exists.
     // False if another recording is already painting into this page.
     enum class RemoteSnapshotRole : bool { Frame, Root };
-    // A root is drawn at rootSize, which is unused for a frame.
-    bool recordRemoteSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, RemoteSnapshotRole, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::FloatSize& rootSize, Ref<MainRunLoopSuccessCallbackAggregator>&&, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint);
+    // A root is drawn at rootSize, which is unused for a frame. The recording is drawn at scale: paint sees
+    // it in the CTM, so that it rasterizes at the resolution of the output, but it is not recorded.
+    bool recordRemoteSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, RemoteSnapshotRole, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::FloatSize& scale, const WebCore::FloatSize& rootSize, Ref<MainRunLoopSuccessCallbackAggregator>&&, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint);
     // For the reply to a request to record the root of a snapshot the UI process minted. The UI process
     // may be blocked waiting for the snapshot in the GPU process, where it cannot hear of the root
     // failing, so the GPU process is told directly.
@@ -2593,8 +2594,8 @@ private:
     void clearContentWorld(ContentWorldIdentifier, CompletionHandler<void()>&&);
     void getAccessibilityTreeData(CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void updateRenderingWithForcedRepaint(CompletionHandler<void()>&&);
-    void takeSnapshot(WebCore::IntRect snapshotRect, WebCore::IntSize bitmapSize, SnapshotOptions, CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&, WebCore::Headroom)>&&);
-    void takeRemoteSnapshot(WebCore::IntRect snapshotRect, WebCore::IntSize bitmapSize, SnapshotOptions, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
+    void takeSnapshot(std::optional<WebCore::FrameIdentifier> rootFrameID, WebCore::IntRect snapshotRect, WebCore::IntSize bitmapSize, SnapshotOptions, CompletionHandler<void(std::optional<ImageBufferBackendHandle>&&, WebCore::Headroom)>&&);
+    void takeRemoteSnapshot(std::optional<WebCore::FrameIdentifier> rootFrameID, WebCore::IntRect snapshotRect, WebCore::IntSize bitmapSize, SnapshotOptions, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
     void postSnapshotTakedown(OptionSet<WebCore::PaintBehavior> originalPaintBehavior, OptionSet<WebCore::PaintBehavior>, std::optional<WebCore::LayoutRect> originalLayoutViewportOverrideRect, WebCore::LocalFrameView&);
     void preSnapshotSetup(WebCore::IntRect& snapshotRect, WebCore::IntSize& bitmapSize, SnapshotOptions&, OptionSet<WebCore::PaintBehavior>&, WebCore::LocalFrameView&);
 
@@ -3486,9 +3487,13 @@ private:
         RemoteSnapshotIdentifier identifier;
         UniqueRef<RemoteSnapshotRecorderProxy> recorder;
         Ref<MainRunLoopSuccessCallbackAggregator> callback;
-        // Frames hosted elsewhere that were painted into the recording, and the parts painted, relative to each
-        // frame's visible content.
-        HashMap<WebCore::FrameIdentifier, WebCore::IntRect> paintedFrameRects;
+        struct PaintedFrame {
+            WebCore::IntRect rectRelativeToVisibleContent;
+            WebCore::FloatSize scale;
+        };
+        // Frames hosted elsewhere that were painted into the recording, the parts painted, relative to each
+        // frame's visible content, and the largest scale they were painted at.
+        HashMap<WebCore::FrameIdentifier, PaintedFrame> paintedFrames;
     };
     std::optional<RemoteSnapshotState> m_remoteSnapshotState;
 #endif

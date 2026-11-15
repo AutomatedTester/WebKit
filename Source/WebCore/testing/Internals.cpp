@@ -223,7 +223,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderListBox.h"
 #include "RenderObjectInlines.h"
-#include "RenderSearchField.h"
 #include "RenderTheme.h"
 #include "RenderTreeAsText.h"
 #include "RenderView.h"
@@ -245,6 +244,7 @@
 #include "ScrollbarsControllerMock.h"
 #include "ScrollingCoordinator.h"
 #include "ScrollingMomentumCalculator.h"
+#include "SearchInputType.h"
 #include "SecurityOrigin.h"
 #include "SelectorFilter.h"
 #include "SerializedScriptValue.h"
@@ -265,6 +265,7 @@
 #include "StorageNamespaceProvider.h"
 #include "StreamTransferUtilities.h"
 #include "StringCallback.h"
+#include "StyleAdjuster.h"
 #include "StyleBackgroundLayers.h"
 #include "StyleDocumentScope.h"
 #include "StyleExtractor.h"
@@ -274,6 +275,7 @@
 #include "StyleRule.h"
 #include "StyleSheetContents.h"
 #include "SystemSoundManager.h"
+#include "TextControlInnerElements.h"
 #include "TextIterator.h"
 #include "TextPainter.h"
 #include "TextPlaceholderElement.h"
@@ -1770,6 +1772,20 @@ String Internals::usedBackgroundColor(Element& element)
     return serializationForCSS(protect(element.computedStyle())->usedBackgroundColorResolvingCurrentColor());
 }
 
+ExceptionOr<void> Internals::setOverrideBackgroundColor(Element& element, const String& colorValue)
+{
+    std::optional<Color> color;
+    if (!colorValue.isNull()) {
+        Ref document = element.document();
+        color = CSSPropertyParserHelpers::parseColorRaw(colorValue, document->cssParserContext(), document.get());
+        if (!color->isValid())
+            return Exception { ExceptionCode::SyntaxError };
+    }
+
+    Style::Adjuster::setOverrideBackgroundColorForTesting(element, WTF::move(color));
+    return { };
+}
+
 Node& Internals::ensureUserAgentShadowRoot(Element& host)
 {
     return host.ensureUserAgentShadowRoot();
@@ -2922,16 +2938,12 @@ auto Internals::lastAutofillButtonType(const HTMLInputElement& element) -> AutoF
 
 Vector<String> Internals::recentSearches(const HTMLInputElement& element)
 {
-    if (!element.isSearchField())
-        return { };
-
-    protect(element.document())->updateLayout(LayoutOptions::IgnorePendingStylesheets);
-    CheckedPtr searchField = dynamicDowncast<RenderSearchField>(element.renderer());
-    if (!searchField)
+    RefPtr searchInputType = dynamicDowncast<SearchInputType>(*element.inputType());
+    if (!searchInputType)
         return { };
 
     Vector<String> result;
-    for (auto search : searchField->recentSearches())
+    for (auto search : searchInputType->recentSearches())
         result.append(search.string);
 
     return result;

@@ -448,6 +448,20 @@ enum class WebCore::ViewportFit : uint8_t {
     Cover,
 };
 
+enum class WebCore::ViewportFitEdge : uint8_t {
+    Contain,
+    ImplicitCover,
+    ExplicitCover,
+};
+
+header: <WebCore/ViewportArguments.h>
+[CustomHeader] struct WebCore::ViewportFitEdges {
+    WebCore::ViewportFitEdge top;
+    WebCore::ViewportFitEdge left;
+    WebCore::ViewportFitEdge bottom;
+    WebCore::ViewportFitEdge right;
+};
+
 enum class WebCore::InteractiveWidgetValue : uint8_t {
     ResizesVisual,
     ResizesContent,
@@ -1145,6 +1159,10 @@ struct WebCore::ViewportArguments {
     WebCore::ViewportFit viewportFit;
     bool widthWasExplicit;
     WebCore::InteractiveWidgetValue interactiveWidgetValue;
+    std::optional<WebCore::ViewportFit> viewportFitTop;
+    std::optional<WebCore::ViewportFit> viewportFitLeft;
+    std::optional<WebCore::ViewportFit> viewportFitBottom;
+    std::optional<WebCore::ViewportFit> viewportFitRight;
 };
 #endif // ENABLE(META_VIEWPORT)
 
@@ -1917,6 +1935,12 @@ struct WebCore::DictationAlternative {
 };
 
 header: <WebCore/ScrollTypes.h>
+[CustomHeader] enum class WebCore::ScrollRelativity : uint8_t {
+    Delta,
+    Absolute
+};
+
+header: <WebCore/ScrollTypes.h>
 [CustomHeader] enum class WebCore::ScrollElasticity : uint8_t {
     Automatic,
     None,
@@ -1991,6 +2015,7 @@ header: <WebCore/ScrollingCoordinatorTypes.h>
     WebCore::ScrollUpdateType updateType;
     WebCore::ScrollingLayerPositionAction updateLayerPositionAction;
     std::optional<WebCore::LayoutViewportOriginOrOverrideRect> layoutViewportOriginOrOverrideRect;
+    std::optional<WebCore::ScrollRelativity> scrollRelativity;
 };
 
 header: <WebCore/ScrollingCoordinatorTypes.h>
@@ -4795,6 +4820,7 @@ enum class WebCore::AcceleratedEffectCoordBox : uint8_t {
     MarginBox,
     PaddingBox,
     BorderBox,
+    HalfBorderBox,
     FillBox,
     StrokeBox,
     ViewBox
@@ -6974,6 +7000,8 @@ struct WebCore::OwnerPermissionsPolicyData {
     Microphone,
     SpeakerSelection,
     DisplayCapture,
+    DeferredFetch,
+    DeferredFetchMinimal,
     Gamepad,
     Geolocation,
     Payment,
@@ -7357,13 +7385,6 @@ struct WebCore::DocumentSecurityPolicy {
     WebCore::CrossOriginOpenerPolicy crossOriginOpenerPolicy;
     WebCore::IsSecureContext isSecureContext;
     std::optional<WebCore::AgentClusterIdentifier> agentClusterIdentifier;
-};
-
-header: <WebCore/ProcessSwapDisposition.h>
-enum class WebCore::ProcessSwapDisposition : uint8_t {
-    None,
-    COOP,
-    Other
 };
 
 struct WebCore::MessageForTesting {

@@ -265,7 +265,6 @@ enum class PermissionState : uint8_t;
 enum class PlatformEventModifier : uint8_t;
 enum class PlatformMediaSessionRemoteControlCommandType : uint8_t;
 enum class PolicyAction : uint8_t;
-enum class ProcessSwapDisposition : uint8_t;
 enum class ReasonForDismissingAlternativeText : uint8_t;
 enum class ReferrerPolicy : uint8_t;
 enum class ReloadOption : uint8_t;
@@ -748,6 +747,7 @@ enum class GestureType : uint8_t;
 enum class HitTestAtPointError : uint8_t;
 enum class InputType : uint8_t;
 enum class LoadedWebArchive : bool;
+enum class LockdownMode : bool;
 enum class TextRecognitionUpdateResult : uint8_t;
 enum class MediaPlaybackState : uint8_t;
 enum class NavigatingToAppBoundDomain : bool;
@@ -948,6 +948,7 @@ public:
     void sendMessageToInspectorFrontend(const String& targetId, const String& message);
     void frameDidPauseForDebugger(IPC::Connection&, WebCore::FrameIdentifier);
     void frameDidContinueForDebugger(IPC::Connection&, WebCore::FrameIdentifier);
+    void debuggerDidPause(IPC::Connection&);
 
     void getAllFrames(CompletionHandler<void(std::optional<FrameTreeNodeData>&&)>&&);
     void getAllFrameTreesForSiteIsolationTesting(CompletionHandler<void(Vector<FrameTreeNodeData>&&)>&&);
@@ -1588,7 +1589,8 @@ public:
 
     NODELETE bool isProcessingMouseEvents() const;
     void processNextQueuedMouseEvent();
-    void sendMouseEvent(WebCore::FrameIdentifier, Ref<NativeWebMouseEvent>&&, std::optional<Vector<SandboxExtensionHandle>>&&);
+    enum class UpdateProcessAwaitingMouseEventReply : bool { No, Yes };
+    void sendMouseEvent(WebCore::FrameIdentifier, Ref<NativeWebMouseEvent>&&, std::optional<Vector<SandboxExtensionHandle>>&&, UpdateProcessAwaitingMouseEventReply = UpdateProcessAwaitingMouseEventReply::Yes);
     void handleMouseEvent(Ref<NativeWebMouseEvent>&&);
     void recordUIProcessUserActivation(const WebEvent&);
     void dispatchMouseDidMoveOverElementForModifierFlagsChange(Ref<NativeWebMouseEvent>&&);
@@ -1968,6 +1970,7 @@ public:
     void resetStateAfterProcessTermination(ProcessTerminationReason);
     void provisionalProcessDidTerminate();
     void provisionalLoadWasCancelledBeforeStarting(WebCore::NavigationIdentifier);
+    void markProcessesIneligibleForWebProcessCache();
     void mainFrameProcessDidTerminate(WebProcessProxy&);
     void nonMainFrameProcessDidTerminate(WebProcessProxy&);
     void dispatchProcessDidTerminate(ProcessID, ProcessTerminationScope, ProcessTerminationReason);
@@ -2289,9 +2292,12 @@ public:
     void serializeAndWrapCryptoKey(IPC::Connection&, WebCore::CryptoKeyData&&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
     void unwrapCryptoKey(WebCore::WrappedCryptoKey&&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
 
+    // These paint the document of the main frame, or of the frame given as the root, with its subframes. The rect is in the contents coordinates of that frame's view.
     void takeSnapshotLegacy(const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
+    void takeSnapshotLegacy(std::optional<WebCore::FrameIdentifier> rootFrameID, const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
 #if PLATFORM(COCOA)
     void takeSnapshot(const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, CompletionHandler<void(CGImageRef)>&&);
+    void takeSnapshot(std::optional<WebCore::FrameIdentifier> rootFrameID, const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, CompletionHandler<void(CGImageRef)>&&);
 #endif
 
     void navigationGestureDidBegin();
@@ -3683,6 +3689,7 @@ private:
     void discardQueuedMouseEvents();
 
     void mouseEventHandlingCompleted(bool handled, std::optional<WebCore::RemoteUserInputEventData>);
+    void handleMouseEventReplyForParkedEvent(Ref<NativeWebMouseEvent>&&, WebCore::FrameIdentifier, std::optional<WebCore::RemoteUserInputEventData>&&);
     void remoteFrameMouseEventTimedOut();
     void mouseMoveWasHandledInFrame(WebCore::FrameIdentifier);
     void keyEventHandlingCompleted(bool handled);
@@ -3803,6 +3810,10 @@ private:
 #endif
 
     void clearStateForTerminatedProcess(WebProcessProxy&);
+    void coalesceSubframeProcessTerminationEvent(ProcessTerminationReason);
+    void notifyClientOfCoalescedSubframeTerminationEvent(unsigned terminationEventIdentifier);
+    void notifyClientOfMainFrameProcessTerminationEvent(ProcessTerminationReason);
+    void notifyClientOfProcessTermination(ProcessTerminationReason, ProcessTerminationScope);
     void tryReloadAfterProcessTermination();
     void maybeReloadAfterCrashWhenVisible();
     bool hasMainFrameNavigationInFlight() const;
@@ -3869,9 +3880,9 @@ private:
 
     void reportPageLoadResult(const WebCore::ResourceError&);
 
-    void continueNavigationInNewProcess(API::Navigation&, WebFrameProxy&, RefPtr<SuspendedPageProxy>&&, BrowsingContextGroup&, Ref<WebProcessProxy>&&, ProcessSwapRequestedByClient, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive, WebCore::NavigationUpgradeToHTTPSBehavior, WebCore::ProcessSwapDisposition, WebsiteDataStore* replacedDataStoreForWebArchiveLoad, MonotonicTime originalNavigationStartTime, const std::optional<WebCore::Site>& backForwardInheritedSite);
+    void continueNavigationInNewProcess(API::Navigation&, WebFrameProxy&, RefPtr<SuspendedPageProxy>&&, BrowsingContextGroup&, Ref<WebProcessProxy>&&, ProcessSwapRequestedByClient, WebCore::ShouldTreatAsContinuingLoad, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume, LoadedWebArchive, WebCore::NavigationUpgradeToHTTPSBehavior, WebsiteDataStore* replacedDataStoreForWebArchiveLoad, MonotonicTime originalNavigationStartTime, const std::optional<WebCore::Site>& backForwardInheritedSite);
     RefPtr<WebProcessProxy> processLoadingNavigation(const API::Navigation&, WebFrameProxy&, WebCore::ProcessIdentifier loadingWebProcess);
-    void performProcessSwapForNavigationResponse(API::Navigation&, Ref<BrowsingContextGroup>&&, Ref<WebProcessProxy>&&, WebCore::ProcessSwapDisposition, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
+    void performProcessSwapForNavigationResponse(API::Navigation&, Ref<BrowsingContextGroup>&&, Ref<WebProcessProxy>&&, WebCore::ProcessIdentifier loadingWebProcess, NetworkResourceLoadIdentifier, MonotonicTime originalNavigationStartTime, CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
     void removeSuspendedPagesBeforeNavigation(WebProcessProxy&);
 
     void setNeedsFontAttributes(bool);
@@ -3983,6 +3994,7 @@ private:
 
     void didCacheBackForwardItem(WebCore::BackForwardItemIdentifier, CompletionHandler<void(bool)>&&);
     void didEvictBackForwardItem(WebCore::BackForwardItemIdentifier);
+    void didEvictBackForwardFrameItem(WebCore::BackForwardFrameItemIdentifier);
     void didTakeBackForwardItemForRestoration(WebCore::BackForwardItemIdentifier);
     void restoreOrCancelPendingBackForwardIframes(const PendingBackForwardIframeRestore&, WebCore::RestoredFromBackForwardCache);
 
@@ -4064,7 +4076,7 @@ private:
     void beginEnhancedSecurityLinkCheck(const URL&, API::Navigation&, WebFramePolicyListenerProxy&);
 
     enum class IsEnhancedSecurityExplicitlySet : bool { No, Yes };
-    Ref<BrowsingContextGroup> browsingContextGroupForNavigation(WebFrameProxy&, API::Navigation&, WebsiteDataStore&, EnhancedSecurity, IsEnhancedSecurityExplicitlySet, ProcessSwapRequestedByClient);
+    Ref<BrowsingContextGroup> browsingContextGroupForNavigation(WebFrameProxy&, API::Navigation&, WebsiteDataStore&, LockdownMode, EnhancedSecurity, IsEnhancedSecurityExplicitlySet, ProcessSwapRequestedByClient);
     Ref<BrowsingContextGroup> browsingContextGroupForCommittingNavigation(const API::Navigation*) const;
 
     WebProcessProxy& processForTheFrameItem(WebBackForwardListFrameItem&) const;

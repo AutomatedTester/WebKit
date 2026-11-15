@@ -347,8 +347,11 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/entriesapi/FileSystemEntryCallback.idl \
     $(WebCore)/Modules/entriesapi/FileSystemFileEntry.idl \
     $(WebCore)/Modules/entriesapi/HTMLInputElement+EntriesAPI.idl \
+    $(WebCore)/Modules/fetch/DOMWindow+FetchLater.idl \
+    $(WebCore)/Modules/fetch/DeferredRequestInit.idl \
     $(WebCore)/Modules/fetch/FetchBody.idl \
     $(WebCore)/Modules/fetch/FetchHeaders.idl \
+    $(WebCore)/Modules/fetch/FetchLaterResult.idl \
     $(WebCore)/Modules/fetch/FetchReferrerPolicy.idl \
     $(WebCore)/Modules/fetch/FetchRequest.idl \
     $(WebCore)/Modules/fetch/FetchRequestCache.idl \
@@ -1083,6 +1086,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/css/ElementCSSInlineStyle.idl \
     $(WebCore)/css/ElementCSSInlineStyle+Typedom.idl \
     $(WebCore)/css/FontFace.idl \
+    $(WebCore)/css/FontFaceLoadStatus.idl \
     $(WebCore)/css/FontFaceSet.idl \
     $(WebCore)/css/FontFaceSource.idl \
     $(WebCore)/css/LinkStyle.idl \

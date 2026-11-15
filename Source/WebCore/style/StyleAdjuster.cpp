@@ -89,6 +89,7 @@
 #include "VisibilityAdjustment.h"
 #include "WebAnimationTypes.h"
 #include <wtf/RobinHoodHashSet.h>
+#include <wtf/WeakHashMap.h>
 
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
@@ -181,7 +182,7 @@ static bool shouldInheritTextDecorationsInEffect(const Style::ComputedStyle& sty
     return true;
 }
 
-NODELETE static bool isScrollableOverflow(Overflow overflow)
+NODELETE static bool isUserScrollableOverflow(Overflow overflow)
 {
     return overflow == Overflow::Scroll || overflow == Overflow::Auto;
 }
@@ -193,7 +194,7 @@ static TouchAction computeUsedTouchAction(const Style::ComputedStyle& style, Tou
     // the hit tested element and its nearest ancestor with the default touch behavior (including both the
     // hit tested element and the element with the default touch behavior)."
 
-    bool hasDefaultTouchBehavior = isScrollableOverflow(style.overflowX()) || isScrollableOverflow(style.overflowY());
+    bool hasDefaultTouchBehavior = isUserScrollableOverflow(style.overflowX()) || isUserScrollableOverflow(style.overflowY());
     if (hasDefaultTouchBehavior)
         usedTouchAction = ComputedStyle::initialTouchAction();
 
@@ -445,6 +446,22 @@ void Adjuster::adjustFirstLineStyle(Style::ComputedStyle& style)
     style.setDisplayMaintainingOriginalDisplay(DisplayType::InlineFlow);
 }
 
+static WeakHashMap<Element, WebCore::Color, WeakPtrImplWithEventTargetData>& overrideBackgroundColorsForTesting()
+{
+    static MainThreadNeverDestroyed<WeakHashMap<Element, WebCore::Color, WeakPtrImplWithEventTargetData>> colors;
+    return colors;
+}
+
+void Adjuster::setOverrideBackgroundColorForTesting(Element& element, std::optional<WebCore::Color>&& color)
+{
+    if (color)
+        overrideBackgroundColorsForTesting().set(element, WTF::move(*color));
+    else
+        overrideBackgroundColorsForTesting().remove(element);
+
+    element.invalidateStyle();
+}
+
 void Adjuster::adjust(Style::ComputedStyle& style) const
 {
     if (style.display() == DisplayType::Contents)
@@ -678,18 +695,18 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
         // FIXME: Once we implement pagination controls, overflow-x should default to hidden
         // if overflow-y is set to -webkit-paged-x or -webkit-page-y. For now, we'll let it
         // default to auto so we can at least scroll through the pages.
-        // Values of 'clip' and 'visible' can only be used with 'clip' and 'visible'.
-        // If they aren't, 'clip' and 'visible' is reset.
+        // 'visible' computes to 'auto' if the other axis is scrollable. 'clip' is preserved
+        // when single-axis scroll containers are enabled, making a scroll container that only
+        // scrolls in the other axis; otherwise it computes to 'hidden'.
+        // https://drafts.csswg.org/css-overflow-3/#overflow-control
         if (style.overflowX() == Overflow::Visible)
             style.setOverflowX(Overflow::Auto);
-        else if (style.overflowX() == Overflow::Clip)
+        else if (style.overflowX() == Overflow::Clip && !m_document->settings().cssSingleAxisScrollContainersEnabled())
             style.setOverflowX(Overflow::Hidden);
     } else if (!isOverflowClipOrVisible(style.overflowX())) {
-        // Values of 'clip' and 'visible' can only be used with 'clip' and 'visible'.
-        // If they aren't, 'clip' and 'visible' is reset.
         if (style.overflowY() == Overflow::Visible)
             style.setOverflowY(Overflow::Auto);
-        else if (style.overflowY() == Overflow::Clip)
+        else if (style.overflowY() == Overflow::Clip && !m_document->settings().cssSingleAxisScrollContainersEnabled())
             style.setOverflowY(Overflow::Hidden);
     }
 
@@ -701,7 +718,7 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
 
 #if ENABLE(WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY)
     // Touch overflow scrolling creates a stacking context.
-    if (style.usedZIndex().isAuto() && style.overflowScrolling() == WebkitOverflowScrolling::Touch && (isScrollableOverflow(style.overflowX()) || isScrollableOverflow(style.overflowY())))
+    if (style.usedZIndex().isAuto() && style.overflowScrolling() == WebkitOverflowScrolling::Touch && (isUserScrollableOverflow(style.overflowX()) || isUserScrollableOverflow(style.overflowY())))
         style.setUsedZIndex(0);
 #endif
 
@@ -829,6 +846,11 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
 #endif
 
     adjustForSiteSpecificQuirks(style);
+
+    if (m_element) {
+        if (auto overrideBackgroundColor = overrideBackgroundColorsForTesting().getOptional(*m_element)) [[unlikely]]
+            style.setOverrideBackgroundColor({ WTF::move(*overrideBackgroundColor) });
+    }
 
     adjustUsedUserSelect(style);
     // Don't allow selecting individual glyphs on text recognized inside an image:
@@ -1197,7 +1219,7 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
             static MainThreadNeverDestroyed<const AtomString> videoElementID("vjs_video_3_html5_api"_s);
 
             if (m_element->hasClassName(instreamNativeVideoDivClass)) {
-                RefPtr video = dynamicDowncast<HTMLVideoElement>(m_element->treeScope().getElementById(videoElementID));
+                RefPtr video = dynamicDowncast<HTMLVideoElement>(protect(m_element->treeScope())->getElementById(videoElementID));
                 if (video && video->isFullscreen())
                     style.setDisplayMaintainingOriginalDisplay(DisplayType::BlockFlow);
             }
@@ -1236,7 +1258,7 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
 
 #if PLATFORM(IOS_FAMILY)
     if (documentQuirks.needsClaudeSidebarViewportUnitQuirk(protect(*m_element), style))
-        style.setHeight(PreferredSize::Fixed { m_document->renderView()->sizeForCSSDynamicViewportUnits().height() });
+        style.setHeight(PreferredSize::Fixed { protect(m_document->renderView())->sizeForCSSDynamicViewportUnits().height() });
 
     if (auto openRiceAdPopupHeight = documentQuirks.needsOpenRiceAdPopupHeightQuirk(protect(*m_element), style)) {
         style.setUsesViewportUnits();
@@ -1248,8 +1270,9 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
     if (documentQuirks.needsAmazonDesignMenuViewportUnitQuirk(style, m_parentStyle)) {
         if (auto fixedHeight = style.height().tryFixed()) {
             auto resolvedHeight = fixedHeight->resolveZoom(ZoomFactor::none());
-            auto defaultViewportHeight = m_document->renderView()->sizeForCSSDefaultViewportUnits().height();
-            auto dynamicViewportHeight = m_document->renderView()->sizeForCSSDynamicViewportUnits().height();
+            CheckedPtr renderView = m_document->renderView();
+            auto defaultViewportHeight = renderView->sizeForCSSDefaultViewportUnits().height();
+            auto dynamicViewportHeight = renderView->sizeForCSSDynamicViewportUnits().height();
             style.setHeight(PreferredSize::Fixed { resolvedHeight - (defaultViewportHeight - dynamicViewportHeight) });
         }
     }
@@ -1316,8 +1339,8 @@ void Adjuster::adjustColumnStylesForPaginationMode(Style::ComputedStyle& style, 
 void Adjuster::propagateToDocumentElementAndInitialContainingBlock(Update& update, const Document& document)
 {
     RefPtr body = document.body();
-    auto* bodyStyle = body ? update.elementStyle(*body) : nullptr;
-    auto* documentElementStyle = update.elementStyle(*document.documentElement());
+    CheckedPtr bodyStyle = body ? update.elementStyle(*body) : nullptr;
+    CheckedPtr documentElementStyle = update.elementStyle(*document.documentElement());
 
     if (!documentElementStyle)
         return;
@@ -1350,7 +1373,7 @@ void Adjuster::propagateToDocumentElementAndInitialContainingBlock(Update& updat
     // https://drafts.csswg.org/css-writing-modes-3/#icb
     WritingMode viewWritingMode = document.renderView()->writingMode();
     if (writingMode != viewWritingMode.computedWritingMode() || direction != viewWritingMode.computedTextDirection()) {
-        auto newRootStyle = Style::ComputedStyle::clonePtr(document.renderView()->style());
+        auto newRootStyle = Style::ComputedStyle::clonePtr(protect(document.renderView()->style()));
         newRootStyle->setWritingMode(writingMode);
         newRootStyle->setDirection(direction);
         adjustColumnStylesForPaginationMode(*newRootStyle, document.view()->pagination().mode);

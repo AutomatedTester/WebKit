@@ -40,6 +40,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValuePropertyInlines.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -49,6 +50,7 @@
 #include <JavaScriptCore/SourceTaintedness.h>
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/AccessibilityObject.h>
+#include <WebCore/CanvasBase.h>
 #include <WebCore/ContainerNodeInlines.h>
 #include <WebCore/Cookie.h>
 #include <WebCore/CookieJar.h>
@@ -71,14 +73,19 @@
 #include <WebCore/HTMLSelectElement.h>
 #include <WebCore/HitTestSource.h>
 #include <WebCore/JSDOMGlobalObject.h>
+#include <WebCore/JSDOMWrapperCache.h>
 #include <WebCore/JSElement.h>
+#include <WebCore/JSHTMLCollection.h>
 #include <WebCore/JSNode.h>
+#include <WebCore/JSNodeList.h>
+#include <WebCore/JSWindowProxy.h>
 #include <WebCore/LocalDOMWindow.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/RenderElement.h>
 #include <WebCore/ScriptController.h>
 #include <WebCore/ShadowRoot.h>
+#include <WebCore/WindowProxy.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UUID.h>
@@ -303,20 +310,124 @@ String WebAutomationSessionProxy::errorTypeFromJavaScriptExceptionName(const Str
     return Inspector::Protocol::AutomationHelpers::getEnumConstantValue(errorType);
 }
 
-static JSValueRef specialBidiRemoteValueType(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
+// Creating the first wrapper of a DOM class in a realm caches the class's structure there, so an object
+// whose class has a cached structure in its own realm is a platform object.
+// FIXME: DOM iterators also have cached structures but aren't platform objects, so they're serialized
+// without their properties.
+static bool isPlatformObject(JSC::JSObject& object)
+{
+    auto* globalObject = dynamicDowncast<WebCore::JSDOMGlobalObject>(object.realmMayBeNull());
+    return globalObject && WebCore::getCachedDOMStructure(*globalObject, object.classInfo());
+}
+
+// Returns the type that https://w3c.github.io/webdriver-bidi/#serialize-as-a-remote-value gives an object, or null for an
+// ordinary object, which is serialized as a mapping. The checks look at internal slots and wrapper classes, so the result
+// doesn't depend on the object's realm or on anything page script can override.
+static ASCIILiteral bidiRemoteValueTypeForObject(JSC::JSObject& object)
+{
+    // The spec checks IsArray() first, which looks through a proxy to its target. This reports
+    // a proxy of an array as a proxy instead.
+    if (object.type() == JSC::ProxyObjectType)
+        return "proxy"_s;
+    // This includes Array.prototype and WebIDL observable arrays.
+    if (object.inherits<JSC::JSArray>())
+        return "array"_s;
+
+    switch (object.type()) {
+    case JSC::RegExpObjectType:
+        // Unlike the spec's IsRegExp(), this ignores Symbol.match, which page script controls.
+        return "regexp"_s;
+    case JSC::JSDateType:
+        return "date"_s;
+    case JSC::JSMapType:
+        return "map"_s;
+    case JSC::JSSetType:
+        return "set"_s;
+    case JSC::JSWeakMapType:
+        return "weakmap"_s;
+    case JSC::JSWeakSetType:
+        return "weakset"_s;
+    case JSC::JSGeneratorType:
+    case JSC::JSAsyncGeneratorType:
+        return "generator"_s;
+    case JSC::ErrorInstanceType:
+        // This includes DOMException.
+        return "error"_s;
+    case JSC::JSPromiseType:
+        return "promise"_s;
+    case JSC::ArrayBufferType:
+        return "arraybuffer"_s;
+    default:
+        break;
+    }
+
+    if (JSC::isTypedArrayType(object.type()))
+        return "typedarray"_s;
+
+    SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = object.vm();
+    if (WebCore::JSNodeList::toWrapped(vm, &object))
+        return "nodelist"_s;
+    if (WebCore::JSHTMLCollection::toWrapped(vm, &object))
+        return "htmlcollection"_s;
+    if (object.inherits<WebCore::JSNode>())
+        return "node"_s;
+    if (object.inherits<WebCore::JSWindowProxy>())
+        return "window"_s;
+    if (isPlatformObject(object))
+        return "object"_s;
+    if (object.isCallable())
+        return "function"_s;
+
+    return { };
+}
+
+static JSValueRef bidiRemoteValueType(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
 {
     if (argumentCount != 1 || !JSValueIsObject(context, arguments[0]))
         return JSValueMakeNull(context);
 
-    switch (toJS(arguments[0]).asCell()->type()) {
-    case JSC::ProxyObjectType:
-        return toJSValue(context, "proxy"_s);
-    case JSC::JSGeneratorType:
-    case JSC::JSAsyncGeneratorType:
-        return toJSValue(context, "generator"_s);
-    default:
+    auto type = bidiRemoteValueTypeForObject(*JSC::asObject(toJS(toJS(context), arguments[0])));
+    if (type.isNull())
         return JSValueMakeNull(context);
+    return toJSValue(context, type);
+}
+
+static JSValueRef frameIdentifierForWindowProxy(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
+{
+    if (argumentCount != 1 || !JSValueIsObject(context, arguments[0]))
+        return JSValueMakeNull(context);
+
+    auto* windowProxyWrapper = dynamicDowncast<WebCore::JSWindowProxy>(JSC::asObject(toJS(toJS(context), arguments[0])));
+    RefPtr windowProxy = windowProxyWrapper ? windowProxyWrapper->windowProxy() : nullptr;
+    RefPtr frame = windowProxy ? windowProxy->frame() : nullptr;
+    if (!frame)
+        return JSValueMakeNull(context);
+
+    // A string, because a frame identifier doesn't always fit in a double.
+    return toJSValue(context, String::number(frame->frameID().toUInt64()));
+}
+
+static JSValueRef shadowRootMode(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
+{
+    if (argumentCount != 1 || !JSValueIsObject(context, arguments[0]))
+        return JSValueMakeNull(context);
+
+    auto* nodeWrapper = dynamicDowncast<WebCore::JSNode>(JSC::asObject(toJS(toJS(context), arguments[0])));
+    RefPtr shadowRoot = nodeWrapper ? dynamicDowncast<WebCore::ShadowRoot>(nodeWrapper->wrapped()) : nullptr;
+    if (!shadowRoot)
+        return JSValueMakeNull(context);
+
+    switch (shadowRoot->mode()) {
+    case WebCore::ShadowRootMode::Open:
+        return toJSValue(context, "open"_s);
+    case WebCore::ShadowRootMode::Closed:
+    case WebCore::ShadowRootMode::UserAgent:
+        // Page script can't reach a user agent shadow root, so it is at least as private as a closed one.
+        return toJSValue(context, "closed"_s);
     }
+
+    ASSERT_NOT_REACHED();
+    return JSValueMakeNull(context);
 }
 
 static JSValueRef shadowRootForElement(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception)
@@ -333,15 +444,14 @@ static JSValueRef shadowRootForElement(JSContextRef context, JSObjectRef functio
     if (!shadowRoot || shadowRoot->mode() == WebCore::ShadowRootMode::UserAgent)
         return JSValueMakeNull(context);
 
+    // A new wrapper for the shadow root belongs in the element's realm, which may not be the caller's.
     auto* globalObject = toJS(context);
-    auto* domGlobalObject = dynamicDowncast<WebCore::JSDOMGlobalObject>(globalObject);
-    if (!domGlobalObject)
-        return JSValueMakeNull(context);
+    auto* elementGlobalObject = elementWrapper->realm();
 
     // C API callbacks run with the JSC lock dropped, and toJS() may need to create the shadow root's wrapper.
     SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
-    return toRef(globalObject, WebCore::toJS(globalObject, domGlobalObject, static_cast<WebCore::Node&>(*shadowRoot)));
+    return toRef(globalObject, WebCore::toJS(globalObject, elementGlobalObject, static_cast<WebCore::Node&>(*shadowRoot)));
 }
 
 static JSValueRef evaluateJavaScriptCallback(JSContextRef context, JSObjectRef function, JSObjectRef thisObject, size_t rawArgumentCount, const JSValueRef rawArguments[], JSValueRef* exception)
@@ -445,8 +555,10 @@ JSObjectRef WebAutomationSessionProxy::scriptObjectForFrame(WebFrame& frame)
     JSObjectRef isKnownReferenceFunction = JSObjectMakeFunctionWithCallback(context, nullptr, isKnownReferenceCallback);
     JSObjectRef addKnownReferenceFunction = JSObjectMakeFunctionWithCallback(context, nullptr, addKnownReferenceCallback);
     JSObjectRef shadowRootForElementFunction = JSObjectMakeFunctionWithCallback(context, nullptr, shadowRootForElement);
-    JSObjectRef specialBidiRemoteValueTypeFunction = JSObjectMakeFunctionWithCallback(context, nullptr, specialBidiRemoteValueType);
-    JSValueRef arguments[] = { sessionIdentifier, currentFrameIdentifier, evaluateFunction, createUUIDFunction, isValidNodeIdentifierFunction, isKnownReferenceFunction, addKnownReferenceFunction, shadowRootForElementFunction, specialBidiRemoteValueTypeFunction };
+    JSObjectRef bidiRemoteValueTypeFunction = JSObjectMakeFunctionWithCallback(context, nullptr, bidiRemoteValueType);
+    JSObjectRef frameIdentifierForWindowProxyFunction = JSObjectMakeFunctionWithCallback(context, nullptr, frameIdentifierForWindowProxy);
+    JSObjectRef shadowRootModeFunction = JSObjectMakeFunctionWithCallback(context, nullptr, shadowRootMode);
+    JSValueRef arguments[] = { sessionIdentifier, currentFrameIdentifier, evaluateFunction, createUUIDFunction, isValidNodeIdentifierFunction, isKnownReferenceFunction, addKnownReferenceFunction, shadowRootForElementFunction, bidiRemoteValueTypeFunction, frameIdentifierForWindowProxyFunction, shadowRootModeFunction };
     JSObjectRef scriptObject = const_cast<JSObjectRef>(JSObjectCallAsFunction(context, scriptObjectFunction, nullptr, std::size(arguments), arguments, &exception));
     ASSERT(JSValueIsObject(context, scriptObject));
 
@@ -1503,6 +1615,120 @@ void WebAutomationSessionProxy::reloadFrame(WebCore::FrameIdentifier frameID, Op
 
     bool isRequestFromClientOrUserInput = true;
     protect(coreFrame->loader())->reload(reloadOptions, isRequestFromClientOrUserInput);
+}
+
+// https://w3c.github.io/webdriver-bidi/#render-document-to-a-canvas
+static WebCore::IntSize paintSizeForBidiScreenshot(const WebCore::FloatRect& rect, float devicePixelRatio, std::optional<double> maxWidth, std::optional<double> maxHeight)
+{
+    double framebufferWidth = rect.width() * devicePixelRatio;
+    double framebufferHeight = rect.height() * devicePixelRatio;
+
+    double scale = 1;
+    if (maxWidth && *maxWidth / framebufferWidth < scale)
+        scale = *maxWidth / framebufferWidth;
+    if (maxHeight && *maxHeight / framebufferHeight < scale)
+        scale = *maxHeight / framebufferHeight;
+
+    if (scale < 1) {
+        // "Round a number" prefers the value closer to +Infinity on a tie, which std::round
+        // matches for the positive values here.
+        return {
+            std::max(1, clampTo<int>(std::round(framebufferWidth * scale))),
+            std::max(1, clampTo<int>(std::round(framebufferHeight * scale)))
+        };
+    }
+
+    // A canvas takes its width and height as unsigned longs, which truncate.
+    return { clampTo<int>(std::floor(framebufferWidth)), clampTo<int>(std::floor(framebufferHeight)) };
+}
+
+// WebPageProxy::takeSnapshot() takes a rect in whole pixels. Rounding each edge, rather than taking the enclosing rect, keeps
+// a rect that is a hair off whole pixels after float math from growing by a pixel. A fractional clip can still come out up to
+// a pixel off at the edges, because the bitmap keeps the size computed from the exact rect. The bitmap isn't empty here, so
+// the rect must not be either.
+static WebCore::IntRect snappedRectForBidiScreenshot(const WebCore::FloatRect& rect)
+{
+    int x = clampTo<int>(std::round(rect.x()));
+    int y = clampTo<int>(std::round(rect.y()));
+    int maxX = std::max(clampTo<int>(std::round(rect.maxX())), x + 1);
+    int maxY = std::max(clampTo<int>(std::round(rect.maxY())), y + 1);
+    return { x, y, maxX - x, maxY - y };
+}
+
+void WebAutomationSessionProxy::rectForBidiScreenshot(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, bool documentOrigin, std::optional<WebCore::FloatRect>&& clip, std::optional<double>&& maxWidth, std::optional<double>&& maxHeight, CompletionHandler<void(std::optional<String>, WebCore::IntRect&&, WebCore::IntSize&&)>&& completionHandler)
+{
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-captureScreenshot
+    auto errorType = [](Inspector::Protocol::Automation::ErrorMessage error) {
+        return Inspector::Protocol::AutomationHelpers::getEnumConstantValue(error);
+    };
+
+    RefPtr page = WebProcess::singleton().webPage(pageID);
+    if (!page)
+        return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::FrameNotFound), { }, { });
+
+    RefPtr frame = frameID ? WebProcess::singleton().webFrame(*frameID) : &page->mainWebFrame();
+    RefPtr coreFrame = frame && frame->page() == page ? frame->coreLocalFrame() : nullptr;
+    RefPtr frameView = coreFrame ? coreFrame->view() : nullptr;
+    RefPtr document = coreFrame ? coreFrame->document() : nullptr;
+    if (!frameView || !document)
+        return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::FrameNotFound), { }, { });
+
+    // FIXME: The spec captures immediately after the next run of the animation frame callbacks, so that what they change
+    // is in the capture. This captures right away, as classic screenshots do.
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-captureScreenshot
+
+    // This lays out the parent documents in this process too, which give a child navigable its viewport size.
+    // A parent in another process sends that size asynchronously.
+    document->updateLayout();
+
+    // The rectangles below are in the frame view's document coordinates, which are zoomed CSS pixels.
+    float pageZoomFactor = coreFrame->pageZoomFactor();
+
+    // https://w3c.github.io/webdriver-bidi/#get-the-origin-rectangle
+    WebCore::FloatRect originRect;
+    if (documentOrigin) {
+        RefPtr documentElement = document->documentElement();
+        if (!documentElement)
+            return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::ScreenshotError), { }, { });
+        // FIXME: a document that overflows to the left or top (for example right-to-left content)
+        // has a negative scroll origin, and that part is outside this rectangle. https://webkit.org/b/330898
+        originRect = { 0, 0, documentElement->scrollWidth() * pageZoomFactor, documentElement->scrollHeight() * pageZoomFactor };
+    } else {
+        // This is the visual viewport that window.visualViewport reports, which excludes scrollbars. Whether it should
+        // include them is https://github.com/w3c/webdriver-bidi/issues/592.
+        originRect = frameView->visualViewportRect();
+    }
+
+    // https://w3c.github.io/webdriver-bidi/#rectangle-intersection
+    auto rect = originRect;
+    if (clip) {
+        // The clip is normalized, in CSS pixels, and relative to the origin rectangle.
+        auto clipRect = *clip;
+        clipRect.scale(pageZoomFactor);
+        clipRect.moveBy(originRect.location());
+        rect.intersect(clipRect);
+    }
+    if (rect.isEmpty())
+        return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::ScreenshotError), { }, { });
+
+    // https://w3c.github.io/webdriver-bidi/#determine-the-device-pixel-ratio
+    // This is window.devicePixelRatio without page zoom, which the rect already has.
+    float devicePixelRatio = page->corePage()->deviceScaleFactor() * coreFrame->frameScaleFactor();
+
+    auto paintSize = paintSizeForBidiScreenshot(rect, devicePixelRatio, maxWidth, maxHeight);
+    if (paintSize.isEmpty())
+        return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::ScreenshotError), { }, { });
+
+    // Refuse bitmaps larger than the platform's largest canvas, so a very long document captured with
+    // the "document" origin fails the command with "unsupported operation" instead of exhausting the
+    // memory of the process that paints it.
+    if (paintSize.unclampedArea() > WebCore::CanvasBase::maxCanvasArea())
+        return completionHandler(errorType(Inspector::Protocol::Automation::ErrorMessage::NotImplemented), { }, { });
+
+    // WebPageProxy::takeSnapshot() takes the rect in the frame view's contents coordinates, which also have the
+    // frame's scale: the document is transformed by it.
+    rect.scale(coreFrame->frameScaleFactor());
+    completionHandler(std::nullopt, snappedRectForBidiScreenshot(rect), WTF::move(paintSize));
 }
 #endif
 

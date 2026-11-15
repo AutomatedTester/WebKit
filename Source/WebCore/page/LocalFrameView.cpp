@@ -568,8 +568,8 @@ void LocalFrameView::didDestroyRenderTree()
 
     ASSERT(!m_embeddedObjectsToUpdate || m_embeddedObjectsToUpdate->isEmpty());
 
-    ASSERT(!m_viewportConstrainedObjects || m_viewportConstrainedObjects->isEmptyIgnoringNullReferences());
-    ASSERT(!m_slowRepaintObjects || m_slowRepaintObjects->isEmptyIgnoringNullReferences());
+    ASSERT(!m_viewportConstrainedObjects || m_viewportConstrainedObjects->computeIsEmpty());
+    ASSERT(!m_slowRepaintObjects || m_slowRepaintObjects->computeIsEmpty());
 }
 
 void LocalFrameView::setContentsSize(const IntSize& size)
@@ -1766,7 +1766,7 @@ void LocalFrameView::removeSlowRepaintObject(RenderElement& renderer)
             layer->setNeedsScrollingTreeUpdate();
     }
 
-    if (!m_slowRepaintObjects->isEmptyIgnoringNullReferences())
+    if (!m_slowRepaintObjects->computeIsEmpty())
         return;
 
     m_slowRepaintObjects = nullptr;
@@ -1780,12 +1780,12 @@ bool LocalFrameView::hasSlowRepaintObject(const RenderElement& renderer) const
 
 bool LocalFrameView::hasSlowRepaintObjects() const
 {
-    return m_slowRepaintObjects && !m_slowRepaintObjects->isEmptyIgnoringNullReferences();
+    return m_slowRepaintObjects && !const_cast<const SingleThreadWeakKeyHashSet<RenderElement>&>(*m_slowRepaintObjects).computeIsEmpty();
 }
 
 bool LocalFrameView::hasViewportConstrainedObjects() const
 {
-    return m_viewportConstrainedObjects && !m_viewportConstrainedObjects->isEmptyIgnoringNullReferences();
+    return m_viewportConstrainedObjects && !const_cast<const SingleThreadWeakHashSet<RenderLayerModelObject>&>(*m_viewportConstrainedObjects).computeIsEmpty();
 }
 
 void LocalFrameView::addViewportConstrainedObject(RenderLayerModelObject& object)
@@ -3039,7 +3039,7 @@ OptionSet<StyleColorOptions> LocalFrameView::styleColorOptions(StyleColorOptions
 
 bool LocalFrameView::scrollContentsFastPath(const IntSize& scrollDelta, const IntRect& rectToScroll, const IntRect& clipRect)
 {
-    if (!m_viewportConstrainedObjects || m_viewportConstrainedObjects->isEmptyIgnoringNullReferences()) {
+    if (!m_viewportConstrainedObjects || m_viewportConstrainedObjects->computeIsEmpty()) {
         m_frame->page()->chrome().scroll(scrollDelta, rectToScroll, clipRect);
         return true;
     }
@@ -3906,8 +3906,8 @@ void LocalFrameView::scrollOffsetChangedViaPlatformWidgetImpl(const ScrollOffset
 // These scroll positions are affected by zooming.
 void LocalFrameView::scrollPositionChanged(const ScrollPosition& oldPosition, const ScrollPosition& newPosition)
 {
-    UNUSED_PARAM(oldPosition);
-    UNUSED_PARAM(newPosition);
+    if (shouldTrackScrolledDirections())
+        updateScrolledDirections(oldPosition, newPosition);
 
     RefPtr page = m_frame->page();
     Seconds throttlingDelay = page ? page->chrome().client().eventThrottlingDelay() : 0_s;
@@ -6775,6 +6775,8 @@ bool LocalFrameView::handleWheelEventForScrolling(const PlatformWheelEvent& whee
         ScrollPosition oldPosition = scrollPosition();
         ScrollPosition newPosition = oldPosition - IntSize(wheelEvent.deltaX(), wheelEvent.deltaY());
         if (oldPosition != newPosition) {
+            // scrollTo() skips setScrollPosition() where the scroll relativity is normally set.
+            setCurrentScrollRelativity(ScrollRelativity::Delta);
             ScrollView::scrollTo(newPosition);
             scrollPositionChanged(oldPosition, scrollPosition());
             didChangeScrollOffset();

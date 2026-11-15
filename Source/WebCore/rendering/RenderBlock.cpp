@@ -27,6 +27,7 @@
 
 #include "AXObjectCache.h"
 #include "BorderShape.h"
+#include "BoxDecorationPainter.h"
 #include "ContainerNodeInlines.h"
 #include "Editor.h"
 #include "Element.h"
@@ -49,6 +50,7 @@
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "LogicalSelectionOffsetCachesInlines.h"
+#include "MaskPainter.h"
 #include "OutlinePainter.h"
 #include "Page.h"
 #include "PaintInfo.h"
@@ -162,7 +164,7 @@ static void removeFromTrackedRendererMaps(RenderBox& descendant)
         auto& descendantSet = descendantsMapIterator->value;
         ASSERT(descendantSet->contains(descendant));
         descendantSet->remove(descendant);
-        if (descendantSet->isEmptyIgnoringNullReferences())
+        if (descendantSet->computeIsEmpty())
             percentHeightDescendantsMap->remove(descendantsMapIterator);
     }
 }
@@ -542,7 +544,7 @@ void RenderBlock::layout()
 
     // The size computed by the interleaved layout was only for evaluating container queries.
     // Start from the earlier size, so the layout handles a size change as usual.
-    if (auto& containers = queryContainersSkippedByInterleavedLayout(); !containers.isEmptyIgnoringNullReferences() && containers.contains(*this))
+    if (auto& containers = queryContainersSkippedByInterleavedLayout(); !containers.computeIsEmpty() && containers.contains(*this))
         setBorderBoxSize(containers.take(*this).borderBoxSizeBeforeInterleavedLayout);
 
     // Table cells call layoutBlock directly, so don't add any logic here. Put code into layoutBlock().
@@ -1189,7 +1191,7 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     // 1. paint background, borders etc
     if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && usedStyle().visibility() == UsedVisibility::Visible) {
         if (hasVisibleBoxDecorations())
-            paintBoxDecorations(paintInfo, paintOffset);
+            BoxDecorationPainter { *this, paintInfo, paintOffset }.paintBoxDecorations();
         paintDebugBoxShadowIfApplicable(paintInfo.context(), { paintOffset, borderBoxSize() });
     }
     
@@ -1198,12 +1200,12 @@ void RenderBlock::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
         paintExcludedChildrenInBorder(paintInfo, paintOffset);
     
     if (paintPhase == PaintPhase::Mask && usedStyle().visibility() == UsedVisibility::Visible) {
-        paintMask(paintInfo, paintOffset);
+        MaskPainter { *this, paintInfo, paintOffset }.paintMask();
         return;
     }
 
     if (paintPhase == PaintPhase::ClippingMask && usedStyle().visibility() == UsedVisibility::Visible) {
-        paintClippingMask(paintInfo, paintOffset);
+        MaskPainter { *this, paintInfo, paintOffset }.paintClippingMask();
         return;
     }
 
@@ -1333,8 +1335,7 @@ bool RenderBlock::establishesIndependentFormattingContextIgnoringDisplayType(con
         return style.display().isBlockType()
             && style.display().doesGenerateBlockContainer()
             && hasNonVisibleOverflow()
-            && style.overflowX() != Overflow::Clip
-            && style.overflowX() != Overflow::Visible;
+            && (isScrollableOverflow(style.overflowX()) || isScrollableOverflow(style.overflowY()));
     };
 
     return style.floating() != Float::None

@@ -195,6 +195,7 @@ enum WebProcessWithMediaStreamingCounterType { };
 using WebProcessWithMediaStreamingCounter = RefCounter<WebProcessWithMediaStreamingCounterType>;
 using WebProcessWithMediaStreamingToken = WebProcessWithMediaStreamingCounter::Token;
 enum class CheckBackForwardList : bool { No, Yes };
+enum class LockdownMode : bool { Disabled, Enabled };
 
 class WebProcessProxy final : public AuxiliaryProcessProxy {
     WTF_MAKE_TZONE_ALLOCATED(WebProcessProxy);
@@ -207,7 +208,7 @@ public:
     enum class IsPrewarmed : bool { No, Yes };
 
     enum class ShouldLaunchProcess : bool { No, Yes };
-    enum class LockdownMode : bool { Disabled, Enabled };
+    using LockdownMode = WebKit::LockdownMode;
     enum class EnableWebAssemblyDebugger : bool { No, Yes };
     enum class CreateSandboxExtensionForNetworkingProcess : bool { No, Yes };
 
@@ -407,10 +408,13 @@ public:
     void didPostMessage(WebPageProxyIdentifier, UserContentControllerIdentifier, FrameInfoData&&, ScriptMessageHandlerIdentifier, JavaScriptEvaluationResult&&, CompletionHandler<void(std::expected<WebKit::JavaScriptEvaluationResult, String>&&)>&&);
     void didPostLegacySynchronousMessage(WebPageProxyIdentifier, UserContentControllerIdentifier, FrameInfoData&&, ScriptMessageHandlerIdentifier, JavaScriptEvaluationResult&&, CompletionHandler<void(std::expected<JavaScriptEvaluationResult, String>&&)>&&);
 
+    void ensureMediaKeysStorageDirectory(WebCore::FrameIdentifier);
+
     void enableSuddenTermination();
     void disableSuddenTermination();
     bool isSuddenTerminationEnabled() { return !m_numberOfTimesSuddenTerminationWasDisabled; }
 
+    bool detectAndHandleTermination();
     void requestTermination(ProcessTerminationReason, std::optional<IPC::MessageName> invalidMessageName = std::nullopt);
 
     RefPtr<API::Object> transformHandlesToObjects(API::Object*);
@@ -790,7 +794,7 @@ private:
 #if ENABLE(GPU_PROCESS)
     void createGPUProcessConnection(GPUProcessConnectionIdentifier, IPC::Connection::Handle&&);
     void gpuProcessConnectionDidBecomeUnresponsive(GPUProcessConnectionIdentifier);
-    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect& rectRelativeToVisibleContent, RemoteSnapshotIdentifier, WebCore::RenderingMode, const WebCore::FloatSize& scale);
 #endif
 
 #if HAVE(IOSURFACE)

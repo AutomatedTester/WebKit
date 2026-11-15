@@ -11268,7 +11268,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* property = get(bytecode.m_property);
             bool compiledAsMatchStructure = false;
 
-            if (!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIdent)
+            if (!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache)
+                && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIdent)
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
 
@@ -11412,7 +11413,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             }
 
             // FIXME: Checking for a BadConstantValue causes us to always use the Generic variant if we switched from IndexedMode -> IndexedMode + OwnStructureMode even though that might be fine.
-            if (!seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
+            if (seenModes.contains(JSPropertyNameEnumerator::IndexedMode)
+                && !seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
                 Node* modeTest = addToGraph(SameValue, mode, jsConstant(jsNumber(static_cast<uint8_t>(JSPropertyNameEnumerator::GenericMode))));
                 addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(false))), modeTest);
@@ -11546,7 +11548,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 }
             }
 
-            if (!seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
+            if (seenModes.contains(JSPropertyNameEnumerator::IndexedMode)
+                && !seenModes.containsAny({ JSPropertyNameEnumerator::GenericMode, JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch })
                 && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue)) {
                 Node* modeTest = addToGraph(SameValue, mode, jsConstant(jsNumber(static_cast<uint8_t>(JSPropertyNameEnumerator::GenericMode))));
                 addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(false))), modeTest);

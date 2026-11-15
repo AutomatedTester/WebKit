@@ -1235,6 +1235,35 @@ TEST(WKWebExtensionAPITabs, ToggleReaderMode)
     ASSERT_EQ(toggleReaderModeCounter, 2lu);
 }
 
+TEST(WKWebExtensionAPITabs, ToggleReaderModeUnavailable)
+{
+    auto *backgroundScript = Util::constructScript(@[
+        @"const allWindows = await browser.windows.getAll({ populate: true })",
+        @"const tabId = allWindows[0].tabs[0].id",
+
+        @"await browser.test.assertRejects(browser.tabs.toggleReaderMode(tabId), /cannot be placed into reader mode/i)",
+
+        @"const tab = await browser.tabs.get(tabId)",
+        @"browser.test.assertFalse(tab.isInReaderMode, 'The tab should not be in reader mode')",
+
+        @"browser.test.notifyPass()"
+    ]);
+
+    auto manager = Util::loadExtension(tabsManifest, @{ @"background.js": backgroundScript });
+
+    manager.get().defaultTab.readerModeUnavailable = true;
+
+    __block size_t toggleReaderModeCounter = 0;
+
+    manager.get().defaultTab.setReaderModeShowing = ^(BOOL showing) {
+        ++toggleReaderModeCounter;
+    };
+
+    [manager run];
+
+    ASSERT_EQ(toggleReaderModeCounter, 0lu);
+}
+
 TEST(WKWebExtensionAPITabs, DetectLanguage)
 {
     TestWebKitAPI::HTTPServer server({
@@ -1272,8 +1301,14 @@ TEST(WKWebExtensionAPITabs, DetectLanguage)
 
 TEST(WKWebExtensionAPITabs, CaptureVisibleTab)
 {
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    RetainPtr urlRequest = server.requestWithLocalhost();
+
     auto *backgroundScript = Util::constructScript(@[
-        @"const newTab = await browser.tabs.create({ url: 'http://example.com' })",
+        [NSString stringWithFormat:@"const newTab = await browser.tabs.create({ url: '%@' })", urlRequest.get().URL.absoluteString],
 
         @"let dataURLPNG = await browser.tabs.captureVisibleTab(newTab.windowId, { format: 'png' })",
         @"browser.test.assertTrue(dataURLPNG.startsWith('data:image/png;'), 'The data URL should start with the PNG mime type for PNG capture')",
@@ -1286,7 +1321,7 @@ TEST(WKWebExtensionAPITabs, CaptureVisibleTab)
 
     auto manager = Util::loadExtension(tabsManifest, @{ @"background.js": backgroundScript });
 
-    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:[NSURL URLWithString:@"http://example.com/"]];
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.get().URL];
 
     [manager run];
 }

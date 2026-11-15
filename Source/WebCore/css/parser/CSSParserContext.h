@@ -84,7 +84,6 @@ struct CSSParserContext {
     bool cssCalcSizeFunctionEnabled : 1 { false };
     bool cssFitContentFunctionEnabled : 1 { false };
     bool cssStretchFunctionEnabled : 1 { false };
-    bool cssURLModifiersEnabled : 1 { false };
     bool cssURLIntegrityModifierEnabled : 1 { false };
     bool cssLinkParametersEnabled : 1 { false };
     bool cssAxisRelativePositionKeywordsEnabled : 1 { false };
@@ -104,6 +103,7 @@ struct CSSParserContext {
     bool cssFontPaletteMixFunctionEnabled : 1 { false };
     bool cssSymbolsFunctionEnabled : 1 { false };
     bool cssMeshGradientsEnabled : 1 { false };
+    bool cssFreeformGradientsEnabled : 1 { false };
     bool viewportSegmentsAPIEnabled : 1 { false };
 
     // Enabled only for the legacy <font face> attribute: allows a numeric token within a family

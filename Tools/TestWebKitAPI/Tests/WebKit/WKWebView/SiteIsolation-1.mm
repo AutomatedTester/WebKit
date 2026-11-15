@@ -2702,6 +2702,39 @@ TEST(SiteIsolation, TransientActivationFromForcedUserGestureIsRevokedWhenCrossOr
     evaluateJavaScriptInFrame(webView.get(), @"internals.setTransientActivationDuration(5); 1", nil, NO);
 }
 
+TEST(SiteIsolation, RemovingCrossOriginIframeAfterForcedUserGestureNavigationDoesNotCrash)
+{
+    HTTPServer server({
+        { "/mainframe"_s, { "<iframe id='iframe' src='https://webkit.org/iframe'></iframe><iframe src='https://webkit.org/other'></iframe>"_s } },
+        { "/iframe"_s, { "iframe text"_s } },
+        { "/other"_s, { "other text"_s } },
+        { "/destination"_s, { "<script>window.webkit.messageHandlers.testHandler.postMessage('loaded')</script>"_s } }
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(configurationWithInternals(server), CGRectMake(0, 0, 800, 600));
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/mainframe"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    pid_t iframeProcessIdentifier = [webView firstChildFrame]._processIdentifier;
+    EXPECT_NE([webView mainFrame].info._processIdentifier, iframeProcessIdentifier);
+    EXPECT_EQ([webView secondChildFrame]._processIdentifier, iframeProcessIdentifier);
+
+    // The iframe's new document loader keeps the forced user gesture alive until the iframe is destroyed.
+    __block bool loaded = false;
+    [webView performAfterReceivingMessage:@"loaded" action:^{
+        loaded = true;
+    }];
+    evaluateJavaScriptInFrame(webView.get(), @"location.href = 'https://webkit.org/destination'; 1", [webView firstChildFrame], YES);
+    Util::run(&loaded);
+    EXPECT_EQ([webView firstChildFrame]._processIdentifier, iframeProcessIdentifier);
+
+    evaluateJavaScriptInFrame(webView.get(), @"document.getElementById('iframe').remove(); 1", nil, NO);
+
+    RetainPtr remainingFrame = [webView firstChildFrame];
+    ASSERT_TRUE(!!remainingFrame);
+    EXPECT_EQ(remainingFrame.get()._processIdentifier, iframeProcessIdentifier);
+    evaluateJavaScriptInFrame(webView.get(), @"1", remainingFrame.get(), NO);
+}
+
 #if PLATFORM(MAC)
 
 TEST(SiteIsolation, TransientActivationFromUserGestureIsPreservedAfterForcedUserGestureInCrossOriginIframe)
@@ -4028,6 +4061,100 @@ TEST(SiteIsolation, PopupUsesWebsiteDataStoreOfOpener)
 TEST(SiteIsolation, PopupUsesWebsiteDataStoreOfOpenerWithoutSiteIsolation)
 {
     checkPopupUsesWebsiteDataStoreOfOpener(false);
+}
+
+static NSString * const lockdownModeSettingsCheck = @"(!!window.WebGL2RenderingContext) + ',' + (!!window.Gamepad)";
+
+TEST(SiteIsolation, PopupWithOtherLockdownModeStartsNewBrowsingContextGroup)
+{
+    HTTPServer server({
+        { "/opener"_s, { "<script>w = window.open('https://webkit.org/popup')</script>"_s } },
+        { "/popup"_s, { "popup"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    enableSiteIsolation(configuration.get());
+    auto [opener, opened] = openerAndOpenedViewsWithMainFramePolicies(configuration.get(), nil, ^(WKWebpagePreferences *preferences) {
+        preferences.lockdownModeEnabled = YES;
+    });
+    EXPECT_WK_STREQ([opened.webView stringByEvaluatingJavaScript:lockdownModeSettingsCheck], "false,false");
+
+    [opened.webView evaluateJavaScript:@"alert(!!window.opener)" completionHandler:nil];
+    EXPECT_WK_STREQ([opened.uiDelegate waitForAlert], "false");
+
+    [opener.webView evaluateJavaScript:@"alert(w.closed)" completionHandler:nil];
+    EXPECT_WK_STREQ([opener.uiDelegate waitForAlert], "true");
+}
+
+TEST(SiteIsolation, PopupWithSameLockdownModeKeepsOpener)
+{
+    HTTPServer server({
+        { "/opener"_s, { "<script>w = window.open('https://webkit.org/popup')</script>"_s } },
+        { "/popup"_s, { "popup"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    enableSiteIsolation(configuration.get());
+    MainFramePolicy enableLockdownMode = ^(WKWebpagePreferences *preferences) {
+        preferences.lockdownModeEnabled = YES;
+    };
+    auto [opener, opened] = openerAndOpenedViewsWithMainFramePolicies(configuration.get(), enableLockdownMode, enableLockdownMode);
+    EXPECT_WK_STREQ([opened.webView stringByEvaluatingJavaScript:lockdownModeSettingsCheck], "false,false");
+
+    [opened.webView evaluateJavaScript:@"alert(!!window.opener)" completionHandler:nil];
+    EXPECT_WK_STREQ([opened.uiDelegate waitForAlert], "true");
+
+    [opener.webView evaluateJavaScript:@"alert(w.closed)" completionHandler:nil];
+    EXPECT_WK_STREQ([opener.uiDelegate waitForAlert], "false");
+}
+
+TEST(SiteIsolation, PopupInLockdownModeDoesNotUseSharedProcessOfOpener)
+{
+    HTTPServer server({
+        { "/opener"_s, { "<iframe src='https://apple.com/frame' onload='w = window.open(`https://webkit.org/popup`)'></iframe>"_s } },
+        { "/popup"_s, { "<iframe src='https://apple.com/frame'></iframe>"_s } },
+        { "/frame"_s, { "frame"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    RetainPtr configuration = server.httpsProxyConfiguration();
+    enableSiteIsolation(configuration.get());
+    setFeatureEnabled(configuration.get(), @"SiteIsolationSharedProcessEnabled", true);
+    auto [opener, opened] = openerAndOpenedViewsWithMainFramePolicies(configuration.get(), nil, ^(WKWebpagePreferences *preferences) {
+        preferences.lockdownModeEnabled = YES;
+    });
+    while (![[opened.webView firstChildFrame].securityOrigin.host isEqualToString:@"apple.com"])
+        Util::spinRunLoop();
+
+    EXPECT_NE([opened.webView firstChildFrame]._processIdentifier, [opener.webView firstChildFrame]._processIdentifier);
+    EXPECT_WK_STREQ([opened.webView stringByEvaluatingJavaScript:lockdownModeSettingsCheck inFrame:[opened.webView firstChildFrame]], "false,false");
+}
+
+TEST(SiteIsolation, GoingBackInLockdownModeDoesNotRestorePageWithoutLockdownMode)
+{
+    HTTPServer server({
+        { "/first"_s, { "first"_s } },
+        { "/second"_s, { "second"_s } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto [webView, navigationDelegate] = siteIsolatedViewAndDelegate(server);
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://example.com/first"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    auto firstProcess = [webView _webProcessIdentifier];
+    [webView objectByEvaluatingJavaScript:@"window.marker = 'first'"];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://webkit.org/second"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    setMainFramePolicy(navigationDelegate.get(), ^(WKWebpagePreferences *preferences) {
+        preferences.lockdownModeEnabled = YES;
+    });
+    [webView goBack];
+    [navigationDelegate waitForDidFinishNavigation];
+
+    EXPECT_WK_STREQ([webView URL].absoluteString, "https://example.com/first");
+    EXPECT_NE([webView _webProcessIdentifier], firstProcess);
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:lockdownModeSettingsCheck], "false,false");
+    EXPECT_WK_STREQ([webView stringByEvaluatingJavaScript:@"typeof window.marker"], "undefined");
 }
 
 TEST(SiteIsolation, PopupNavigationWithWebsiteDataStoreOfOpenerKeepsOpener)

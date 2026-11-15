@@ -484,7 +484,10 @@ $(PROJECT_DIR)/Modules/entriesapi/FileSystemEntryCallback.idl
 $(PROJECT_DIR)/Modules/entriesapi/FileSystemFileEntry.idl
 $(PROJECT_DIR)/Modules/entriesapi/HTMLInputElement+EntriesAPI.idl
 $(PROJECT_DIR)/Modules/fetch/FetchBody.idl
+$(PROJECT_DIR)/Modules/fetch/DOMWindow+FetchLater.idl
+$(PROJECT_DIR)/Modules/fetch/DeferredRequestInit.idl
 $(PROJECT_DIR)/Modules/fetch/FetchHeaders.idl
+$(PROJECT_DIR)/Modules/fetch/FetchLaterResult.idl
 $(PROJECT_DIR)/Modules/fetch/FetchReferrerPolicy.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequest.idl
 $(PROJECT_DIR)/Modules/fetch/FetchRequestCache.idl
@@ -1383,6 +1386,7 @@ $(PROJECT_DIR)/css/DOMMatrixReadOnly.idl
 $(PROJECT_DIR)/css/ElementCSSInlineStyle+Typedom.idl
 $(PROJECT_DIR)/css/ElementCSSInlineStyle.idl
 $(PROJECT_DIR)/css/FontFace.idl
+$(PROJECT_DIR)/css/FontFaceLoadStatus.idl
 $(PROJECT_DIR)/css/FontFaceSet.idl
 $(PROJECT_DIR)/css/FontFaceSource.idl
 $(PROJECT_DIR)/css/LinkStyle.idl

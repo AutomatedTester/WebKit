@@ -122,7 +122,6 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssCalcSizeFunctionEnabled { settings.cssCalcSizeFunctionEnabled() }
     , cssFitContentFunctionEnabled { settings.cssFitContentFunctionEnabled() }
     , cssStretchFunctionEnabled { settings.cssStretchFunctionEnabled() }
-    , cssURLModifiersEnabled { settings.cssURLModifiersEnabled() }
     , cssURLIntegrityModifierEnabled { settings.cssURLIntegrityModifierEnabled() }
     , cssLinkParametersEnabled { settings.cssLinkParametersEnabled() }
     , cssAxisRelativePositionKeywordsEnabled { settings.cssAxisRelativePositionKeywordsEnabled() }
@@ -141,6 +140,7 @@ CSSParserContext::CSSParserContext(const Settings& settings)
     , cssFontPaletteMixFunctionEnabled { settings.cssFontPaletteMixFunctionEnabled() }
     , cssSymbolsFunctionEnabled { settings.cssSymbolsFunctionEnabled() }
     , cssMeshGradientsEnabled { settings.cssMeshGradientsEnabled() }
+    , cssFreeformGradientsEnabled { settings.cssFreeformGradientsEnabled() }
     , viewportSegmentsAPIEnabled { settings.viewportSegmentsAPIEnabled() }
     , propertySettings { CSSPropertySettings { settings } }
 {
@@ -181,7 +181,6 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssCalcSizeFunctionEnabled,
         context.cssFitContentFunctionEnabled,
         context.cssStretchFunctionEnabled,
-        context.cssURLModifiersEnabled,
         context.cssURLIntegrityModifierEnabled,
         context.cssLinkParametersEnabled,
         context.cssAxisRelativePositionKeywordsEnabled,
@@ -203,6 +202,7 @@ void add(Hasher& hasher, const CSSParserContext& context)
         context.cssFontPaletteMixFunctionEnabled,
         context.cssSymbolsFunctionEnabled,
         context.cssMeshGradientsEnabled,
+        context.cssFreeformGradientsEnabled,
         context.legacyFontFaceAttributeMode,
         context.viewportSegmentsAPIEnabled
     );

@@ -210,6 +210,8 @@ public:
     inline LayoutUnit marginLogicalWidth() const;
 
     BorderShape borderShapeForContentClipping(const LayoutRect& borderBoxRect, RectEdges<bool> closedEdges = { true }) const;
+    bool borderObscuresBackgroundEdge(const FloatSize& contextScale) const;
+    bool borderObscuresBackground() const;
 
     inline bool hasInlineDirectionBordersPaddingOrMargin() const;
     inline bool hasInlineDirectionBordersOrPadding() const;
@@ -254,8 +256,8 @@ public:
     NODELETE TrackedRendererListHashSet* outOfFlowBoxes() const LIFETIME_BOUND;
     bool hasOutOfFlowBoxes() const
     {
-        auto* renderers = outOfFlowBoxes();
-        return renderers && !renderers->isEmptyIgnoringNullReferences();
+        const auto* renderers = outOfFlowBoxes();
+        return renderers && !renderers->computeIsEmpty();
     }
     void markOutOfFlowBoxesForLayout(MarkingBehavior = MarkingBehavior::ContainingBlockChain);
     void removeOutOfFlowBoxesIfNeededOnStyleChange(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle);
@@ -273,8 +275,6 @@ protected:
     LayoutPoint adjustedPositionRelativeToOffsetParent(const LayoutPoint&) const;
 
     bool hasVisibleBoxDecorationStyle() const;
-    bool borderObscuresBackgroundEdge(const FloatSize& contextScale) const;
-    bool borderObscuresBackground() const;
 
 protected:
     const RenderElement* pushMappingToContainer(const RenderLayerModelObject* ancestorToStopAt, RenderGeometryMap&) const override;

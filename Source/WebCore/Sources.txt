@@ -151,6 +151,7 @@ Modules/entriesapi/FileSystemEntriesCallback.cpp
 Modules/entriesapi/FileSystemEntry.cpp
 Modules/entriesapi/FileSystemFileEntry.cpp
 Modules/entriesapi/HTMLInputElementEntriesAPI.cpp
+Modules/fetch/DeferredFetchRegistry.cpp
 Modules/fetch/FetchBody.cpp @cost:3
 Modules/fetch/FetchBodyConsumer.cpp @cost:3
 Modules/fetch/FetchBodyOwner.cpp @cost:3
@@ -982,6 +983,7 @@ css/CSSFontStyleRangeValue.cpp
 css/CSSFontStyleWithAngleValue.cpp
 css/CSSFontValue.cpp
 css/CSSFontVariationValue.cpp
+css/CSSFreeformGradientValue.cpp
 css/CSSFunctionDeclarations.cpp
 css/CSSFunctionDescriptors.cpp
 css/CSSFunctionRule.cpp
@@ -1270,6 +1272,7 @@ css/values/grid/CSSGridNamedAreaMap.cpp
 css/values/grid/CSSGridSubgrid.cpp
 css/values/grid/CSSGridTemplateList.cpp
 css/values/grid/CSSGridTrackSizes.cpp
+css/values/images/CSSFreeformGradient.cpp
 css/values/images/CSSGradient.cpp
 css/values/images/CSSGradientColorInterpolationMethod.cpp
 css/values/images/CSSImageWrapper.cpp
@@ -2033,6 +2036,7 @@ inspector/agents/LayerTreeInspectionState.cpp @header:RenderStyleGetters
 inspector/agents/WebConsoleAgent.cpp
 inspector/agents/WebDebuggerAgent.cpp
 inspector/agents/WebHeapAgent.cpp
+inspector/agents/frame/FrameAnimationAgent.cpp
 inspector/agents/frame/FrameCSSAgent.cpp @header:RenderStyleGetters
 inspector/agents/frame/FrameCanvasAgent.cpp
 inspector/agents/frame/FrameConsoleAgent.cpp
@@ -3025,6 +3029,7 @@ rendering/BlockStepSizing.cpp @header:RenderStyleGetters @cost:4
 rendering/BorderEdge.cpp @header:RenderStyleGetters @cost:4
 rendering/BorderPainter.cpp @header:RenderStyleGetters @cost:6
 rendering/BorderShape.cpp @header:RenderStyleGetters @cost:5
+rendering/BoxDecorationPainter.cpp @header:RenderStyleGetters @cost:5
 rendering/BreakablePositions.cpp
 rendering/CSSFilterRenderer.cpp @header:RenderStyleGetters @cost:6
 rendering/CaretRectComputation.cpp @header:RenderStyleGetters @cost:6
@@ -3060,6 +3065,7 @@ rendering/LayoutRepainter.cpp
 rendering/LegacyLineClampUpdater.cpp
 rendering/LineClampUpdater.cpp
 rendering/MarkedText.cpp @header:RenderStyleGetters @cost:6
+rendering/MaskPainter.cpp @header:RenderStyleGetters @cost:4
 rendering/MotionPath.cpp @header:RenderStyleGetters @cost:5
 rendering/NinePieceImagePainter.cpp @header:RenderStyleGetters @cost:5
 rendering/OrderIterator.cpp @header:RenderStyleGetters @cost:4
@@ -3082,7 +3088,6 @@ rendering/RenderEmbeddedObject.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderFileUploadControl.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderFlexibleBox.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderFragmentContainer.cpp @header:RenderStyleGetters @cost:6
-rendering/RenderFragmentContainerSet.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderFragmentedFlow.cpp @header:RenderStyleGetters @cost:6
 rendering/RenderFrame.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderFrameBase.cpp @header:RenderStyleGetters @cost:5
@@ -3217,7 +3222,6 @@ rendering/svg/RenderSVGResourcePattern.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGResourceRadialGradient.cpp
 rendering/svg/RenderSVGRoot.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGShape.cpp @header:RenderStyleGetters
-rendering/svg/RenderSVGTSpan.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGText.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGTextPath.cpp @header:RenderStyleGetters
 rendering/svg/RenderSVGTransformableContainer.cpp
@@ -4257,6 +4261,7 @@ JSDatabaseCallback.cpp
 JSDecompressionStream.cpp
 JSDecompressionStreamDecoder.cpp
 JSDedicatedWorkerGlobalScope.cpp
+JSDeferredRequestInit.cpp
 JSDelayNode.cpp
 JSDelayOptions.cpp
 JSDeprecatedCSSOMCounter.cpp
@@ -4335,6 +4340,7 @@ JSFaceDetectorOptions.cpp
 JSFetchBody.cpp
 JSFetchEvent.cpp
 JSFetchHeaders.cpp
+JSFetchLaterResult.cpp
 JSFetchReferrerPolicy.cpp
 JSFetchRequest.cpp
 JSFetchRequestCache.cpp
@@ -4367,6 +4373,7 @@ JSFlacEncoderConfig.cpp
 JSFocusEvent.cpp
 JSFocusOptions.cpp
 JSFontFace.cpp
+JSFontFaceLoadStatus.cpp
 JSFontFaceSet.cpp
 JSFormDataEvent.cpp
 JSFragmentDirective.cpp

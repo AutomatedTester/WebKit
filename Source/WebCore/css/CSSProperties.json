@@ -1772,19 +1772,13 @@
             "initial": "baseline",
             "values": [
                 "baseline",
-                {
-                    "value": "text-bottom",
-                    "status": "unimplemented"
-                },
+                "text-bottom",
                 "alphabetic",
                 "ideographic",
                 "middle",
                 "central",
                 "mathematical",
-                {
-                    "value": "text-top",
-                    "status": "unimplemented"
-                },
+                "text-top",
                 {
                     "value": "after-edge",
                     "status": "deprecated"
@@ -1792,7 +1786,7 @@
                 {
                     "value": "text-after-edge",
                     "status": "deprecated",
-                    "comment": "Should alias to 'text-bottom' once it is implemented."
+                    "comment": "Legacy SVG alias for 'text-bottom'."
                 },
                 {
                     "value": "hanging",
@@ -1805,7 +1799,7 @@
                 {
                     "value": "text-before-edge",
                     "status": "deprecated",
-                    "comment": "Should alias to 'text-top' once it is implemented."
+                    "comment": "Legacy SVG alias for 'text-top'."
                 }
             ],
             "codegen-properties": {
@@ -4337,6 +4331,7 @@
                 "none",
                 "content-box",
                 "margin-box",
+                "half-border-box",
                 "stroke-box",
                 "border-box",
                 "fill-box",
@@ -13175,9 +13170,6 @@
                     "scroll-margin-bottom",
                     "scroll-margin-left"
                 ],
-                "aliases": [
-                    "scroll-snap-margin"
-                ],
                 "shorthand-pattern": "CoalescingQuad",
                 "parser-grammar-unused": "<'scroll-margin-top'>{1,4}",
                 "parser-grammar-unused-reason": "Needs support for shorthand grammars."
@@ -13192,9 +13184,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-bottom"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "bottom"
@@ -13215,9 +13204,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-left"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "left"
@@ -13238,9 +13224,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-right"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "right"
@@ -13261,9 +13244,6 @@
             "animation-type-comment": "Current spec animation type is 'by computed value'",
             "initial": "0px",
             "codegen-properties": {
-                "aliases": [
-                    "scroll-snap-margin-top"
-                ],
                 "logical-property-group": {
                     "name": "scroll-margin",
                     "resolver": "top"
@@ -15576,15 +15556,16 @@
                 "url": "https://www.w3.org/TR/compositing-1/#ltblendmodegt"
             }
         },
-        "<box>": {
-            "grammar": "border-box | padding-box | content-box",
-            "specification": {
-                "category": "css-backgrounds",
-                "url": "https://www.w3.org/TR/css-backgrounds-3/#typedef-box"
-            }
+        "<visual-box>": {
+          "grammar": "border-box | content-box | padding-box",
+          "exported": true,
+          "specification": {
+            "category": "css-box-4",
+            "url": "https://drafts.csswg.org/css-box-4/#typedef-visual-box"
+          }
         },
         "<shape-box>": {
-            "grammar": "<box> | margin-box",
+            "grammar": "<visual-box> | margin-box | half-border-box",
             "exported": true,
             "specification": {
                 "category": "css-shapes",
@@ -15598,14 +15579,6 @@
                 "category": "css-masking",
                 "url": "https://drafts.fxtf.org/css-masking-1/#typedef-geometry-box"
             }
-        },
-        "<visual-box>": {
-          "grammar": "border-box | content-box | padding-box",
-          "exported": true,
-          "specification": {
-            "category": "css-box-4",
-            "url": "https://drafts.csswg.org/css-box-4/#typedef-visual-box"
-          }
         },
         "<clip-source>": {
             "grammar": "<url>",
@@ -15657,7 +15630,7 @@
             }
         },
         "<-webkit-origin-box>": {
-            "grammar": "<box> | border | content | padding | -webkit-text",
+            "grammar": "<visual-box> | border | content | padding | -webkit-text",
             "status": "non-standard"
         },
         "<-webkit-clip-box>": {
@@ -15698,7 +15671,7 @@
             "comment": "-webkit-text is non-standard."
         },
         "<single-background-origin>": {
-            "grammar": "<box>",
+            "grammar": "<visual-box>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -15734,7 +15707,7 @@
             "comment": "Internally used to represent vertical part of standard <bg-position>"
         },
         "<single-mask-clip>": {
-            "grammar": "<box> | no-clip",
+            "grammar": "<visual-box> | no-clip",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -15743,7 +15716,7 @@
             "comment": "Out of spec. 'mask-clip' is currently defined to '[ <coord-box> | no-clip ]#'."
         },
         "<single-mask-origin>": {
-            "grammar": "<box> | border | content | padding | -webkit-text",
+            "grammar": "<visual-box> | border | content | padding | -webkit-text",
             "exported": true,
             "specification": {
                 "category": "css-masking",

@@ -49,9 +49,10 @@ namespace WebKit {
 
 using namespace WebCore;
 
-BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode, WebsiteDataStore& websiteDataStore, EnhancedSecurity enhancedSecurity)
+BrowsingContextGroup::BrowsingContextGroup(CrossOriginMode crossOriginMode, WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
     : m_crossOriginMode(crossOriginMode)
     , m_websiteDataStore(websiteDataStore)
+    , m_lockdownMode(lockdownMode)
     , m_enhancedSecurity(enhancedSecurity)
 {
 }
@@ -69,6 +70,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
     WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, API::PageConfiguration& pageConfiguration, IsMainFrame isMainFrame, CompletionHandler<void(FrameProcess*)>&& completionHandler)
 {
     ASSERT(&websiteDataStore == m_websiteDataStore.get());
+    ASSERT(lockdownMode == m_lockdownMode);
 
     if (!preferences.siteIsolationEnabled() || !preferences.siteIsolationSharedProcessEnabled())
         return completionHandler(nullptr);
@@ -122,14 +124,18 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
         return completionHandler(existingSharedProcess.get());
     }
 
-    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, ProcessSwapDisposition::Other, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
+    if (!isEnhancedSecurityEnabledForState(enhancedSecurity) && lockdownMode == WebProcessProxy::LockdownMode::Disabled
+        && preferences.siteIsolationSharedProcessEnhancedSecurityEnabled() && !preferences.enhancedSecurityForceDisabled())
+        enhancedSecurity = EnhancedSecurity::EnabledPolicy;
+
+    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
     ASSERT(!process->isInProcessCache());
     Ref frameProcess = FrameProcess::create(process, *this, std::nullopt, mainFrameSite, preferences, LoadedWebArchive::No, BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
     ASSERT(frameProcess->isSharedProcess());
     ASSERT(frameProcess->process().isSharedProcess());
     frameProcess->process().addSharedProcessDomain(site.domain());
     m_sharedProcess = frameProcess.ptr();
-    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d for site %" SENSITIVE_LOG_STRING, process->processID(), site.loggingString().utf8());
+    BROWSINGCONTEXTGROUP_RELEASE_LOG("sharedProcessForSite: created shared process %d (enhancedSecurity=%d) for site %" SENSITIVE_LOG_STRING, process->processID(), isEnhancedSecurityEnabledForState(process->enhancedSecurity()), site.loggingString().utf8());
     completionHandler(frameProcess.ptr());
 }
 
@@ -140,11 +146,22 @@ bool BrowsingContextGroup::canUseProcessForCrossOriginIsolation(const WebProcess
     return process.crossOriginIsolation() != ProcessCrossOriginIsolation::BrowsingContextGroup;
 }
 
+bool BrowsingContextGroup::canUseProcessForEnhancedSecurity(const WebProcessProxy& process, const WebPreferences& preferences) const
+{
+    if (enhancedSecurityStatesAreConsistent(process.enhancedSecurity(), m_enhancedSecurity))
+        return true;
+
+    // A process created for subframes, such as the shared process, can have Enhanced Security when the group does not.
+    return preferences.siteIsolationSharedProcessEnhancedSecurityEnabled() && isEnhancedSecurityEnabledForState(process.enhancedSecurity())
+        && (process.isolatedProcessType() == WebProcessProxy::IsolatedProcessType::SubFrame || process.isolatedProcessType() == WebProcessProxy::IsolatedProcessType::Shared);
+}
+
 Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, const Site& mainFrameSite, WebProcessProxy& process, const WebPreferences& preferences, LoadedWebArchive loadedWebArchive, BrowsingContextGroupUpdate browsingContextGroupUpdate)
 {
     ASSERT(process.isDummyProcessProxy() || canUseProcessForCrossOriginIsolation(process));
     ASSERT(process.isDummyProcessProxy() || process.websiteDataStore() == m_websiteDataStore.get());
-    ASSERT(process.isDummyProcessProxy() || enhancedSecurityStatesAreConsistent(process.enhancedSecurity(), m_enhancedSecurity));
+    ASSERT(process.isDummyProcessProxy() || process.lockdownMode() == m_lockdownMode);
+    ASSERT(process.isDummyProcessProxy() || canUseProcessForEnhancedSecurity(process, preferences));
 
     if (preferences.siteIsolationEnabled()) {
         RefPtr sharedProcess = liveSharedProcess();

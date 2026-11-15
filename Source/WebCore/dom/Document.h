@@ -64,6 +64,7 @@
 #include <WebCore/ViewportArguments.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Deque.h>
+#include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/Logger.h>
 #include <wtf/Observer.h>
@@ -237,6 +238,7 @@ class Region;
 class RenderBlockFlow;
 class RenderTreeBuilder;
 class RenderView;
+class DeferredFetchRegistry;
 class ReportingScope;
 class RequestAnimationFrameCallback;
 class ResizeObserver;
@@ -421,15 +423,6 @@ enum class HttpEquivPolicy : uint8_t {
     DisabledByContentDispositionAttachmentSandbox
 };
 
-enum class CustomElementNameValidationStatus : uint8_t {
-    Valid,
-    FirstCharacterIsNotLowercaseASCIILetter,
-    ContainsNoHyphen,
-    ContainsUppercaseASCIILetter,
-    ContainsDisallowedCharacter,
-    ConflictsWithStandardElementName
-};
-
 enum class ClonedDocumentType : uint8_t { XMLDocument, XHTMLDocument, HTMLDocument, SVGDocument, Document };
 
 enum class TextScaleMeta : bool { Legacy, Scale };
@@ -479,7 +472,8 @@ public:
     inline static Ref<Document> create(const Settings&, const URL&);
     static Ref<Document> createNonRenderedPlaceholder(LocalFrame&, const URL&);
     static Ref<Document> create(Document&);
-    static Ref<Document> createCloned(ClonedDocumentType, const Settings&, const URL&, const URL& baseURL, const URL& aboutBaseURL, const Variant<String, URL>& documentURI, DocumentCompatibilityMode, OptionSet<ParserContentPolicy>, Document& contextDocument, SecurityOriginPolicy*, const String& contentType, TextResourceDecoder*);
+    static Ref<Document> create(Document& contextDocument, const URL&, RefPtr<SecurityOriginPolicy>&&);
+    static Ref<Document> createCloned(ClonedDocumentType, const URL&, const URL& baseURL, const URL& aboutBaseURL, const Variant<String, URL>& documentURI, DocumentCompatibilityMode, OptionSet<ParserContentPolicy>, Document& contextDocument, SecurityOriginPolicy*, const String& contentType, TextResourceDecoder*);
 
     virtual ~Document();
 
@@ -609,7 +603,6 @@ public:
     WEBCORE_EXPORT Ref<Element> createElement(const QualifiedName&, bool createdByParser, CustomElementRegistry* = nullptr);
 
     NODELETE CustomElementRegistry* effectiveGlobalCustomElementRegistry();
-    static CustomElementNameValidationStatus validateCustomElementName(const AtomString&);
     void addCustomElementUpgradeCandidateLocalName(const AtomString& localName) { m_customElementUpgradeCandidateLocalNames.add(localName); }
     void removeCustomElementUpgradeCandidateLocalName(const AtomString& localName) { m_customElementUpgradeCandidateLocalNames.remove(localName); }
     bool mayHaveCustomElementUpgradeCandidate(const AtomString& localName) const { return m_customElementUpgradeCandidateLocalNames.contains(localName); }
@@ -1134,7 +1127,6 @@ public:
     inline bool hasBrowsingContext() const; // Defined in DocumentInlines.h.
 
     NODELETE Document& contextDocument() const;
-    void setContextDocument(Ref<Document>&& document) { m_contextDocument = WTF::move(document); }
     
     OptionSet<ParserContentPolicy> parserContentPolicy() const { return m_parserContentPolicy; }
     void setParserContentPolicy(OptionSet<ParserContentPolicy> policy) { m_parserContentPolicy = policy; }
@@ -1491,7 +1483,7 @@ public:
     SVGDocumentExtensions* svgExtensionsIfExists() { return m_svgExtensions.get(); }
     WEBCORE_EXPORT SVGDocumentExtensions& svgExtensions();
 
-    void initSecurityContext();
+    void initSecurityContext(RefPtr<SecurityOriginPolicy>&& = nullptr);
     void initContentSecurityPolicy();
 
     void inheritPolicyContainerFrom(const PolicyContainer&) final;
@@ -1669,7 +1661,7 @@ public:
 
     void didRemoveEventTargetNode(Node&);
 
-    bool hasWheelEventHandlers() const { return !m_wheelEventTargets.isEmptyIgnoringNullReferences(); }
+    bool hasWheelEventHandlers() const { return !m_wheelEventTargets.computeIsEmpty(); }
     bool mayHaveListBoxes() const { return m_mayHaveListBoxes; }
     void setMayHaveListBoxes() { m_mayHaveListBoxes = true; }
 
@@ -2161,6 +2153,9 @@ public:
 
     std::optional<PAL::SessionID> sessionID() const final;
 
+    DeferredFetchRegistry* deferredFetchRegistryIfExists() const { return m_deferredFetchRegistry.get(); }
+    DeferredFetchRegistry& ensureDeferredFetchRegistry();
+
     ReportingScope* reportingScopeIfExists() const { return m_reportingScope.get(); }
     inline ReportingScope& reportingScope() const;
     WEBCORE_EXPORT String endpointURIForToken(const String&) const final;
@@ -2228,10 +2223,13 @@ protected:
         NonRenderedPlaceholder = 1 << 1
     };
     WEBCORE_EXPORT Document(LocalFrame*, const Settings&, const URL&, DocumentClasses = { }, OptionSet<ConstructionFlag> = { }, std::optional<ScriptExecutionContextIdentifier> = std::nullopt);
+    Document(Document& contextDocument, const URL&, RefPtr<SecurityOriginPolicy>&&, DocumentClasses = { });
 
     void clearXMLVersion() { m_xmlVersion = String(); }
 
 private:
+    Document(LocalFrame*, Document* contextDocument, RefPtr<SecurityOriginPolicy>&&, const Settings&, const URL&, DocumentClasses, OptionSet<ConstructionFlag>, std::optional<ScriptExecutionContextIdentifier>);
+
     enum class PopoverListType : bool { Auto, Hint };
     void addPopoverToList(PopoverListType, HTMLElement&);
     void removePopoverFromList(PopoverListType, HTMLElement&);
@@ -2545,7 +2543,7 @@ private:
     RefPtr<TextResourceDecoder> m_decoder;
 
     HashSet<LiveNodeList*> m_listsInvalidatedAtDocument;
-    HashSet<HTMLCollection*> m_collectionsInvalidatedAtDocument;
+    HashCountedSet<HTMLCollection*> m_collectionsInvalidatedAtDocument;
     std::array<unsigned, numNodeListInvalidationTypes> m_nodeListAndCollectionCounts = { };
 
     const RefPtr<XPathEvaluator> m_xpathEvaluator;
@@ -2794,6 +2792,7 @@ private:
 
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_renderBlockingElements;
 
+    RefPtr<DeferredFetchRegistry> m_deferredFetchRegistry;
     const RefPtr<ReportingScope> m_reportingScope;
 
     const std::unique_ptr<WakeLockManager> m_wakeLockManager;

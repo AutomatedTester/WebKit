@@ -129,7 +129,7 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
         if (Ref primaryFont = protect(style.fontCascade())->primaryFont(); primaryFont.ptr() != &protect(parentStyle->fontCascade())->primaryFont())
             fallbackFonts.add(primaryFont.get());
     }
-    if (fallbackFonts.isEmptyIgnoringNullReferences())
+    if (fallbackFonts.computeIsEmpty())
         return { };
 
     auto& fallbackFontsForInlineBoxes = m_fallbackFontsForInlineBoxes.ensure(&parentInlineBox, [] {
@@ -279,7 +279,7 @@ static InlineLevelBox::AscentAndDescent textBoxAdjustedInlineBoxHeight(const Inl
 
 InlineLevelBox::AscentAndDescent LineBoxBuilder::enclosingAscentDescentWithFallbackFonts(const InlineLevelBox& inlineBox, const TextUtil::FallbackFontList& fallbackFontsForContent, FontBaseline fontBaseline) const
 {
-    ASSERT(!fallbackFontsForContent.isEmptyIgnoringNullReferences());
+    ASSERT(!fallbackFontsForContent.computeIsEmpty());
     ASSERT(inlineBox.isInlineBox());
 
     // https://www.w3.org/TR/css-inline-3/#inline-height
@@ -471,7 +471,7 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox)
         if (run.isText()) {
             auto& parentInlineBox = lineBox.parentInlineBox(run);
             parentInlineBox.setHasContent();
-            if (auto fallbackFonts = collectFallbackFonts(parentInlineBox, run, style); !fallbackFonts.isEmptyIgnoringNullReferences()) {
+            if (auto fallbackFonts = collectFallbackFonts(parentInlineBox, run, style); !fallbackFonts.computeIsEmpty()) {
                 // Adjust non-empty inline box height when glyphs from the non-primary font stretch the box.
                 if (parentInlineBox.isPreferredLineHeightFontMetricsBased()) {
                     auto enclosingAscentAndDescent = enclosingAscentDescentWithFallbackFonts(parentInlineBox, fallbackFonts, FontBaseline::Alphabetic);
@@ -631,7 +631,7 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             auto halfLeading = !rootBox().isRubyAnnotationBox() ? (lineGap - (ascent + descent)) / 2 : 0.f;
             ascent += halfLeading;
             descent += halfLeading;
-            if (auto fallbackFonts = m_fallbackFontsForInlineBoxes.get(&inlineBox); !fallbackFonts.isEmptyIgnoringNullReferences()) {
+            if (auto fallbackFonts = m_fallbackFontsForInlineBoxes.get(&inlineBox); !fallbackFonts.computeIsEmpty()) {
                 auto enclosingAscentAndDescent = enclosingAscentDescentWithFallbackFonts(inlineBox, fallbackFonts, lineBox.baselineType());
                 ascent = std::max(ascent, enclosingAscentAndDescent.ascent);
                 descent = std::max(descent, enclosingAscentAndDescent.descent);
@@ -754,7 +754,7 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox)
 
         auto needsFontFallbackAdjustment = inlineLevelBox.isInlineBox();
         if (needsFontFallbackAdjustment) {
-            if (auto fallbackFonts = m_fallbackFontsForInlineBoxes.get(&inlineLevelBox); !fallbackFonts.isEmptyIgnoringNullReferences() && inlineLevelBox.isPreferredLineHeightFontMetricsBased()) {
+            if (auto fallbackFonts = m_fallbackFontsForInlineBoxes.get(&inlineLevelBox); !fallbackFonts.computeIsEmpty() && inlineLevelBox.isPreferredLineHeightFontMetricsBased()) {
                 auto enclosingAscentAndDescent = enclosingAscentDescentWithFallbackFonts(inlineLevelBox, fallbackFonts, FontBaseline::Ideographic);
                 auto layoutBounds = inlineLevelBox.layoutBounds();
                 inlineLevelBox.setLayoutBounds({ std::max(layoutBounds.ascent, enclosingAscentAndDescent.ascent), std::max(layoutBounds.descent, enclosingAscentAndDescent.descent) });
@@ -802,6 +802,17 @@ static Style::TextEdgePair effectiveTextBoxEdge(const InlineLevelBox& rootInline
     );
 }
 
+bool LineBoxBuilder::isLastLineBeforeClampPointWithTrimEnd() const
+{
+    // The content after the clamp point is not rendered, so the last line before it is the last formatted line that trim-end applies to.
+    // Unlike for the last line of the content, trim-end comes from the line-clamp state here: the line can be in any inline formatting context
+    // of the line-clamp container's block formatting context (see LineClampUpdater).
+    auto lineClamp = blockLayoutState().lineClamp();
+    if (!lineClamp || lineClamp->isLegacy || !lineClamp->shouldTrimEndAtClampPoint || !lineLayoutResult().hasContentfulInlineContent())
+        return false;
+    return layoutState().lineCountWithInlineContentIncludingNestedBlocks() + 1 == lineClamp->maximumLines;
+}
+
 InlineLayoutUnit LineBoxBuilder::applyTextBoxTrimOnLineBoxIfNeeded(InlineLayoutUnit lineBoxLogicalHeight, LineBox& lineBox) const
 {
     auto& rootInlineBox = lineBox.rootInlineBox();
@@ -809,6 +820,13 @@ InlineLayoutUnit LineBoxBuilder::applyTextBoxTrimOnLineBoxIfNeeded(InlineLayoutU
     auto textBoxEdge = effectiveTextBoxEdge(rootInlineBox, blockLayoutState());
     auto shouldTrimBlockStartOfLineBox = isFirstFormattedLine() && textBoxTrim.contains(BlockLayoutState::TextBoxTrimSide::Start);
     auto shouldTrimBlockEndOfLineBox = isLastLine() && textBoxTrim.contains(BlockLayoutState::TextBoxTrimSide::End);
+    if (isLastLineBeforeClampPointWithTrimEnd()) {
+        // Like the trim sides set up by the integration, the block end is the line box's start with inverted lines.
+        if (rootBox().style().writingMode().isLineInverted())
+            shouldTrimBlockStartOfLineBox = true;
+        else
+            shouldTrimBlockEndOfLineBox = true;
+    }
     if (!shouldTrimBlockStartOfLineBox && !shouldTrimBlockEndOfLineBox)
         return lineBoxLogicalHeight;
 

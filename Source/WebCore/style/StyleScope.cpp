@@ -287,17 +287,17 @@ void Scope::removePendingSheet(const ProcessingInstruction& processingInstructio
 
 bool Scope::hasPendingSheets() const
 {
-    return hasPendingSheetsBeforeBody() || !m_elementsInBodyWithPendingSheets.isEmptyIgnoringNullReferences();
+    return hasPendingSheetsBeforeBody() || !m_elementsInBodyWithPendingSheets.computeIsEmpty();
 }
 
 bool Scope::hasPendingSheetsBeforeBody() const
 {
-    return !m_elementsInHeadWithPendingSheets.isEmptyIgnoringNullReferences() || !m_processingInstructionsWithPendingSheets.isEmptyIgnoringNullReferences();
+    return !m_elementsInHeadWithPendingSheets.computeIsEmpty() || !m_processingInstructionsWithPendingSheets.computeIsEmpty();
 }
 
 bool Scope::hasPendingSheetsInBody() const
 {
-    return !m_elementsInBodyWithPendingSheets.isEmptyIgnoringNullReferences();
+    return !m_elementsInBodyWithPendingSheets.computeIsEmpty();
 }
 
 void Scope::didRemovePendingStylesheet()
@@ -335,7 +335,7 @@ void Scope::addStyleSheetCandidateNode(Node& node, bool createdByParser)
     // since styles outside of the body and head continue to be shunted into the head
     // (and thus can shift to end up before dynamically added DOM content that is also
     // outside the body).
-    if ((createdByParser && m_document->bodyOrFrameset()) || m_styleSheetCandidateNodes.isEmptyIgnoringNullReferences()) {
+    if ((createdByParser && m_document->bodyOrFrameset()) || m_styleSheetCandidateNodes.computeIsEmpty()) {
         m_styleSheetCandidateNodes.add(node);
         return;
     }
@@ -582,7 +582,7 @@ void Scope::updateActiveStyleSheets(UpdateType updateType)
     Vector<Ref<CSSStyleSheet>> activeCSSStyleSheets;
 
     if (!isForUserAgentShadowTree()) {
-        activeCSSStyleSheets.appendVector(m_document->extensionStyleSheets().injectedAuthorStyleSheets());
+        activeCSSStyleSheets.appendVector(protect(m_document->extensionStyleSheets())->injectedAuthorStyleSheets());
         activeCSSStyleSheets.appendVector(m_document->extensionStyleSheets().authorStyleSheetsForTesting());
     }
 
@@ -714,7 +714,7 @@ void Scope::flushPendingDescendantUpdates()
     ASSERT(!m_shadowRoot);
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
     for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-        const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().flushPendingUpdate();
+        protect(const_cast<ShadowRoot&>(descendantShadowRoot).styleScope())->flushPendingUpdate();
     }
     m_hasDescendantWithPendingUpdate = false;
 }
@@ -781,7 +781,7 @@ void Scope::didChangeViewportSize()
         for (Ref descendantShadowRoot : m_document->inDocumentShadowRoots()) {
             if (descendantShadowRoot->mode() == ShadowRootMode::UserAgent)
                 continue;
-            const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope().didChangeViewportSize();
+            protect(const_cast<ShadowRoot&>(descendantShadowRoot.get()).styleScope())->didChangeViewportSize();
         }
     }
 
@@ -813,7 +813,7 @@ void Scope::didChangeViewportSize()
     // FIXME: Ideally, we should save the list of elements that have viewport units and only iterate over those.
     for (RefPtr element = ElementTraversal::firstWithin(rootNode); element; element = ElementTraversal::nextIncludingPseudo(*element)) {
         bool styleableHasViewportUnitAnimation = Styleable::fromElement(*element).viewportSizeDidChange();
-        auto* renderer = element->renderer();
+        CheckedPtr renderer = element->renderer();
         if (styleableHasViewportUnitAnimation || (renderer && usesViewportUnits(renderer->style())))
             element->invalidateStyle();
     }
@@ -824,7 +824,7 @@ void Scope::invalidateMatchedDeclarationsCache()
     if (!m_shadowRoot) {
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
         for (auto& descendantShadowRoot : m_document->inDocumentShadowRoots()) {
-            const_cast<ShadowRoot&>(descendantShadowRoot).styleScope().invalidateMatchedDeclarationsCache();
+            protect(const_cast<ShadowRoot&>(descendantShadowRoot).styleScope())->invalidateMatchedDeclarationsCache();
         }
     }
 

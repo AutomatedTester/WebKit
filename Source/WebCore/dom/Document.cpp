@@ -82,6 +82,7 @@
 #include "DateComponents.h"
 #include "DebugPageOverlays.h"
 #include "DebuggerSuspensionController.h"
+#include "DeferredFetchRegistry.h"
 #include "DeprecatedGlobalSettings.h"
 #include "DocumentFontLoader.h"
 #include "DocumentFragment.h"
@@ -685,12 +686,23 @@ static inline IntDegrees currentOrientation(LocalFrame* frame)
 }
 
 Document::Document(LocalFrame* frame, const Settings& settings, const URL& url, DocumentClasses documentClasses, OptionSet<ConstructionFlag> constructionFlags, std::optional<ScriptExecutionContextIdentifier> identifier)
+    : Document(frame, nullptr, nullptr, settings, url, documentClasses, constructionFlags, identifier)
+{
+}
+
+Document::Document(Document& contextDocument, const URL& url, RefPtr<SecurityOriginPolicy>&& securityOriginPolicy, DocumentClasses documentClasses)
+    : Document(nullptr, &contextDocument, WTF::move(securityOriginPolicy), contextDocument.m_settings, url, documentClasses, { }, std::nullopt)
+{
+}
+
+Document::Document(LocalFrame* frame, Document* contextDocument, RefPtr<SecurityOriginPolicy>&& securityOriginPolicy, const Settings& settings, const URL& url, DocumentClasses documentClasses, OptionSet<ConstructionFlag> constructionFlags, std::optional<ScriptExecutionContextIdentifier> identifier)
     : ContainerNode(*this, NodeType::Document)
     , TreeScope(*this)
     , ScriptExecutionContext(Type::Document, identifier)
     , FrameDestructionObserver(frame)
     , m_settings(settings)
     , m_speculationRules(SpeculationRules::create())
+    , m_contextDocument(contextDocument)
     , m_parserContentPolicy(DefaultParserContentPolicy)
     , m_creationURL(url)
     , m_domTreeVersion(++s_globalTreeVersion)
@@ -740,7 +752,7 @@ Document::Document(LocalFrame* frame, const Settings& settings, const URL& url, 
     if (!frame)
         setUsesNullCustomElementRegistry();
 
-    initSecurityContext();
+    initSecurityContext(WTF::move(securityOriginPolicy));
 
     InspectorInstrumentation::addEventListenersToNode(*this);
     setStorageBlockingPolicy(m_settings->storageBlockingPolicy());
@@ -811,10 +823,13 @@ void Document::createNewIdentifier()
 
 Ref<Document> Document::create(Document& contextDocument)
 {
-    auto document = adoptRef(*new Document(nullptr, contextDocument.m_settings, URL(), { }));
+    return create(contextDocument, URL(), contextDocument.securityOriginPolicy());
+}
+
+Ref<Document> Document::create(Document& contextDocument, const URL& url, RefPtr<SecurityOriginPolicy>&& securityOriginPolicy)
+{
+    Ref document = adoptRef(*new Document(contextDocument, url, WTF::move(securityOriginPolicy)));
     document->addToContextsMap();
-    document->setContextDocument(contextDocument);
-    document->setSecurityOriginPolicy(contextDocument.securityOriginPolicy());
     return document;
 }
 
@@ -859,7 +874,7 @@ Document::~Document()
     ASSERT(!m_disabledFieldsetElementsCount);
     ASSERT(!m_connectedDisabledFieldsetElementsCount);
     ASSERT(m_ranges.isEmpty());
-    ASSERT(m_inDocumentShadowRoots.isEmptyIgnoringNullReferences());
+    ASSERT(m_inDocumentShadowRoots.computeIsEmpty());
 
 #if ENABLE(DEVICE_ORIENTATION) && PLATFORM(IOS_FAMILY)
     m_deviceMotionClient->deviceMotionControllerDestroyed();
@@ -1268,6 +1283,13 @@ Editor& Document::ensureEditor()
     return *m_editor;
 }
 
+DeferredFetchRegistry& Document::ensureDeferredFetchRegistry()
+{
+    if (!m_deferredFetchRegistry)
+        m_deferredFetchRegistry = DeferredFetchRegistry::create(*this);
+    return *m_deferredFetchRegistry;
+}
+
 ReportingScope& Document::ensureReportingScope()
 {
     ASSERT(m_constructionDidFinish);
@@ -1304,9 +1326,7 @@ ExceptionOr<Ref<Document>> Document::parseHTMLUnsafe(Document& context, Variant<
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
 
-    Ref document = HTMLDocument::create(nullptr, context.settings(), URL { });
-    document->setContextDocument(protect(context.contextDocument()));
-    document->setSecurityOriginPolicy(context.securityOriginPolicy());
+    Ref document = HTMLDocument::create(protect(context.contextDocument()), URL { }, context.securityOriginPolicy());
     document->setMarkupUnsafe(stringValueHolder.releaseReturnValue(), { ParserContentPolicy::AllowDeclarativeShadowRoots });
     return { document };
 }
@@ -1434,7 +1454,7 @@ void Document::addResultForSelector(ContainerNode& context, const String& select
 
 void Document::invalidateQuerySelectorResults(Node& startingNode)
 {
-    if (m_querySelectorResults.isEmptyIgnoringNullReferences())
+    if (m_querySelectorResults.computeIsEmpty())
         return;
     for (RefPtr currentNode = startingNode; currentNode; currentNode = currentNode->parentNode()) {
         if (!currentNode->hasValidQuerySelectorResults())
@@ -1446,7 +1466,7 @@ void Document::invalidateQuerySelectorResults(Node& startingNode)
 
 void Document::invalidateQuerySelectorResultsForClassAttributeChange(Node& startingNode, const SpaceSplitString& oldClasses, const SpaceSplitString& newClasses)
 {
-    if (m_querySelectorResults.isEmptyIgnoringNullReferences())
+    if (m_querySelectorResults.computeIsEmpty())
         return;
     for (RefPtr currentNode = startingNode; currentNode; currentNode = currentNode->parentNode()) {
         if (!currentNode->hasValidQuerySelectorResults())
@@ -1627,14 +1647,22 @@ void Document::childrenChanged(const ChildChange& change)
     styleScope().clearResolver();
 }
 
-static ALWAYS_INLINE CustomElementNameValidationStatus validateCustomElementNameWithoutCheckingStandardElementNames(const AtomString&);
-static ALWAYS_INLINE bool isStandardElementName(const AtomString& localName);
-
-static ALWAYS_INLINE Ref<HTMLElement> createUpgradeCandidateElement(Document& document, CustomElementRegistry* registry, const QualifiedName& name)
+NODELETE static ALWAYS_INLINE NameValidation::ElementNameKind classifyUnknownElementName(const AtomString& localName)
 {
-    ASSERT(!isStandardElementName(name.localName())); // HTMLTagNames.in lists builtin SVG/MathML elements with "-" in their names explicitly as HTMLUnknownElement.
+    return NameValidation::classifyElementName(localName);
+}
 
-    if (validateCustomElementNameWithoutCheckingStandardElementNames(name.localName()) != CustomElementNameValidationStatus::Valid) {
+NODELETE static ALWAYS_INLINE NameValidation::ElementNameKind classifyUnknownElementName(const QualifiedName& name)
+{
+    return NameValidation::classifyElementName(name.localName());
+}
+
+static ALWAYS_INLINE Ref<HTMLElement> createUpgradeCandidateElement(Document& document, CustomElementRegistry* registry, const QualifiedName& name, NameValidation::ElementNameKind kind)
+{
+    // HTMLTagNames.in lists builtin SVG/MathML elements with "-" in their names explicitly as HTMLUnknownElement.
+    ASSERT(NameValidation::validateCustomElementName(name.localName()) != CustomElementNameValidationStatus::ConflictsWithStandardElementName);
+
+    if (kind != NameValidation::ElementNameKind::CustomElementName) {
         Ref element = HTMLUnknownElement::create(name, document);
         if (!registry && document.usesNullCustomElementRegistry())
             element->setUsesNullCustomElementRegistry();
@@ -1647,9 +1675,9 @@ static ALWAYS_INLINE Ref<HTMLElement> createUpgradeCandidateElement(Document& do
     return element;
 }
 
-static ALWAYS_INLINE Ref<HTMLElement> createUpgradeCandidateElement(Document& document, CustomElementRegistry* registry, const AtomString& localName)
+static ALWAYS_INLINE Ref<HTMLElement> createUpgradeCandidateElement(Document& document, CustomElementRegistry* registry, const AtomString& localName, NameValidation::ElementNameKind kind)
 {
-    return createUpgradeCandidateElement(document, registry, QualifiedName { nullAtom(), localName, xhtmlNamespaceURI });
+    return createUpgradeCandidateElement(document, registry, QualifiedName { nullAtom(), localName, xhtmlNamespaceURI }, kind);
 }
 
 template<typename NameType>
@@ -1667,10 +1695,11 @@ static ExceptionOr<Ref<Element>> createHTMLElementWithNameValidation(Document& d
             return elementInterface->constructElementWithFallback(document, *registry, name);
     }
 
-    if (!NameValidation::isValidElementName(name)) [[unlikely]]
+    auto kind = classifyUnknownElementName(name);
+    if (kind == NameValidation::ElementNameKind::Invalid) [[unlikely]]
         return Exception { ExceptionCode::InvalidCharacterError };
 
-    return Ref<Element> { createUpgradeCandidateElement(document, registry, name) };
+    return Ref<Element> { createUpgradeCandidateElement(document, registry, name, kind) };
 }
 
 ExceptionOr<Ref<Element>> Document::createElementForBindings(const AtomString& name, Variant<String, ElementCreationOptions>&& argument)
@@ -1746,12 +1775,6 @@ ExceptionOr<Ref<CDATASection>> Document::createCDATASection(String&& data)
 
 ExceptionOr<Ref<ProcessingInstruction>> Document::createProcessingInstruction(String&& target, String&& data)
 {
-    if (!NameValidation::isValidXMLName(target))
-        return Exception { ExceptionCode::InvalidCharacterError, makeString("Invalid processing instruction target: '"_s, target, '\'') };
-
-    if (data.contains("?>"_s))
-        return Exception { ExceptionCode::InvalidCharacterError };
-
     return ProcessingInstruction::create(*this, AtomString { WTF::move(target) }, WTF::move(data));
 }
 
@@ -1790,6 +1813,7 @@ ExceptionOr<Ref<Node>> Document::importNode(Node& nodeToImport, Variant<bool, Im
     case NodeType::CDATASection:
     case NodeType::ProcessingInstruction:
     case NodeType::Comment:
+    case NodeType::DocumentType:
         return nodeToImport.cloneNodeInternal(*this, subtree ? Node::CloningOperation::Everything : Node::CloningOperation::SelfOnly, registry.get());
 
     case NodeType::Attribute: {
@@ -1797,7 +1821,6 @@ ExceptionOr<Ref<Node>> Document::importNode(Node& nodeToImport, Variant<bool, Im
         return Ref<Node> { Attr::create(protect(documentScope()), attribute.qualifiedName(), attribute.value()) };
     }
     case NodeType::Document: // Can't import a document into another document.
-    case NodeType::DocumentType: // FIXME: Support cloning a DocumentType node per DOM4.
         break;
     }
     return Exception { ExceptionCode::NotSupportedError };
@@ -1845,13 +1868,14 @@ static Ref<HTMLElement> createFallbackHTMLElement(Document& document, CustomElem
     if (registry) {
         if (RefPtr elementInterface = registry->findInterface(name)) {
             Ref element = elementInterface->createElement(document);
+            if (!name.prefix().isEmpty())
+                element->setPrefixForCustomElementUpgrade(name.prefix());
             element->setIsCustomElementUpgradeCandidate();
             element->enqueueToUpgrade(*elementInterface);
             return element;
         }
     }
-    // FIXME: Should we also check the equality of prefix between the custom element and name?
-    return createUpgradeCandidateElement(document, registry, name);
+    return createUpgradeCandidateElement(document, registry, name, classifyUnknownElementName(name));
 }
 
 // FIXME: This should really be in a possible ElementFactory class.
@@ -1888,182 +1912,11 @@ Ref<Element> Document::createElement(const QualifiedName& name, bool createdByPa
     return element.releaseNonNull();
 }
 
-// https://html.spec.whatwg.org/#valid-custom-element-name
-
-struct UnicodeCodePointRange {
-    char32_t minimum;
-    char32_t maximum;
-};
-
-#if ASSERT_ENABLED
-
-NODELETE static inline bool operator<(const UnicodeCodePointRange& a, const UnicodeCodePointRange& b)
-{
-    ASSERT(a.minimum <= a.maximum);
-    ASSERT(b.minimum <= b.maximum);
-    return a.maximum < b.minimum;
-}
-
-#endif // ASSERT_ENABLED
-
-NODELETE static inline bool operator<(const UnicodeCodePointRange& a, char32_t b)
-{
-    ASSERT(a.minimum <= a.maximum);
-    return a.maximum < b;
-}
-
-NODELETE static inline bool operator<(char32_t a, const UnicodeCodePointRange& b)
-{
-    ASSERT(b.minimum <= b.maximum);
-    return a < b.minimum;
-}
-
 CustomElementRegistry* Document::effectiveGlobalCustomElementRegistry()
 {
     if (!customElementRegistry() || customElementRegistry()->isScoped())
         return nullptr;
     return customElementRegistry();
-}
-
-NODELETE static inline bool isPotentialCustomElementNameCharacter(char32_t character)
-{
-    static constexpr auto ranges = WTF::toArray<UnicodeCodePointRange>({
-        { '-', '.' },
-        { '0', '9' },
-        { '_', '_' },
-        { 'a', 'z' },
-        { 0xB7, 0xB7 },
-        { 0xC0, 0xD6 },
-        { 0xD8, 0xF6 },
-        { 0xF8, 0x37D },
-        { 0x37F, 0x1FFF },
-        { 0x200C, 0x200D },
-        { 0x203F, 0x2040 },
-        { 0x2070, 0x218F },
-        { 0x2C00, 0x2FEF },
-        { 0x3001, 0xD7FF },
-        { 0xF900, 0xFDCF },
-        { 0xFDF0, 0xFFFD },
-        { 0x10000, 0xEFFFF },
-    });
-
-    ASSERT(std::is_sorted(std::begin(ranges), std::end(ranges)));
-    return std::binary_search(std::begin(ranges), std::end(ranges), character);
-}
-
-enum class CustomElementNameCharacterKind : uint8_t {
-    Invalid,
-    Valid,
-    Hyphen,
-    Upper,
-};
-
-NODELETE static ALWAYS_INLINE CustomElementNameCharacterKind customElementNameCharacterKind(Latin1Character character)
-{
-    using Kind = CustomElementNameCharacterKind;
-    static constexpr std::array<Kind, 256> table {
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Hyphen,  Kind::Valid,   Kind::Invalid, // -, .
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // 0-7
-        Kind::Valid,   Kind::Valid,   Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, // 8-9
-        Kind::Invalid, Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   // @, A-G
-        Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   // H-O
-        Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Upper,   // P-W
-        Kind::Upper,   Kind::Upper,   Kind::Upper,   Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Valid,   // X-Z, _
-        Kind::Invalid, Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // a-g
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // h-o
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // p-w
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, // x-z
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Valid,   // xB7
-        Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid, Kind::Invalid,
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xC0-xC7
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xC8-xCF
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Invalid, // xD0-xD6
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xD8-xDF
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xE0-xE7
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xE8-xEF
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Invalid, // xF0-xF6
-        Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   Kind::Valid,   // xF8-xFF
-    };
-    return table[character];
-}
-
-NODELETE static ALWAYS_INLINE CustomElementNameValidationStatus validateCustomElementNameWithoutCheckingStandardElementNames(const AtomString& localName)
-{
-    if (!isASCIILower(localName[0]))
-        return CustomElementNameValidationStatus::FirstCharacterIsNotLowercaseASCIILetter;
-
-    bool containsHyphen = false;
-    if (localName.is8Bit()) [[likely]] {
-        for (auto character : localName.string().span8()) {
-            switch (customElementNameCharacterKind(character)) {
-            case CustomElementNameCharacterKind::Invalid:
-                return CustomElementNameValidationStatus::ContainsDisallowedCharacter;
-            case CustomElementNameCharacterKind::Valid:
-                break;
-            case CustomElementNameCharacterKind::Hyphen:
-                containsHyphen = true;
-                break;
-            case CustomElementNameCharacterKind::Upper:
-                return CustomElementNameValidationStatus::ContainsUppercaseASCIILetter;
-            }
-        }
-    } else {
-        for (auto character : StringView(localName).codePoints()) {
-            if (isASCIIUpper(character))
-                return CustomElementNameValidationStatus::ContainsUppercaseASCIILetter;
-            if (!isPotentialCustomElementNameCharacter(character))
-                return CustomElementNameValidationStatus::ContainsDisallowedCharacter;
-            if (character == '-')
-                containsHyphen = true;
-        }
-    }
-
-    if (!containsHyphen)
-        return CustomElementNameValidationStatus::ContainsNoHyphen;
-
-    return CustomElementNameValidationStatus::Valid;
-}
-
-static ALWAYS_INLINE bool isStandardElementName(const AtomString& localName)
-{
-#if ENABLE(MATHML)
-    const auto& annotationXmlLocalName = MathMLNames::annotation_xmlTag->localName();
-#else
-    static MainThreadNeverDestroyed<const AtomString> annotationXmlLocalName("annotation-xml"_s);
-#endif
-    static MainThreadNeverDestroyed<const AtomString> colorProfileLocalName("color-profile"_s);
-
-    return localName == SVGNames::font_faceTag->localName()
-        || localName == SVGNames::font_face_formatTag->localName()
-        || localName == SVGNames::font_face_nameTag->localName()
-        || localName == SVGNames::font_face_srcTag->localName()
-        || localName == SVGNames::font_face_uriTag->localName()
-        || localName == SVGNames::missing_glyphTag->localName()
-        || localName == annotationXmlLocalName
-        || localName == colorProfileLocalName;
-}
-
-CustomElementNameValidationStatus Document::validateCustomElementName(const AtomString& localName)
-{
-    auto result = validateCustomElementNameWithoutCheckingStandardElementNames(localName);
-    if (result != CustomElementNameValidationStatus::Valid)
-        return result;
-
-    if (isStandardElementName(localName))
-        return CustomElementNameValidationStatus::ConflictsWithStandardElementName;
-
-    return CustomElementNameValidationStatus::Valid;
 }
 
 ExceptionOr<Ref<Element>> Document::createElementNS(const AtomString& namespaceURI, const AtomString& qualifiedName, Variant<String, ElementCreationOptions>&& argument)
@@ -3336,10 +3189,8 @@ std::unique_ptr<Style::ComputedStyle> Document::styleForElementIgnoringPendingSt
         return WTF::move(style->style);
     }
 
-    if (elementStyle.relations) {
-        Style::Update emptyUpdate(*this);
-        Style::commitRelations(WTF::move(elementStyle.relations), emptyUpdate);
-    }
+    if (elementStyle.relations)
+        Style::commitRelations(WTF::move(elementStyle.relations), nullptr);
 
     return WTF::move(elementStyle.style);
 }
@@ -3762,6 +3613,12 @@ void Document::willBeRemovedFromFrame()
     if (m_hasPreparedForDestruction)
         return;
 
+    // Activate any pending fetchLater() requests before the document goes away.
+    // Must happen before we start tearing down subsystems the load path relies on
+    // (e.g. the CachedResourceLoader / DocumentLoader below).
+    if (RefPtr registry = m_deferredFetchRegistry)
+        registry->documentIsBeingDestroyed();
+
 #if ENABLE(WEB_RTC)
     if (RefPtr rtcNetworkManager = m_rtcNetworkManager)
         rtcNetworkManager->unregisterMDNSNames();
@@ -3819,11 +3676,11 @@ void Document::willBeRemovedFromFrame()
     commonTeardown();
 
 #if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
-    if (!m_touchEventTargets.isEmptyIgnoringNullReferences() && parentDocument())
+    if (!m_touchEventTargets.computeIsEmpty() && parentDocument())
         protect(parentDocument())->didRemoveEventTargetNode(*this);
 #endif
 
-    if (!m_wheelEventTargets.isEmptyIgnoringNullReferences() && parentDocument())
+    if (!m_wheelEventTargets.computeIsEmpty() && parentDocument())
         protect(parentDocument())->didRemoveEventTargetNode(*this);
 
     if (RefPtr mediaQueryMatcher = m_mediaQueryMatcher)
@@ -3930,6 +3787,14 @@ void Document::platformSuspendOrStopActiveDOMObjects()
 
 void Document::suspendActiveDOMObjects(ReasonForSuspension why)
 {
+    // https://fetch.spec.whatwg.org/#deferred-fetching asks that deferred fetches be sent
+    // when the user agent expects to lose the chance to run script. A suspended page cannot
+    // run script again until it is resumed, which may never happen.
+    if (why == ReasonForSuspension::PageWillBeSuspended) {
+        if (RefPtr registry = deferredFetchRegistryIfExists())
+            registry->activateAllDeferredFetches();
+    }
+
     if (m_documentTaskGroup)
         m_documentTaskGroup->suspend();
     ScriptExecutionContext::suspendActiveDOMObjects(why);
@@ -6072,7 +5937,7 @@ ClonedDocumentType Document::clonedDocumentType() const
 
 Ref<Node> Document::cloneNodeInternal(Document&, CloningOperation type, CustomElementRegistry* registry) const
 {
-    Ref clone = createCloned(clonedDocumentType(), settings(), url(), baseURL(), m_aboutBaseURL, m_documentURI, m_compatibilityMode, m_parserContentPolicy, protect(contextDocument()), protect(securityOriginPolicy()), contentType(), protect(decoder()));
+    Ref clone = createCloned(clonedDocumentType(), url(), baseURL(), m_aboutBaseURL, m_documentURI, m_compatibilityMode, m_parserContentPolicy, protect(contextDocument()), protect(securityOriginPolicy()), contentType(), protect(decoder()));
     switch (type) {
     case CloningOperation::SelfOnly:
     case CloningOperation::SelfWithTemplateContent:
@@ -6107,20 +5972,20 @@ SerializedNode Document::serializeNode(CloningOperation type) const
     };
 }
 
-Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const Settings& settings, const URL& url, const URL& baseURL, const URL& aboutBaseURL, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, OptionSet<ParserContentPolicy> parserContentPolicy, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
+Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, const URL& url, const URL& baseURL, const URL& aboutBaseURL, const Variant<String, URL>& documentURI, DocumentCompatibilityMode compatibilityMode, OptionSet<ParserContentPolicy> parserContentPolicy, Document& contextDocument, SecurityOriginPolicy* securityOriginPolicy, const String& contentType, TextResourceDecoder* decoder)
 {
     Ref clone = [&] -> Ref<Document> {
         switch (clonedDocumentType) {
         case ClonedDocumentType::XMLDocument:
-            return XMLDocument::create(nullptr, settings, url);
+            return XMLDocument::create(contextDocument, url, securityOriginPolicy);
         case ClonedDocumentType::XHTMLDocument:
-            return XMLDocument::createXHTML(nullptr, settings, url);
+            return XMLDocument::createXHTML(contextDocument, url, securityOriginPolicy);
         case ClonedDocumentType::HTMLDocument:
-            return HTMLDocument::create(nullptr, settings, url);
+            return HTMLDocument::create(contextDocument, url, securityOriginPolicy);
         case ClonedDocumentType::SVGDocument:
-            return SVGDocument::create(nullptr, settings, url);
+            return SVGDocument::create(contextDocument, url, securityOriginPolicy);
         case ClonedDocumentType::Document:
-            return create(settings, url);
+            return create(contextDocument, url, securityOriginPolicy);
         }
         RELEASE_ASSERT_NOT_REACHED();
     } ();
@@ -6132,8 +5997,6 @@ Ref<Document> Document::createCloned(ClonedDocumentType clonedDocumentType, cons
     clone->m_documentURI = documentURI;
     clone->setCompatibilityMode(compatibilityMode);
     clone->setParserContentPolicy(parserContentPolicy);
-    clone->setContextDocument(contextDocument);
-    clone->setSecurityOriginPolicy(securityOriginPolicy);
     clone->overrideMIMEType(contentType);
     clone->setDecoder(decoder);
     return clone;
@@ -7170,20 +7033,28 @@ void Document::unregisterCollection(HTMLCollection& collection)
     if (!collection.isRootedAtTreeScope())
         return;
 
+    ASSERT(m_collectionsInvalidatedAtDocument.contains(&collection));
     m_collectionsInvalidatedAtDocument.remove(&collection);
 }
 
-void Document::collectionCachedIdNameMap(const HTMLCollection& collection)
+SUPPRESS_NODELETE void Document::collectionCachedIdNameMap(const HTMLCollection& collection)
 {
-    ASSERT_UNUSED(collection, collection.hasNamedElementCache());
+    ASSERT(collection.hasNamedElementCache());
     m_nodeListAndCollectionCounts[static_cast<unsigned>(NodeListInvalidationType::InvalidateOnIdNameAttrChange)]++;
+    if (collection.isRootedAtTreeScope())
+        m_collectionsInvalidatedAtDocument.add(const_cast<HTMLCollection*>(&collection));
 }
 
-void Document::collectionWillClearIdNameMap(const HTMLCollection& collection)
+SUPPRESS_NODELETE void Document::collectionWillClearIdNameMap(const HTMLCollection& collection)
 {
-    ASSERT_UNUSED(collection, collection.hasNamedElementCache());
+    ASSERT(collection.hasNamedElementCache());
     ASSERT(m_nodeListAndCollectionCounts[static_cast<unsigned>(NodeListInvalidationType::InvalidateOnIdNameAttrChange)]);
     m_nodeListAndCollectionCounts[static_cast<unsigned>(NodeListInvalidationType::InvalidateOnIdNameAttrChange)]--;
+    if (!collection.isRootedAtTreeScope())
+        return;
+
+    ASSERT(m_collectionsInvalidatedAtDocument.contains(const_cast<HTMLCollection*>(&collection)));
+    m_collectionsInvalidatedAtDocument.remove(const_cast<HTMLCollection*>(&collection));
 }
 
 void Document::attachNodeIterator(NodeIterator& iterator)
@@ -8001,6 +7872,8 @@ void Document::setBackForwardCacheState(BackForwardCacheState state)
             idbConnectionProxy->setContextSuspended(*this, false);
         break;
     case AboutToEnterBackForwardCache:
+        if (RefPtr registry = m_deferredFetchRegistry)
+            registry->documentIsAboutToEnterBackForwardCache();
         break;
     }
 }
@@ -8776,7 +8649,7 @@ ExceptionOr<Ref<XPathResult>> Document::evaluate(const String& expression, Node&
     return m_xpathEvaluator->evaluate(expression, contextNode, WTF::move(resolver), type, result);
 }
 
-void Document::initSecurityContext()
+void Document::initSecurityContext(RefPtr<SecurityOriginPolicy>&& securityOriginPolicy)
 {
     if (haveInitializedSecurityOrigin()) {
         ASSERT(SecurityContext::securityOrigin());
@@ -8784,10 +8657,9 @@ void Document::initSecurityContext()
     }
 
     if (!m_frame) {
-        // No source for a security context.
-        // This can occur via document.implementation.createDocument().
+        // Without a browsing context, the origin comes from the document's creator, if it has one.
         ASSERT(m_cookieURL.isNull());
-        setEmptySecurityOriginPolicyAndContentSecurityPolicy();
+        setSecurityOriginPolicyAndEmptyContentSecurityPolicy(WTF::move(securityOriginPolicy));
         return;
     }
 
@@ -9756,7 +9628,7 @@ void Document::blockRenderingOn(Element& element, ImplicitRenderBlocking implici
 void Document::unblockRenderingOn(Element& element)
 {
     m_renderBlockingElements.remove(element);
-    if (m_renderBlockingElements.isEmptyIgnoringNullReferences())
+    if (m_renderBlockingElements.computeIsEmpty())
         removeVisualUpdatePreventedReasons(VisualUpdatesPreventedReason::RenderBlocking);
 }
 
@@ -9837,7 +9709,7 @@ void Document::wheelEventHandlersChanged(Node* node)
     UNUSED_PARAM(node);
 #endif
 
-    bool haveHandlers = !m_wheelEventTargets.isEmptyIgnoringNullReferences();
+    bool haveHandlers = !m_wheelEventTargets.computeIsEmpty();
     page->chrome().client().wheelEventHandlersChanged(haveHandlers);
 }
 
@@ -9934,13 +9806,13 @@ void Document::didRemoveEventTargetNode(Node& handler)
 {
 #if ENABLE(TOUCH_EVENTS) || ENABLE(TOUCH_EVENT_REGIONS)
     if (m_touchEventTargets.removeAll(handler)) {
-        if ((&handler == this || m_touchEventTargets.isEmptyIgnoringNullReferences()) && parentDocument())
+        if ((&handler == this || m_touchEventTargets.computeIsEmpty()) && parentDocument())
             protect(parentDocument())->didRemoveEventTargetNode(*this);
     }
 #endif
 
     if (m_wheelEventTargets.removeAll(handler)) {
-        if ((&handler == this || m_wheelEventTargets.isEmptyIgnoringNullReferences()) && parentDocument())
+        if ((&handler == this || m_wheelEventTargets.computeIsEmpty()) && parentDocument())
             protect(parentDocument())->didRemoveEventTargetNode(*this);
     }
 }
@@ -10104,10 +9976,10 @@ bool Document::hasTouchEventHandlers() const
     auto touchEventHandlerCountsIsEmpty = true;
 
 #if ENABLE(IOS_TOUCH_EVENTS) && ENABLE(TOUCH_EVENT_REGIONS)
-    touchEventHandlerCountsIsEmpty = !shouldUseTouchEventRegions() || m_touchEventHandlerCounts.isEmptyIgnoringNullReferences();
+    touchEventHandlerCountsIsEmpty = !shouldUseTouchEventRegions() || m_touchEventHandlerCounts.computeIsEmpty();
 #endif
 
-    return !m_touchEventTargets.isEmptyIgnoringNullReferences() || !touchEventHandlerCountsIsEmpty;
+    return !m_touchEventTargets.computeIsEmpty() || !touchEventHandlerCountsIsEmpty;
 }
 #endif
 
@@ -10465,11 +10337,10 @@ Document& Document::ensureTemplateDocument()
 
     Ref templateDocument = [&]() -> Ref<Document> {
         if (isHTMLDocument())
-            return HTMLDocument::create(nullptr, m_settings, aboutBlankURL(), { });
-        return create(m_settings, aboutBlankURL());
+            return HTMLDocument::create(protect(contextDocument()), aboutBlankURL(), nullptr);
+        return create(protect(contextDocument()), aboutBlankURL(), nullptr);
     }();
     lazyInitialize(m_templateDocument, templateDocument.copyRef());
-    templateDocument->setContextDocument(contextDocument());
     templateDocument->setTemplateDocumentHost(this); // balanced in dtor.
 
     return *m_templateDocument;
@@ -11597,7 +11468,7 @@ void Document::keyframesRuleDidChange(const String& name)
             continue;
 
         auto owningElement = cssAnimation->owningElement();
-        if (!owningElement || !owningElement->element.isConnected() || &owningElement->element.document() != this)
+        if (!owningElement || !owningElement->element->isConnected() || &owningElement->element->document() != this)
             continue;
 
         cssAnimation->keyframesRuleDidChange();
@@ -12428,7 +12299,7 @@ void Document::prepareCanvasesForDisplayOrFlushIfNeeded()
 void Document::addCanvasNeedingPreparationForDisplayOrFlush(CanvasRenderingContext& context)
 {
     if (context.hasDeferredOperations() || context.needsPreparationForDisplay()) {
-        bool shouldSchedule = m_canvasContextsToPrepare.isEmptyIgnoringNullReferences();
+        bool shouldSchedule = m_canvasContextsToPrepare.computeIsEmpty();
         m_canvasContextsToPrepare.add(context);
         context.setIsInPreparationForDisplayOrFlush(true);
         if (shouldSchedule)
@@ -12455,7 +12326,7 @@ void Document::serviceCanvasPaintEvents()
 
 void Document::requestCanvasPaintEvent(HTMLCanvasElement& canvas)
 {
-    bool shouldSchedule = m_canvasesNeedingPaintEvent.isEmptyIgnoringNullReferences();
+    bool shouldSchedule = m_canvasesNeedingPaintEvent.computeIsEmpty();
     m_canvasesNeedingPaintEvent.add(canvas);
     if (shouldSchedule)
         scheduleRenderingUpdate(RenderingUpdateStep::CanvasPaintEvent);
@@ -12831,7 +12702,7 @@ void Document::performPendingViewTransitions()
 String Document::mediaKeysStorageDirectory()
 {
     RefPtr currentPage = page();
-    return currentPage ? currentPage->ensureMediaKeysStorageDirectoryForOrigin(securityOrigin().data()) : emptyString();
+    return currentPage ? currentPage->ensureMediaKeysStorageDirectoryForOrigin(securityOrigin().data(), frameID()) : emptyString();
 }
 
 PermissionsPolicy Document::permissionsPolicy() const

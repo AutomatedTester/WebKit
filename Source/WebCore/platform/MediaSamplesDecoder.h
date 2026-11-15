@@ -57,6 +57,8 @@ public:
         SoftwareAllowed = 1 << 1,
         HardwareAllowed = 1 << 2,
         UseSharedMemory = 1 << 3,
+        // Decode in software formats normally left to a hardware decoder.
+        ForceSoftware = 1 << 4,
     };
     using Filters = OptionSet<Filter>;
 
@@ -64,6 +66,7 @@ public:
     using DecodePromise = NativePromise<Vector<MediaSamplesBlock>, PlatformMediaError>;
 
     WEBCORE_EXPORT static bool canDecode(const TrackInfo&, Filters);
+    WEBCORE_EXPORT static bool isHardwareDecodable(const TrackInfo&);
     WEBCORE_EXPORT static Ref<CreatePromise> create(const TrackInfo&, Filters);
     WEBCORE_EXPORT ~MediaSamplesDecoder() WTF_IGNORES_THREAD_SAFETY_ANALYSIS;
 

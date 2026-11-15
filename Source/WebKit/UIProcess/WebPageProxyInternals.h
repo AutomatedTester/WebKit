@@ -39,6 +39,7 @@
 #include "PDFDisplayMode.h"
 #include "PageLoadState.h"
 #include "ProcessActivityGroup.h"
+#include "ProcessTerminationReason.h"
 #include "ProcessThrottler.h"
 #include "ScrollingAccelerationCurve.h"
 #include "TextExtractionCache.h"
@@ -68,6 +69,7 @@
 #include <WebCore/ViewportSegments.h>
 #include <pal/HysteresisActivity.h>
 #include <wtf/CallbackAggregator.h>
+#include <wtf/Markable.h>
 #include <wtf/UUID.h>
 
 #if ENABLE(APPLE_PAY)
@@ -195,6 +197,17 @@ struct TouchEventTracking {
 
 #endif
 
+struct SubframeTerminationEvent {
+    unsigned identifier { 1 };
+    ProcessTerminationReason reason { ProcessTerminationReason::Crash };
+    bool clientNotified { false };
+};
+
+struct SubframeTerminationEventMarkableTraits {
+    static bool isEmptyValue(const SubframeTerminationEvent& event) { return !event.identifier; }
+    static SubframeTerminationEvent emptyValue() { return { .identifier = 0 }; }
+};
+
 struct WebPageProxy::Internals final : WebPopupMenuProxy::Client
 #if ENABLE(APPLE_PAY)
     , WebPaymentCoordinatorProxy::Client
@@ -274,9 +287,15 @@ public:
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::FloatSize minimumUnobscuredSize;
     Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
+    // Events retired from the queue because their process paused at the debugger. They finish dispatching in the
+    // paused process's nested run loop, and their late replies are still honored so they can reach remote frames.
+    Vector<Ref<NativeWebMouseEvent>> mouseEventsForPausedProcess;
     std::optional<WebCore::FrameIdentifier> lastFrameHandlingMouseMove;
     Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
     RunLoop::Timer remoteFrameMouseEventTimeoutTimer;
+    // The process the queue head is waiting on. One is enough: only the head event blocks the queue, and its hops
+    // are a sequential chain (each forward starts from the previous hop's reply), so it never awaits two at once.
+    std::optional<WebCore::ProcessIdentifier> processAwaitingMouseEventReply;
     WebCore::MediaProducerMutedStateFlags mutedState;
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
@@ -295,6 +314,8 @@ public:
     std::optional<PrivateClickMeasurementAndMetadata> privateClickMeasurement;
     WebCore::MediaProducerMediaStateFlags reportedMediaCaptureState;
     RunLoop::Timer resetRecentCrashCountTimer;
+    Markable<SubframeTerminationEvent, SubframeTerminationEventMarkableTraits> subframeTerminationEvent;
+    unsigned lastSubframeTerminationEventIdentifier { 0 };
     WebCore::RectEdges<bool> rubberBandableEdges { true, true, true, true };
     bool alwaysBounceVertical { true };
     bool alwaysBounceHorizontal { true };

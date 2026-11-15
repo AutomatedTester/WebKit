@@ -1693,8 +1693,7 @@ static void drawPDFPage(PDFDocument *pdfDocument, CFIndex pageIndex, CGContextRe
 
     CGAffineTransform transform = CGContextGetCTM(context);
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL PDFAnnotation *annotation in [pdfPage annotations]) {
+    for (PDFAnnotation *annotation in [pdfPage annotations]) {
         if (![[annotation valueForAnnotationKey:PAL::get_PDFKit_PDFAnnotationKeySubtypeSingleton()] isEqualToString:PAL::get_PDFKit_PDFAnnotationSubtypeLinkSingleton()])
             continue;
 
@@ -2077,7 +2076,8 @@ void WebPage::drawPrintingRectToSnapshot(RemoteSnapshotIdentifier snapshotIdenti
     ASSERT(coreFrame->document()->printing());
     PrintContextAccessScope scope { *this };
 
-    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::DisplayList, rect, imageSize, MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
+    // Painted at the size of the image.
+    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::DisplayList, IntRect { { }, imageSize }, { 1, 1 }, imageSize, MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
         float printingScale = static_cast<float>(imageSize.width()) / rect.width();
         context.scale(printingScale);
 
@@ -2117,7 +2117,7 @@ void WebPage::drawPrintingPagesToSnapshot(RemoteSnapshotIdentifier snapshotIdent
 
     FloatRect mediaBox = printedPageMediaBox(printInfo);
 
-    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::PDFDocument, mediaBox, mediaBox.size(), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
+    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::PDFDocument, mediaBox, { 1, 1 }, mediaBox.size(), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
         drawPrintContextPagesToGraphicsContext(context, mediaBox, first, count);
     });
 }
@@ -2469,6 +2469,7 @@ void WebPage::willCommitMainFrameData(MainFrameData& data, const TransactionID& 
     data.viewportMetaTagWidthWasExplicit = m_viewportConfiguration.viewportArguments().widthWasExplicit;
     data.viewportMetaTagCameFromImageDocument = m_viewportConfiguration.viewportArguments().type == ViewportArguments::Type::ImageDocument;
     data.avoidsUnsafeArea = m_viewportConfiguration.avoidsUnsafeArea();
+    data.viewportFitEdges = m_viewportConfiguration.viewportFitEdges();
     data.isInStableState = m_isInStableState;
     if (RefPtr document = mainFrameView->frame().document())
         data.hasMainThreadScrollDrivenAnimations = document->hasProgressBasedScrollDrivenAnimation();
@@ -2534,11 +2535,6 @@ bool WebPage::isSpeaking()
 bool WebPage::shouldAllowSingleClickToChangeSelection(WebCore::Node& targetNode, const WebCore::VisibleSelection& newSelection, WebCore::MouseEventInputSource inputSource)
 {
 #if !PLATFORM(MAC) || HAVE(APPKIT_GESTURES_SUPPORT)
-#if HAVE(APPKIT_GESTURES_SUPPORT)
-    if (!m_page->settings().useAppKitGestures())
-        return true;
-#endif
-
     if (RefPtr editableRoot = newSelection.rootEditableElement(); editableRoot && editableRoot == targetNode.rootEditableElement()) {
         // FIXME: This logic should be made consistent for both macOS and iOS.
 #if PLATFORM(MAC)
@@ -2870,8 +2866,8 @@ static void convertPositionInformationToMainFrameCoordinates(const LocalFrameVie
     };
 
     information.request.point = convertPoint(information.request.point);
-    if (information.automationAdjustedInteractionLocation)
-        information.automationAdjustedInteractionLocation = convertPoint(*information.automationAdjustedInteractionLocation);
+    if (information.nearbySliderInteractionLocation)
+        information.nearbySliderInteractionLocation = convertPoint(*information.nearbySliderInteractionLocation);
 
     information.bounds = convertRect(information.bounds);
     information.adjustedPointForNodeRespondingToClickEvents = localRootView.convertToRootViewAcrossIsolatedFrames(information.adjustedPointForNodeRespondingToClickEvents);
@@ -3985,7 +3981,7 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
 #if HAVE(APPKIT_GESTURES_SUPPORT)
     RefPtr<HTMLImageElement> imageThatMayZoomInPlace;
     Vector<String> imageZoomStateBeforeClick;
-    if (m_page->settings().useAppKitGestures() && !m_elementHoverActivatedByClick) {
+    if (!m_elementHoverActivatedByClick) {
         imageThatMayZoomInPlace = imageThatMayZoomInPlaceAtPointInRootView(*localRootFrame, roundedAdjustedPoint);
         if (imageThatMayZoomInPlace)
             imageZoomStateBeforeClick = zoomStateForImage(*imageThatMayZoomInPlace);

@@ -38,7 +38,6 @@
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
-#include <WebCore/ProcessSwapDisposition.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ScriptTrackingPrivacyCategory.h>
@@ -1321,7 +1320,7 @@ public:
     void opportunisticallyRunIdleCallbacks(MonotonicTime deadline);
     WEBCORE_EXPORT void performOpportunisticallyScheduledTasks(MonotonicTime deadline);
     void deleteRemovedNodesAndDetachedRenderers();
-    String ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData&);
+    String ensureMediaKeysStorageDirectoryForOrigin(const SecurityOriginData&, std::optional<FrameIdentifier>);
     WEBCORE_EXPORT void setMediaKeysStorageDirectory(const String&);
 
     bool isWaitingForLoadToFinish() const { return m_isWaitingForLoadToFinish; }

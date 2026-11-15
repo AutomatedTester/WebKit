@@ -896,7 +896,7 @@ webkit.org/b/273396 css3/masking/clip-path-border-radius-border-box-000.html [ I
 webkit.org/b/273396 css3/masking/clip-path-border-radius-stroke-box-000.html [ ImageOnlyFailure ]
 webkit.org/b/273396 css3/masking/clip-path-border-radius-view-box-000.html [ ImageOnlyFailure ]
 webkit.org/b/273396 fast/canvas/canvas-filter-drawing.html [ ImageOnlyFailure ]
-webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-backgrounds/css-border-radius-001.html [ ImageOnlyFailure ]
+webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-borders/css-border-radius-001.html [ ImageOnlyFailure ]
 webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-fonts/font-size-adjust-012.html [ ImageOnlyFailure ]
 webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-fonts/font-size-adjust-013.html [ ImageOnlyFailure ]
 webkit.org/b/273396 imported/w3c/web-platform-tests/css/css-masking/clip-path/animations/clip-path-animation-custom-timing-function.html [ ImageOnlyFailure ]
@@ -1309,6 +1309,8 @@ webkit.org/b/329970 [ Debug ] media/video-orientation.html [ Failure Pass ]
 webkit.org/b/329973 fullscreen/full-screen-enter-while-exiting-mid-completion-handler.html [ Crash Pass ]
 webkit.org/b/329973 [ Debug ] fullscreen/full-screen-enter-while-exiting-fully-mid-completion-handler.html [ Crash Pass ]
 webkit.org/b/330314 [ Debug ] imported/w3c/web-platform-tests/css/css-overflow/scrollbar-gutter-scroll-into-view.html [ ImageOnlyFailure Pass ]
+
+webkit.org/b/330280 fast/events/touch/tap-with-prevented-touchmove-within-threshold-clicks.html [ Failure ]
 
 webkit.org/b/330505 [ Debug ] imported/w3c/web-platform-tests/hr-time/idlharness.any.serviceworker.html [ Failure Pass ]
 

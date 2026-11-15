@@ -110,7 +110,6 @@ bool defaultScrollAnimatorEnabled();
 bool defaultPassiveWheelListenersAsDefaultOnDocument();
 bool defaultWheelEventGesturesBecomeNonBlocking();
 bool defaultAppleMailPaginationQuirkEnabled();
-bool defaultUseAppKitGestures();
 bool defaultTextInputClientSelectionUpdatesEnabled();
 #endif
 
@@ -215,6 +214,7 @@ bool defaultIFrameResourceMonitoringEnabled();
 #endif
 
 bool defaultSearchInputResultsAttributeEnabled();
+bool defaultSiteIsolationEnabled();
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
 bool defaultPreferSpatialAudioExperience();

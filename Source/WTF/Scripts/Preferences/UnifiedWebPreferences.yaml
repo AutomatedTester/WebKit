@@ -1012,6 +1012,14 @@ CSSFontVariantEmojiEnabled:
       "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
 
+CSSFreeformGradientsEnabled:
+  type: bool
+  status: unstable
+  category: css
+  humanReadableName: "CSS freeform gradients"
+  humanReadableDescription: "Enable support for CSS freeform gradients."
+  defaultValue: false
+
 CSSFunctionAtRuleEnabled:
   type: bool
   status: stable
@@ -1251,6 +1259,14 @@ CSSSelectorJITCompilerEnabled:
   condition: ENABLE(CSS_SELECTOR_JIT)
   defaultValue: true
 
+CSSSingleAxisScrollContainersEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "CSS single-axis scroll containers"
+  humanReadableDescription: "Allow overflow: clip in the other axis of a scroll container"
+  defaultValue: false
+
 CSSSizeShorthandEnabled:
   type: bool
   status: stable
@@ -1383,14 +1399,6 @@ CSSURLIntegrityModifierEnabled:
   category: css
   humanReadableName: "CSS URL Modifiers: integrity()"
   humanReadableDescription: "Enable support for CSS Values and Units Module Level 5 URL integrity() modifier"
-  defaultValue: true
-
-CSSURLModifiersEnabled:
-  type: bool
-  status: stable
-  category: css
-  humanReadableName: "CSS URL Modifiers"
-  humanReadableDescription: "Enable support for CSS Values and Units Module Level 5 URL modifiers"
   defaultValue: true
 
 CSSUnprefixedBackdropFilterEnabled:
@@ -2467,6 +2475,14 @@ FasterClicksEnabled:
   condition: PLATFORM(IOS_FAMILY)
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: true
+
+FetchLaterAPIEnabled:
+  type: bool
+  status: preview
+  category: networking
+  humanReadableName: "fetchLater() API"
+  humanReadableDescription: "Enable the fetchLater() deferred fetch API"
+  defaultValue: false
 
 FetchUploadStreamsEnabled:
   type: bool
@@ -4347,6 +4363,12 @@ MediaVideoCodecIDsAllowedInLockdownMode:
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: '"avc1,zavc,qavc,cavc"_str'
 
+MediaVideoCodecIDsDecodedInContentProcess:
+  type: String
+  status: embedder
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: '"vp08,vp09,av01"_str'
+
 MetaViewportInteractiveWidgetEnabled:
   type: bool
   status: stable
@@ -4889,11 +4911,15 @@ PasswordEchoEnabled:
 
 PasswordFieldScreenCaptureProtectionEnabled:
   type: bool
-  status: unstable
+  status: internal
   category: html
   humanReadableName: "Password field screen capture protection"
   humanReadableDescription: "Hide password fields from screenshots, screen sharing and screen recording"
-  defaultValue: false
+  defaultValue:
+    default: false
+    WebKit:
+      "PLATFORM(IOS_FAMILY)": true
+      default: false
 
 PeerConnectionEnabled:
   type: bool
@@ -4917,6 +4943,14 @@ PeerConnectionVideoScalingAdaptationDisabled:
   humanReadableName: "WebRTC Peer Connection Video Scaling Adaptation"
   humanReadableDescription: "Disable RTCPeerConnection Video Scaling Adaptation"
   condition: ENABLE(WEB_RTC)
+  defaultValue: false
+
+PerEdgeViewportFitEnabled:
+  type: bool
+  status: testable
+  category: css
+  humanReadableName: "Per-edge viewport-fit"
+  humanReadableDescription: "Enable the viewport-fit-top, viewport-fit-left, viewport-fit-bottom and viewport-fit-right attributes on the viewport meta element"
   defaultValue: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
@@ -6054,6 +6088,16 @@ SiteIsolationSharedProcessEnabled:
   defaultValue: true
   sharedPreferenceForWebProcess: true
 
+SiteIsolationSharedProcessEnhancedSecurityEnabled:
+  type: bool
+  status: internal
+  defaultsOverridable: true
+  category: security
+  humanReadableName: "Site Isolation: Enhanced Security for shared process"
+  humanReadableDescription: "Use Enhanced Security for the Site Isolation shared Web process"
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
+
 SlowFrameIndicatorVisible:
   type: bool
   status: internal
@@ -6695,37 +6739,6 @@ UseAlternatePDFHUD:
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: true
 
-UseAppKitGestures:
-  type: bool
-  status: internal
-  defaultsOverridable: true
-  humanReadableName: "AppKit Gestures"
-  humanReadableDescription: "Use AppKit Gestures"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
-UseAppKitGesturesForGestureEvents:
-  type: bool
-  status: internal
-  humanReadableName: "AppKit gestures for gesture events"
-  humanReadableDescription: "Use AppKit gestures to drive gesture event synthesis"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
-UseAppKitGesturesForPointerEvents:
-  type: bool
-  status: internal
-  humanReadableName: "AppKit gestures for pointer events"
-  humanReadableDescription: "Use AppKit gestures to drive DOM pointer events directly, rather than deriving them from synthesized mouse events"
-  condition: PLATFORM(MAC)
-  defaultValue:
-    default: false
-    WebKit: defaultUseAppKitGestures()
-
 UseAsyncUIKitInteractions:
   type: bool
   status: internal
@@ -7001,6 +7014,15 @@ VideoRendererUseDecompressionSessionForProtected:
     "PLATFORM(VISION)" : true
     default: false
     WebKitLegacy: false
+  sharedPreferenceForWebProcess: true
+
+VideoSoftwareDecodingInContentProcessEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Video software decoding in content process"
+  humanReadableDescription: "Decode the video codecs listed in MediaVideoCodecIDsDecodedInContentProcess in software in the content process and send the decoded frames to the GPU process"
+  defaultValue: false
   sharedPreferenceForWebProcess: true
 
 ViewGestureDebuggingEnabled:

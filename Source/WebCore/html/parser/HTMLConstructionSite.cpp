@@ -53,6 +53,7 @@
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
+#include "NameValidation.h"
 #include "NodeName.h"
 #include "NotImplemented.h"
 #include "ProcessingInstruction.h"
@@ -521,13 +522,13 @@ void HTMLConstructionSite::insertDoctype(AtomHTMLToken&& token)
 void HTMLConstructionSite::insertProcessingInstruction(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
-    attachLater(protect(currentNode()), ProcessingInstruction::create(protect(ownerDocumentForCurrentNode()), token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(protect(currentNode()), ProcessingInstruction::createWithoutValidation(protect(ownerDocumentForCurrentNode()), token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertProcessingInstructionOnDocument(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
-    attachLater(protect(m_attachmentRoot), ProcessingInstruction::create(protect(m_document), token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(protect(m_attachmentRoot), ProcessingInstruction::createWithoutValidation(protect(m_document), token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertProcessingInstructionOnHTMLHtmlElement(AtomHTMLToken&& token)
@@ -535,7 +536,7 @@ void HTMLConstructionSite::insertProcessingInstructionOnHTMLHtmlElement(AtomHTML
     ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
     Ref root = m_openElements.rootNode();
     Ref rootDocument = root->document();
-    attachLater(WTF::move(root), ProcessingInstruction::create(rootDocument, token.processingInstructionTarget(), token.processingInstructionData()));
+    attachLater(WTF::move(root), ProcessingInstruction::createWithoutValidation(rootDocument, token.processingInstructionTarget(), token.processingInstructionData()));
 }
 
 void HTMLConstructionSite::insertComment(AtomHTMLToken&& token)
@@ -902,7 +903,7 @@ std::tuple<RefPtr<HTMLElement>, RefPtr<JSCustomElementInterface>, RefPtr<CustomE
         }
         if (!element) {
             auto qualifiedName = qualifiedNameForHTMLTag(token);
-            if (Document::validateCustomElementName(token.name()) == CustomElementNameValidationStatus::Valid) {
+            if (NameValidation::validateCustomElementName(token.name()) == CustomElementNameValidationStatus::Valid) {
                 element = HTMLMaybeFormAssociatedCustomElement::create(qualifiedName, ownerDocument);
                 element->setIsCustomElementUpgradeCandidate();
             } else

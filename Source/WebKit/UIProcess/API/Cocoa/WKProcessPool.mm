@@ -376,12 +376,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (void)_addSupportedPlugin:(NSString *) domain named:(NSString *) name withMimeTypes: (NSSet<NSString *> *) nsMimeTypes withExtensions: (NSSet<NSString *> *) nsExtensions
 {
     HashSet<String> mimeTypes;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *mimeType in nsMimeTypes)
+    for (NSString *mimeType in nsMimeTypes)
         mimeTypes.add(mimeType);
     HashSet<String> extensions;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *extension in nsExtensions)
+    for (NSString *extension in nsExtensions)
         extensions.add(extension);
 
     protect(*_processPool)->addSupportedPlugin(domain, name, WTF::move(mimeTypes), WTF::move(extensions));
@@ -479,6 +477,15 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return WebKit::ProcessTerminationReason::Crash;
     }();
     return requestWebProcessTermination(protect(*_processPool), pid, terminationReason);
+}
+
+- (BOOL)_detectAndHandleTerminationForTesting:(pid_t)pid
+{
+    for (Ref process : borrow(_processPool->processes()).get()) {
+        if (process->processID() == pid)
+            return process->detectAndHandleTermination();
+    }
+    return NO;
 }
 
 - (BOOL)_isWebProcessSuspended:(pid_t)pid

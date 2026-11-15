@@ -229,6 +229,9 @@ LineLayout::~LineLayout()
         auto mayHaveInvalidContent = isDamaged() || !m_inlineContent;
         if (m_document->renderTreeState() == Document::RenderTreeState::BeingDestroyed || mayHaveInvalidContent || !m_inlineContentCache)
             return false;
+        // 'white-space-trim' discards inline items, so the breaking positions would be missing the discarded white space.
+        if (m_inlineContentCache->inlineItems().hasWhiteSpaceTrim())
+            return false;
         return !m_inlineContentCache->inlineItems().isPopulatedFromCache();
     };
     if (shouldPopulateBreakingPositionCache()) {
@@ -460,7 +463,7 @@ NODELETE static inline std::optional<Layout::BlockLayoutState::LineClamp> lineCl
     if (auto legacyLineClamp = layoutState.legacyLineClamp())
         return Layout::BlockLayoutState::LineClamp { std::max(legacyLineClamp->maximumLineCount - legacyLineClamp->currentLineCount, static_cast<size_t>(0)), false, true };
     if (auto lineClamp = layoutState.lineClamp())
-        return Layout::BlockLayoutState::LineClamp { lineClamp->maximumLines, lineClamp->shouldDiscardOverflow, false, lineClamp->isStableTextWrap };
+        return Layout::BlockLayoutState::LineClamp { lineClamp->maximumLines, lineClamp->shouldDiscardOverflow, false, lineClamp->isStableTextWrap, lineClamp->shouldTrimEndAtClampPoint };
     return { };
 }
 

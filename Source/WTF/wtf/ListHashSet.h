@@ -188,7 +188,9 @@ public:
 
     // Useful when the key type is WeakPtr
     size_t computeSize() const requires (ValueTraits::hasIsWeakNullValueFunction);
-    bool isEmptyIgnoringNullReferences() const requires (ValueTraits::hasIsWeakNullValueFunction);
+    size_t computeSize() requires (ValueTraits::hasIsWeakNullValueFunction);
+    bool computeIsEmpty() const requires (ValueTraits::hasIsWeakNullValueFunction);
+    bool computeIsEmpty() requires (ValueTraits::hasIsWeakNullValueFunction);
     void removeWeakNullEntries() requires (ValueTraits::hasIsWeakNullValueFunction);
 
     // Overloads for smart pointer values that take the raw pointer type as the parameter.
@@ -284,7 +286,7 @@ inline void ListHashSetLink::insertBefore(ListHashSetLink* next)
     m_next->m_prev = this;
 }
 
-template<typename ValueArg, typename HashArg> class ListHashSetIterator {
+template<typename ValueArg, typename HashArg> class WTF_VIEW_TYPE ListHashSetIterator {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ListHashSetIterator);
 private:
     typedef ListHashSet<ValueArg, HashArg> ListHashSetType;
@@ -344,7 +346,7 @@ private:
     const_iterator m_iterator;
 };
 
-template<typename ValueArg, typename HashArg> class ListHashSetConstIterator {
+template<typename ValueArg, typename HashArg> class WTF_VIEW_TYPE ListHashSetConstIterator {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ListHashSetConstIterator);
 private:
     typedef ListHashSet<ValueArg, HashArg> ListHashSetType;
@@ -843,9 +845,21 @@ inline size_t ListHashSet<T, U>::computeSize() const requires (ValueTraits::hasI
 }
 
 template<typename T, typename U>
-inline bool ListHashSet<T, U>::isEmptyIgnoringNullReferences() const requires (ValueTraits::hasIsWeakNullValueFunction)
+inline size_t ListHashSet<T, U>::computeSize() requires (ValueTraits::hasIsWeakNullValueFunction)
 {
-    return m_impl.isEmptyIgnoringNullReferences();
+    return m_impl.computeSize();
+}
+
+template<typename T, typename U>
+inline bool ListHashSet<T, U>::computeIsEmpty() const requires (ValueTraits::hasIsWeakNullValueFunction)
+{
+    return m_impl.computeIsEmpty();
+}
+
+template<typename T, typename U>
+inline bool ListHashSet<T, U>::computeIsEmpty() requires (ValueTraits::hasIsWeakNullValueFunction)
+{
+    return m_impl.computeIsEmpty();
 }
 
 template<typename T, typename U>

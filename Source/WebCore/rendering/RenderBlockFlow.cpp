@@ -980,6 +980,8 @@ void RenderBlockFlow::layoutInFlowChildren(RelayoutChildren relayoutChildren, La
         return;
     }
 
+    // With line-clamp, trim-end applies to the last line before the clamp point (see LineBoxBuilder::applyTextBoxTrimOnLineBoxIfNeeded).
+    auto didTrimEndAtClampPoint = false;
     {
         auto textBoxTrimmer = TextBoxTrimmer { *this };
         auto lineClampUpdater = LineClampUpdater { *this };
@@ -1021,10 +1023,15 @@ void RenderBlockFlow::layoutInFlowChildren(RelayoutChildren relayoutChildren, La
             lineClampUpdater.resetLineClamp();
             relayoutContent();
         }
+        auto lineClamp = layoutState ? layoutState->lineClamp() : std::nullopt;
+        didTrimEndAtClampPoint = lineClamp && lineClamp->shouldTrimEndAtClampPoint && !lineClamp->maximumLines;
     }
 
     {
         auto applyTextBoxTrimEndIfNeeded = [&] {
+            // The content after the clamp point is not rendered, and laying it out again here would not clamp it.
+            if (didTrimEndAtClampPoint)
+                return;
             // With block children and blocks-inside-inline, there's no way to tell what the last formatted line is until after we finished laying out the subtree.
             // Dirty the last formatted line (in the last IFC) and issue relayout with forcing trimming the last line if applicable.
             if (CheckedPtr rootForLastFormattedLine = TextBoxTrimmer::lastInlineFormattingContextRootForTrimEnd(*this)) {
@@ -1138,7 +1145,7 @@ void RenderBlockFlow::layoutBlockChildren(RelayoutChildren relayoutChildren, Lay
 
         // What follows this child is after the clamp point.
         if (auto* layoutState = view().frameView().layoutContext().layoutState(); layoutState && layoutState->lineClamp() && layoutState->lineClamp()->clampAfterBox == &child)
-            layoutState->setLineClamp(RenderLayoutState::LineClamp { 0, layoutState->lineClamp()->shouldDiscardOverflow, { } });
+            layoutState->setLineClamp(RenderLayoutState::LineClamp { 0, layoutState->lineClamp()->shouldDiscardOverflow, { }, false, false, layoutState->lineClamp()->shouldTrimEndAtClampPoint });
     }
     
     if (style().marginTrim().contains(Style::MarginTrimSide::BlockEnd))
@@ -2121,7 +2128,7 @@ LayoutUnit RenderBlockFlow::applyBeforeBreak(RenderBox& child, LayoutUnit logica
     bool checkFragmentBreaks = false;
     bool checkBeforeAlways = (checkColumnBreaks && child.style().breakBefore() == BreakBetween::Column)
         || (checkPageBreaks && alwaysPageBreak(child.style().breakBefore()));
-    if (checkBeforeAlways && inNormalFlow(child) && hasNextPage(logicalOffset, IncludePageBoundary)) {
+    if (checkBeforeAlways && inNormalFlow(child) && hasNextPage(logicalOffset)) {
         if (checkColumnBreaks) {
             if (isInsideMulticolFlow)
                 checkFragmentBreaks = true;
@@ -2146,7 +2153,7 @@ LayoutUnit RenderBlockFlow::applyAfterBreak(RenderBox& child, LayoutUnit logical
     bool checkFragmentBreaks = false;
     bool checkAfterAlways = (checkColumnBreaks && child.style().breakAfter() == BreakBetween::Column)
         || (checkPageBreaks && alwaysPageBreak(child.style().breakAfter()));
-    if (checkAfterAlways && inNormalFlow(child) && hasNextPage(logicalOffset, IncludePageBoundary)) {
+    if (checkAfterAlways && inNormalFlow(child) && hasNextPage(logicalOffset)) {
 
         // So our margin doesn't participate in the next collapsing steps.
         marginInfo.clearMargin();
@@ -2440,7 +2447,7 @@ void RenderBlockFlow::clearShouldBreakAtLineToAvoidWidow() const
     rareBlockFlowData()->m_lineBreakToAvoidWidow = -1;
 }
 
-bool RenderBlockFlow::hasNextPage(LayoutUnit logicalOffset, PageBoundaryRule pageBoundaryRule) const
+bool RenderBlockFlow::hasNextPage(LayoutUnit logicalOffset) const
 {
     ASSERT(view().frameView().layoutContext().layoutState() && view().frameView().layoutContext().layoutState()->isPaginated());
 
@@ -2454,8 +2461,9 @@ bool RenderBlockFlow::hasNextPage(LayoutUnit logicalOffset, PageBoundaryRule pag
     if (!fragment)
         return false;
 
+    // The last column set makes new columns to accommodate content.
     if (fragment->isLastFragment())
-        return fragment->isRenderFragmentContainerSet() || (pageBoundaryRule == IncludePageBoundary && pageOffset == fragment->logicalTopForFragmentedFlowContent());
+        return true;
 
     RenderFragmentContainer* startFragment = nullptr;
     RenderFragmentContainer* endFragment = nullptr;

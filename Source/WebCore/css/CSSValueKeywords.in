@@ -1019,6 +1019,7 @@ verso
 
 // CSS Shapes
 margin-box
+half-border-box
 
 // clip-path
 stroke-box
@@ -1386,6 +1387,7 @@ filter
 -webkit-filter
 paint
 mesh-gradient
+freeform-gradient
 
 // image-set's MIME type
 type

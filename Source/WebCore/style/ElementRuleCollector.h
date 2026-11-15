@@ -50,7 +50,7 @@ struct MatchedRule {
 class ElementRuleCollector {
 public:
     ElementRuleCollector(const Element&, const ScopeRuleSets&, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
-    ElementRuleCollector(const Element&, const RuleSet& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
+    ElementRuleCollector(const Element&, Ref<const RuleSet>&& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
 
     void setIncludeEmptyRules(bool value) { m_shouldIncludeEmptyRules = value; }
 
@@ -145,7 +145,7 @@ private:
     Ref<MatchResult> m_result;
     Relations m_styleRelations;
     EnumSet<PseudoElementType> m_matchedPseudoElements;
-    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
+    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NoGeneratedContent };
 };
 
 ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector* rules, const MatchRequest& matchRequest)

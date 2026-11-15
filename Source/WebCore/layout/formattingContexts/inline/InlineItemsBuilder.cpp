@@ -181,7 +181,8 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
     ASSERT(inlineBoxStart == inlineBoxEnd);
     ASSERT(m_inlineBoxCount == inlineBoxStart);
     ASSERT(m_hasTextAndLineBreakOnlyContent == hasTextAndLineBreakOnlyContent);
-    ASSERT(m_hasTextWithStyleOfItsOwn == hasTextWithStyleOfItsOwn);
+    // 'white-space-trim' may discard every item of a text box, which leaves the flag computed from the boxes set.
+    ASSERT(m_hasTextWithStyleOfItsOwn == hasTextWithStyleOfItsOwn || (m_hasWhiteSpaceTrim && m_hasTextWithStyleOfItsOwn));
 #endif
 }
 
@@ -192,67 +193,72 @@ NODELETE static bool isNonReplacedInlineBlock(const Box& layoutBox)
     return layoutBox.isInlineBlockBox() && !layoutBox.isReplacedBox() && !layoutBox.isIFrame();
 }
 
-void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inlineItemList)
+NODELETE static bool isDocumentWhiteSpace(const InlineItem& item)
 {
-    // https://drafts.csswg.org/css-text-4/#white-space-trim
-    // 'discard-before' / 'discard-after' remove the collapsible white space immediately before the start /
-    // after the end of an element; 'discard-inner' removes the collapsible white space at the start and end
-    // of the element's own content (i.e. immediately inside its edges). Discarding the corresponding inline
-    // items here -before line building, bidi resolution and intrinsic sizing consume them- keeps the removed
-    // white space out of every downstream computation (rendering, soft wrap opportunities and min/max-content)
-    // at once. Inline box boundaries are transparent to this adjacency, matching white space collapsing.
+    // https://drafts.csswg.org/css-text-4/#document-white-space-characters
+    // Spaces, tabs and segment breaks, preserved or not.
+    if (auto* textItem = dynamicDowncast<InlineTextItem>(item))
+        return textItem->isWhitespace();
+    auto* softLineBreakItem = dynamicDowncast<InlineSoftLineBreakItem>(item);
+    return softLineBreakItem && softLineBreakItem->isSegmentBreak();
+}
+
+NODELETE static bool isPreservedWhiteSpace(const InlineItem& documentWhiteSpaceItem)
+{
+    ASSERT(isDocumentWhiteSpace(documentWhiteSpaceItem));
+    // A preserved segment break is a soft line break item.
+    auto* textItem = dynamicDowncast<InlineTextItem>(documentWhiteSpaceItem);
+    return !textItem || InlineTextItem::shouldPreserveSpacesAndTabs(*textItem);
+}
+
+enum class TrimDirection : bool { Forward, Backward };
+
+static void collectWhiteSpaceToDiscardAfterEdges(const InlineItemList& inlineItemList, TrimDirection direction, BitVector& itemsToDiscard)
+{
+    // Collects the white space that follows a box edge in the direction of travel:
+    //  - Walking forward: the white space after a discard-after box (an inline box end, or an inline-block)
+    //    and the white space at the start of a discard-inner inline box's content.
+    //  - Walking backward: the white space before a discard-before box (an inline box start, or an
+    //    inline-block) and the white space at the end of a discard-inner inline box's content.
+    // 'discard-inner' only reaches the element's own content: it stops at the element's far edge, even when
+    // the element contains nothing but white space.
     //
-    // A single forward pass (each item is visited once):
-    //  - 'discardAfterActive' is armed by a discard-after box edge (an inline box end, or an inline-block) or
-    //    a discard-inner inline box start, and discards the collapsible white space that follows it, up to the
-    //    next piece of real content.
-    //  - 'discardBeforeCandidates' holds the collapsible white space seen since the last piece of real
-    //    content; a discard-before box edge (an inline box start, or an inline-block) or a discard-inner
-    //    inline box end discards that entire preceding run.
-    ASSERT(m_hasWhiteSpaceTrim);
+    // When walking forward we enter an inline box through its start and leave it through its end; walking
+    // backward it is the other way around. The value that trims past the edge we leave a box through is
+    // discard-after (forward) or discard-before (backward).
+    auto enteringEdge = direction == TrimDirection::Forward ? InlineItem::Type::InlineBoxStart : InlineItem::Type::InlineBoxEnd;
+    auto discardOutside = direction == TrimDirection::Forward ? Style::WhiteSpaceTrimValue::DiscardAfter : Style::WhiteSpaceTrimValue::DiscardBefore;
+    // Set by a discard-outside edge we just left; trims up to the next piece of content.
+    bool isTrimmingOutsideWhiteSpace = false;
+    // The number of open discard-inner inline boxes with no content so far. Content resets it, so these are
+    // always the innermost open discard-inner boxes: when it is non-zero, the next one to close is among them.
+    size_t discardInnerBoxesWithoutContent = 0;
 
-    auto isTrimmableWhitespace = [](const InlineItem& item) {
-        auto* textItem = dynamicDowncast<InlineTextItem>(item);
-        return textItem && textItem->isFullyTrimmable();
-    };
-
-    BitVector itemsToDiscard(inlineItemList.size());
-    bool hasItemsToDiscard = false;
-    bool discardAfterActive = false;
-    Vector<size_t, 4> discardBeforeCandidates;
-
-    auto discardPrecedingWhitespace = [&] {
-        for (auto candidate : discardBeforeCandidates)
-            itemsToDiscard.quickSet(candidate);
-        hasItemsToDiscard |= !discardBeforeCandidates.isEmpty();
-        discardBeforeCandidates.shrink(0);
-    };
-
-    for (size_t index = 0; index < inlineItemList.size(); ++index) {
+    auto itemCount = inlineItemList.size();
+    for (size_t step = 0; step < itemCount; ++step) {
+        auto index = direction == TrimDirection::Forward ? step : itemCount - 1 - step;
         auto& item = inlineItemList[index];
-        if (isTrimmableWhitespace(item)) {
-            if (discardAfterActive) {
+        if (isDocumentWhiteSpace(item)) {
+            auto isPreserved = isPreservedWhiteSpace(item);
+            if (discardInnerBoxesWithoutContent || (isTrimmingOutsideWhiteSpace && !isPreserved)) {
                 itemsToDiscard.quickSet(index);
-                hasItemsToDiscard = true;
-            } else
-                discardBeforeCandidates.append(index);
+                continue;
+            }
+            // discard-before / discard-after don't reach across preserved white space.
+            isTrimmingOutsideWhiteSpace &= !isPreserved;
             continue;
         }
-        if (item.isInlineBoxStart()) {
+        if (item.isInlineBoxStart() || item.isInlineBoxEnd()) {
+            // Inline box boundaries are transparent: carry the state across them.
             auto whiteSpaceTrim = item.layoutBox().style().whiteSpaceTrim();
-            if (whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardBefore))
-                discardPrecedingWhitespace();
-            if (whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardInner))
-                discardAfterActive = true;
-            // Inline box boundaries are transparent: carry both states across them.
-            continue;
-        }
-        if (item.isInlineBoxEnd()) {
-            auto whiteSpaceTrim = item.layoutBox().style().whiteSpaceTrim();
-            if (whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardAfter))
-                discardAfterActive = true;
-            if (whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardInner))
-                discardPrecedingWhitespace();
+            auto isDiscardInner = whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardInner);
+            if (item.type() == enteringEdge) {
+                discardInnerBoxesWithoutContent += isDiscardInner;
+                continue;
+            }
+            if (isDiscardInner && discardInnerBoxesWithoutContent)
+                --discardInnerBoxesWithoutContent;
+            isTrimmingOutsideWhiteSpace |= whiteSpaceTrim.contains(discardOutside);
             continue;
         }
         if (item.isFloat() || item.isOutOfFlow()) {
@@ -260,31 +266,125 @@ void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inli
             // transparent to this adjacency and neither start nor terminate a discardable white space run.
             continue;
         }
-        if (isNonReplacedInlineBlock(item.layoutBox())) {
-            // An inline-block is a block container 'white-space-trim' applies to. Unlike an inline box
-            // boundary it is real content, so it terminates the preceding white space run rather than being
-            // transparent to it, but it can still trim the collapsible white space at both its own edges.
-            auto whiteSpaceTrim = item.layoutBox().style().whiteSpaceTrim();
-            if (whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardBefore)) {
-                for (auto candidate : discardBeforeCandidates)
-                    itemsToDiscard.quickSet(candidate);
-                hasItemsToDiscard |= !discardBeforeCandidates.isEmpty();
-            }
-            discardBeforeCandidates.shrink(0);
-            discardAfterActive = whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardAfter);
+        // Any other item is content and ends both adjacencies. An inline-block is a block container
+        // 'white-space-trim' applies to: it is content too, but it can still trim the non-preserved white
+        // space past its own edge.
+        discardInnerBoxesWithoutContent = 0;
+        isTrimmingOutsideWhiteSpace = isNonReplacedInlineBlock(item.layoutBox()) && item.layoutBox().style().whiteSpaceTrim().contains(discardOutside);
+    }
+}
+
+NODELETE static bool isIgnoredAtBlockContainerEdges(const InlineItem& item)
+{
+    // Items with no characters in them (inline box boundaries, floats, out-of-flow boxes and empty text) are
+    // neither white space nor the first or last non-white-space character, so they are ignored when finding the
+    // white space at the edges of a block container. A <wbr> counts as content for now (webkit.org/b/331492).
+    if (item.isInlineBoxStart() || item.isInlineBoxEnd() || item.isFloat() || item.isOutOfFlow())
+        return true;
+    auto* textItem = dynamicDowncast<InlineTextItem>(item);
+    return textItem && !textItem->length();
+}
+
+static bool hasSegmentBreak(const InlineItem& documentWhiteSpaceItem)
+{
+    ASSERT(isDocumentWhiteSpace(documentWhiteSpaceItem));
+    auto* textItem = dynamicDowncast<InlineTextItem>(documentWhiteSpaceItem);
+    if (!textItem) {
+        // A soft line break item is a single segment break.
+        return true;
+    }
+    return StringView { textItem->inlineTextBox().content() }.substring(textItem->start(), textItem->length()).find(newlineCharacter) != notFound;
+}
+
+static void collectWhiteSpaceToDiscardAtBlockContainerEdges(const InlineItemList& inlineItemList, BitVector& itemsToDiscard)
+{
+    // On a block container, discard-inner discards the white space at the beginning of the element up to and
+    // including the last segment break before the first non-white-space character, and the white space at the
+    // end starting with the first segment break after the last non-white-space character. The white space on
+    // the content side of those segment breaks (e.g. the indentation of the first line) stays.
+    // Whole items are discarded: a preserved segment break is an item of its own, and when the segment break
+    // is inside a non-preserved white space item, the rest of that item would be trimmed at the line's edge
+    // anyway.
+    auto discardWhiteSpaceInRange = [&](size_t from, size_t to) {
+        for (auto index = from; index < to; ++index) {
+            if (isDocumentWhiteSpace(inlineItemList[index]))
+                itemsToDiscard.quickSet(index);
+        }
+    };
+
+    auto itemCount = inlineItemList.size();
+    size_t firstContentIndex = 0;
+    std::optional<size_t> lastSegmentBreakBeforeContent;
+    for (; firstContentIndex < itemCount; ++firstContentIndex) {
+        auto& item = inlineItemList[firstContentIndex];
+        if (isDocumentWhiteSpace(item)) {
+            if (hasSegmentBreak(item))
+                lastSegmentBreakBeforeContent = firstContentIndex;
             continue;
         }
-        // Any other item is real content and ends both adjacencies.
-        discardAfterActive = false;
-        discardBeforeCandidates.shrink(0);
+        if (!isIgnoredAtBlockContainerEdges(item))
+            break;
     }
-    if (!hasItemsToDiscard)
+
+    if (firstContentIndex == itemCount) {
+        // Nothing but white space: the leading part runs up to the last segment break and the trailing part
+        // starts at the first one, so together they cover all of it.
+        if (lastSegmentBreakBeforeContent)
+            discardWhiteSpaceInRange(0, itemCount);
+        return;
+    }
+    if (lastSegmentBreakBeforeContent)
+        discardWhiteSpaceInRange(0, *lastSegmentBreakBeforeContent + 1);
+
+    std::optional<size_t> firstSegmentBreakAfterContent;
+    for (auto index = itemCount; index-- > firstContentIndex;) {
+        auto& item = inlineItemList[index];
+        if (isDocumentWhiteSpace(item)) {
+            if (hasSegmentBreak(item))
+                firstSegmentBreakAfterContent = index;
+            continue;
+        }
+        if (!isIgnoredAtBlockContainerEdges(item))
+            break;
+    }
+    if (firstSegmentBreakAfterContent)
+        discardWhiteSpaceInRange(*firstSegmentBreakAfterContent, itemCount);
+}
+
+void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inlineItemList)
+{
+    // https://drafts.csswg.org/css-text-4/#white-space-trim
+    // 'discard-before' / 'discard-after' remove the non-preserved white space immediately before the start /
+    // after the end of an element; 'discard-inner' removes all white space at the start and end of the
+    // element's own content (i.e. immediately inside its edges), preserved or not. Discarding the
+    // corresponding inline items here -before line building, bidi resolution and intrinsic sizing consume
+    // them- keeps the removed white space out of every downstream computation (rendering, soft wrap
+    // opportunities and min/max-content) at once. Inline box boundaries are transparent to this adjacency,
+    // matching white space collapsing. On the root block container 'discard-inner' trims by segment breaks
+    // instead.
+    ASSERT(m_hasWhiteSpaceTrim);
+
+    BitVector itemsToDiscard(inlineItemList.size());
+    // FIXME: A block container with block-level children keeps its inline content in anonymous block containers,
+    // which don't have the property ('white-space-trim' is not inherited), so nothing is trimmed there.
+    if (root().style().whiteSpaceTrim().contains(Style::WhiteSpaceTrimValue::DiscardInner))
+        collectWhiteSpaceToDiscardAtBlockContainerEdges(inlineItemList, itemsToDiscard);
+    collectWhiteSpaceToDiscardAfterEdges(inlineItemList, TrimDirection::Forward, itemsToDiscard);
+    collectWhiteSpaceToDiscardAfterEdges(inlineItemList, TrimDirection::Backward, itemsToDiscard);
+    if (itemsToDiscard.isEmpty())
         return;
 
     InlineItemList remainingItems(ReserveCapacityTag { }, inlineItemList.size());
     for (size_t index = 0; index < inlineItemList.size(); ++index) {
         if (!itemsToDiscard.quickGet(index))
             remainingItems.append(WTF::move(inlineItemList[index]));
+    }
+    if (remainingItems.isEmpty()) {
+        // A block container with nothing but white space in it. Leave an empty text item behind: the formatting
+        // context treats that as empty content, while an empty list means the list has not been built yet.
+        // Unlike InlineTextItem::createEmptyItem, the text box is not empty here.
+        CheckedRef inlineTextBox = downcast<InlineTextBox>(inlineItemList.first().layoutBox());
+        remainingItems.append(InlineTextItem { inlineTextBox.get(), 0, 0, UBIDI_DEFAULT_LTR, false, false, { }, InlineTextItem::TextItemType::Undefined });
     }
     inlineItemList = WTF::move(remainingItems);
 }
@@ -816,8 +916,9 @@ void InlineItemsBuilder::breakAndComputeBidiLevels(InlineItemList& inlineItemLis
         ubidi_getLogicalRun(ubidi, currentPosition, &endPosition, &bidiLevel);
 
         auto setBidiLevelOnRange = [&](size_t bidiEnd, auto bidiLevelForRange) {
-            // We should always have inline item(s) associated with a bidi range.
-            ASSERT(inlineItemIndex < inlineItemOffsets.size());
+            // We should always have inline item(s) associated with a bidi range, unless 'white-space-trim' discarded
+            // them (the paragraph has the entire content of the text box).
+            ASSERT(inlineItemIndex < inlineItemOffsets.size() || m_hasWhiteSpaceTrim);
             // Start of the range is always where we left off (bidi ranges do not have gaps).
             for (; inlineItemIndex < inlineItemOffsets.size(); ++inlineItemIndex) {
                 auto offset = inlineItemOffsets[inlineItemIndex];

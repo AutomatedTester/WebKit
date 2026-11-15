@@ -34,6 +34,7 @@
 #include "VideoLayerRemote.h"
 #include "WorkQueueMessageReceiver.h"
 #include <WebCore/AudioVideoRenderer.h>
+#include <WebCore/FourCC.h>
 #include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/MediaSampleConverter.h>
@@ -236,9 +237,10 @@ private:
     class ReadyForMoreDataState {
     public:
         static constexpr size_t kMaxPendingSamples = 20;
-        bool isReadyForMoreData() const { return m_pendingSampleCount < kMaxPendingSamples && m_remoteReadyForMoreData && m_decoderReadyForMoreData; }
+        bool isReadyForMoreData() const { return m_pendingSampleCount < kMaxPendingSamples && m_remoteReadyForMoreData && m_decoderReadyForMoreData && !m_awaitingFlush; }
         void setRemoteReadyForMoreData(bool ready) { m_remoteReadyForMoreData = ready; }
         void setDecoderReadyForMoreData(bool ready) { m_decoderReadyForMoreData = ready; }
+        void setAwaitingFlush(bool awaitingFlush) { m_awaitingFlush = awaitingFlush; }
         void addPendingSample() { m_pendingSampleCount++; }
         void removePendingSamples(size_t count = 1) { m_pendingSampleCount -= count; }
         size_t pendingSampleCount() const { return m_pendingSampleCount; }
@@ -246,6 +248,7 @@ private:
         size_t m_pendingSampleCount { 0 };
         bool m_remoteReadyForMoreData { true };
         bool m_decoderReadyForMoreData { true };
+        bool m_awaitingFlush { false };
     };
     ReadyForMoreDataState& readyForMoreDataState(TrackIdentifier);
     void resolveRequestMediaDataWhenReadyIfNeeded(TrackIdentifier);
@@ -282,6 +285,9 @@ private:
     TrackState* trackStateIfExists(TrackIdentifier) LIFETIME_BOUND;
     TrackState* trackStateIfCurrent(TrackIdentifier, uint64_t generation) LIFETIME_BOUND;
     TrackState& setTrackState(TrackIdentifier, UniqueRef<TrackState>&&) LIFETIME_BOUND;
+    std::unique_ptr<TrackState> takeTrackState(TrackIdentifier);
+    bool isVideoTrack(TrackIdentifier) const;
+    template<typename Function> void forEachTrackState(NOESCAPE const Function&);
     TrackState& trackStateForFormat(TrackIdentifier, Ref<const WebCore::TrackInfo>&&, bool isProtected) LIFETIME_BOUND;
     TrackState& createTrackState(TrackIdentifier, Ref<const WebCore::TrackInfo>&&, bool isProtected) LIFETIME_BOUND;
     TrackState& replaceDecodingTrackState(TrackIdentifier, Ref<const WebCore::TrackInfo>&&, bool isProtected, uint64_t generation) LIFETIME_BOUND;
@@ -297,6 +303,10 @@ private:
     void dropWaitingSamples(TrackIdentifier);
     void decoderFailed(TrackIdentifier, WebCore::PlatformMediaError);
     void failTrack(TrackIdentifier, Ref<const WebCore::TrackInfo>&&, bool isProtected, WebCore::PlatformMediaError, size_t droppedSamples);
+    void hardwareDecoderUnavailable();
+    void requestVideoReenqueue(TrackIdentifier);
+    void setVideoAwaitingFlush(TrackIdentifier, bool);
+    void resetVideoFallbackState();
     void removePendingSamples(TrackIdentifier, size_t count = 1);
     void sendSample(TrackIdentifier, WebCore::MediaSamplesBlock&&, std::optional<MediaTime>);
     void sendDecodedSamples(TrackIdentifier, Vector<WebCore::MediaSamplesBlock>&&);
@@ -349,11 +359,20 @@ private:
     HashMap<TrackIdentifier, std::unique_ptr<RequestPromise::AutoRejectProducer>> m_requestMediaDataWhenReadyDataPromises WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     HashMap<TrackIdentifier, Function<void(TrackIdentifier, const MediaTime&)>> m_trackNeedsReenqueuingCallbacks WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     HashMap<TrackIdentifier, WebCore::MediaSampleConverter> m_mediaSampleConverters WTF_GUARDED_BY_CAPABILITY(queueSingleton());
-    HashMap<TrackIdentifier, UniqueRef<TrackState>> m_trackStates WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    HashMap<TrackIdentifier, UniqueRef<TrackState>> m_audioTrackStates WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    // Only a single video track can be active at a time.
+    std::optional<TrackIdentifier> m_videoTrackIdentifier WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    std::unique_ptr<TrackState> m_videoTrackState WTF_GUARDED_BY_CAPABILITY(queueSingleton());
     uint64_t m_nextTrackStateGeneration WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { 0 };
     // The format last sent to the GPU process for each track.
     HashMap<TrackIdentifier, Ref<const WebCore::TrackInfo>> m_lastSentInfos WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    // Video codecs the GPU process has no hardware decoder for; they are decoded in the content process.
+    Vector<WebCore::FourCC> m_hardwareUnavailableVideoCodecs WTF_GUARDED_BY_CAPABILITY(queueSingleton());
+    // Video samples are dropped until the client flushes the video track, or until the next keyframe if it can't be asked to.
+    bool m_videoAwaitingFlush WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { false };
+    bool m_videoAwaitingKeyframe WTF_GUARDED_BY_CAPABILITY(queueSingleton()) { false };
     const bool m_audioDecodingInContentProcess;
+    const Vector<WebCore::FourCC> m_videoCodecsDecodedInContentProcess;
 
     WebCore::HostingContext m_layerHostingContext WTF_GUARDED_BY_LOCK(m_lock);
     WebCore::FloatSize m_naturalSize WTF_GUARDED_BY_LOCK(m_lock);

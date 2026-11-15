@@ -368,8 +368,7 @@ static bool shouldDumpLayer(CALayer *layer, _WKCALayerTreeAsTextOptions options)
 
 static void collectSublayersToDump(CALayer *layer, _WKCALayerTreeAsTextOptions options, Vector<RetainPtr<CALayer>>& sublayers)
 {
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL CALayer *sublayer in layer.sublayers) {
+    for (CALayer *sublayer in layer.sublayers) {
         if (shouldDumpLayer(sublayer, options))
             sublayers.append(sublayer);
         else
@@ -379,8 +378,11 @@ static void collectSublayersToDump(CALayer *layer, _WKCALayerTreeAsTextOptions o
 
 static void dumpSublayers(TextStream& ts, CALayer *layer, _WKCALayerTreeAsTextOptions options)
 {
-    Vector<RetainPtr<CALayer>> sublayers;
-    collectSublayersToDump(layer, options, sublayers);
+    const auto sublayers = [&] {
+        Vector<RetainPtr<CALayer>> sublayers;
+        collectSublayersToDump(layer, options, sublayers);
+        return sublayers;
+    }();
     if (sublayers.isEmpty())
         return;
 
@@ -401,8 +403,7 @@ static std::optional<uint32_t> hostedContextID(CALayer *layer, _WKCALayerTreeAsT
     if (!(options & _WKCALayerTreeAsTextOptionsRemoteLayersOnly))
         return std::nullopt;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL CALayer *sublayer in layer.sublayers) {
+    for (CALayer *sublayer in layer.sublayers) {
         if (shouldDumpLayer(sublayer, options))
             continue;
         if (auto contextID = hostedContextID(sublayer, options))

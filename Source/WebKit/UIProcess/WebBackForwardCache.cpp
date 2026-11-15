@@ -64,7 +64,7 @@ void WebBackForwardCache::deref() const
 
 inline void WebBackForwardCache::removeOldestEntry()
 {
-    ASSERT(!m_itemsWithCachedPage.isEmptyIgnoringNullReferences());
+    ASSERT(!m_itemsWithCachedPage.computeIsEmpty());
     if (RefPtr item = m_itemsWithCachedPage.tryTakeFirst())
         item->setBackForwardCacheEntry(nullptr);
 }
@@ -137,6 +137,14 @@ void WebBackForwardCache::removeEntry(SuspendedPageProxy& suspendedPage)
 {
     removeEntriesMatching([&suspendedPage](auto& item) {
         return item.suspendedPage() == &suspendedPage;
+    });
+}
+
+void WebBackForwardCache::removeEntriesForFrameItem(WebPageProxyIdentifier pageID, WebCore::BackForwardFrameItemIdentifier frameItemID)
+{
+    removeEntriesMatching([&](auto& item) {
+        RefPtr entry = item.backForwardCacheEntry();
+        return item.pageID() == pageID && entry && entry->backForwardFrameItemID() == frameItemID;
     });
 }
 
